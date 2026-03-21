@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Claude Chat Bridge</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Session Sidebar -->
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <h2>Sessions</h2>
+      <button id="new-chat-btn" class="btn-new-chat" onclick="createNewSession()">+ New Chat</button>
+    </div>
+    <div id="session-list" class="session-list"></div>
+  </aside>
+
+  <!-- Main Chat Area -->
+  <main class="chat-main">
+    <header class="chat-header">
+      <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+      <h1 id="chat-title" class="chat-title">Claude Chat Bridge</h1>
+      <div class="header-spacer"></div>
+    </header>
+
+    <div id="messages" class="messages">
+      <div id="welcome" class="welcome-message">
+        <h2>Claude Chat Bridge</h2>
+        <p>Chat with Claude + your Obsidian vault from any device.</p>
+        <button class="btn-new-chat btn-welcome" onclick="createNewSession()">Start a New Chat</button>
+      </div>
+    </div>
+
+    <div id="input-area" class="input-area" style="display: none;">
+      <div class="input-container">
+        <textarea
+          id="message-input"
+          class="message-input"
+          placeholder="Type a message..."
+          rows="1"
+          onkeydown="handleKeydown(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button id="send-btn" class="btn-send" onclick="sendMessage()" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

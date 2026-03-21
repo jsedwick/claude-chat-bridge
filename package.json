@@ -1,0 +1,24 @@
+{
+  "name": "claude-chat-bridge",
+  "version": "1.0.0",
+  "description": "Web chat interface for Claude Code with MCP tools, accessible over Tailscale",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc && node dist/server.js",
+    "start:http": "node dist/server.js --http"
+  },
+  "author": "Jesse Sedwick",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.2.1",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^20.10.0",
+    "@types/express": "^5.0.6",
+    "@types/cors": "^2.8.19"
+  }
+}
