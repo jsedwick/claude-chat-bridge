@@ -296,17 +296,5 @@ function parseClaudeEvent(parsed: any): StreamEvent | null {
     }
   }
 
-  // Assistant message with tool results
-  if (parsed.type === 'assistant' && parsed.message?.content) {
-    for (const block of parsed.message.content) {
-      if (block.type === 'tool_use') {
-        return {
-          type: 'tool_use',
-          data: JSON.stringify({ id: block.id, name: block.name, input: block.input }),
-        };
-      }
-    }
-  }
-
   return null;
 }
