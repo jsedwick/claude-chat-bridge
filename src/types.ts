@@ -9,6 +9,7 @@ export interface ChatSession {
   claudeSessionId: string | null;
   name: string;
   mode: 'work' | 'personal';
+  workingDir?: string;
   created: string;
   lastActivity: string;
   lastMessage: string;
@@ -27,6 +28,7 @@ export interface ClaudeRunnerOptions {
   message: string;
   model?: string;
   mode?: 'work' | 'personal';
+  workingDir?: string;
   attachments?: Array<{ filename: string; path: string }>;
   onEvent: (event: StreamEvent) => void;
   onClose: (claudeSessionId: string | null) => void;

@@ -41,6 +41,7 @@ const sessionListEl = document.getElementById('session-list');
 
 const modelSelect = document.getElementById('model-select');
 const modeToggle = document.getElementById('mode-toggle');
+const dirSelect = document.getElementById('dir-select');
 
 // Restore saved model
 const savedModel = localStorage.getItem('chat-bridge-model') || 'opus';
@@ -102,8 +103,20 @@ function updateModeUI(mode) {
   modeToggle.className = `mode-toggle mode-${mode}`;
 }
 
+// Load available working directories
+async function loadDirs() {
+  try {
+    const res = await fetch('/api/sessions/dirs/available');
+    const dirs = await res.json();
+    dirSelect.innerHTML = dirs.map((d, i) =>
+      `<option value="${d.path}"${i === 0 ? ' selected' : ''}>${d.label}</option>`
+    ).join('');
+  } catch {}
+}
+
 // Initialize
 loadMode();
+loadDirs();
 loadSessions();
 
 // Sidebar toggle
@@ -145,7 +158,8 @@ function renderSessionList(sessions) {
       <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
-        <span>${s.messageCount} messages</span>
+        <span>${s.messageCount} msgs</span>
+        ${s.workingDir ? `<span class="session-item-dir">${s.workingDir.split('/').pop()}</span>` : ''}
         <span>${formatTime(s.lastActivity)}</span>
       </div>
     </div>
@@ -207,10 +221,11 @@ function startEditing(id, el) {
 
 async function createNewSession() {
   try {
+    const selectedDir = dirSelect.value || undefined;
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ workingDir: selectedDir }),
     });
     const session = await res.json();
     currentSessionId = session.id;

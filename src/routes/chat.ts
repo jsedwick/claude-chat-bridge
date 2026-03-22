@@ -58,6 +58,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     appSessionId: sessionId,
     message: cliMessage,
     model: model || undefined,
+    workingDir: session.workingDir || undefined,
     attachments: attachments || undefined,
     onEvent: (event) => {
       sendSSE(event.type, event.data);

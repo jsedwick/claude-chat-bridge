@@ -31,12 +31,13 @@ export function getSession(id: string): ChatSession | undefined {
   return sessions.find(s => s.id === id);
 }
 
-export function createSession(name?: string): ChatSession {
+export function createSession(name?: string, workingDir?: string): ChatSession {
   const session: ChatSession = {
     id: crypto.randomUUID(),
     claudeSessionId: null,
     name: name || `Chat ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
     mode: getMode(),
+    workingDir: workingDir || undefined,
     created: new Date().toISOString(),
     lastActivity: new Date().toISOString(),
     lastMessage: '',

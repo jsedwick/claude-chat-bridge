@@ -91,7 +91,7 @@ export function cancelByAppSession(appSessionId: string): boolean {
 }
 
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, appSessionId, message, model, attachments, onEvent, onClose } = options;
+  const { sessionId, appSessionId, message, model, workingDir, attachments, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
@@ -145,7 +145,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   args.push(fullMessage);
 
   const proc = spawn(config.claudePath, args, {
-    cwd: config.workingDir,
+    cwd: workingDir || config.workingDir,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

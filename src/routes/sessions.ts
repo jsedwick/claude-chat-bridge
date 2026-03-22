@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession } from '../services/session-store';
-import { getMode, setMode, Mode } from '../config';
+import { getMode, setMode, Mode, config } from '../config';
 
 const router = Router();
 
@@ -14,9 +14,19 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
-  const { name } = req.body || {};
-  const session = createSession(name);
+  const { name, workingDir } = req.body || {};
+  // Validate workingDir against allowed list
+  if (workingDir && !config.workingDirs.some(d => d.path === workingDir)) {
+    res.status(400).json({ error: 'Invalid working directory' });
+    return;
+  }
+  const session = createSession(name, workingDir || undefined);
   res.status(201).json(session);
+});
+
+// Available working directories
+router.get('/dirs/available', (_req: Request, res: Response) => {
+  res.json(config.workingDirs);
 });
 
 // Mode endpoints (must be before /:id to avoid param capture)

@@ -317,6 +317,45 @@ html, body {
   font-size: 15px;
 }
 
+.welcome-dir-picker {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.welcome-dir-picker label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.dir-select {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  outline: none;
+  min-width: 220px;
+  text-align: center;
+}
+
+.dir-select:focus {
+  border-color: var(--accent);
+}
+
+.session-item-dir {
+  background: var(--bg-primary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--accent);
+}
+
 .btn-welcome {
   font-size: 16px;
   padding: 12px 24px;
