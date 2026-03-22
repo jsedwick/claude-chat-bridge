@@ -543,6 +543,7 @@ async function sendMessage() {
   let currentText = '';
   let thinkingEl = null;
   let lastEventType = '';
+  let streamCompleted = false;
 
   function processEvent(type, data) {
     switch (type) {
@@ -605,6 +606,7 @@ async function sendMessage() {
       case 'done':
         removeTypingIndicator();
         addUsageInfo(data);
+        streamCompleted = true;
         scrollToBottom();
         break;
     }
@@ -629,8 +631,8 @@ async function sendMessage() {
     await readSSEStream(res, processEvent);
   } catch (err) {
     removeTypingIndicator();
-    // Attempt reconnect if we were mid-stream
-    if (currentSessionId && err.name !== 'AbortError') {
+    // Only attempt reconnect if we were genuinely mid-stream (not completed/cancelled)
+    if (currentSessionId && !streamCompleted && err.name !== 'AbortError') {
       const reconnected = await attemptReconnect(currentSessionId, processEvent);
       if (!reconnected) {
         const errEl = document.createElement('div');
@@ -639,7 +641,7 @@ async function sendMessage() {
         messagesEl.appendChild(errEl);
         scrollToBottom();
       }
-    } else {
+    } else if (!streamCompleted) {
       const errEl = document.createElement('div');
       errEl.className = 'message message-error';
       errEl.textContent = err.message;
