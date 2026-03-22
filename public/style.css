@@ -437,6 +437,11 @@ html, body {
   border-color: #2ea043;
 }
 
+/* Streaming code block (unclosed) */
+pre.streaming {
+  border-style: dashed;
+}
+
 /* Diff highlighting */
 .diff-add {
   display: inline-block;

@@ -668,29 +668,37 @@ async function sendMessage() {
 }
 
 // Markdown rendering
+function renderDiffBlock(code) {
+  return code.trim().split('\n').map(line => {
+    const escaped = escapeHtml(line);
+    if (line.startsWith('+')) return `<span class="diff-add">${escaped}</span>`;
+    if (line.startsWith('-')) return `<span class="diff-del">${escaped}</span>`;
+    if (line.startsWith('@@')) return `<span class="diff-hunk">${escaped}</span>`;
+    return escaped;
+  }).join('\n');
+}
+
 function renderMarkdown(text) {
   // Code blocks first (protect from other replacements)
   const codeBlocks = [];
+
+  // Completed code blocks
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
-    const isDiff = lang === 'diff';
-    let rendered;
-    if (isDiff) {
-      rendered = code.trim().split('\n').map(line => {
-        const escaped = escapeHtml(line);
-        if (line.startsWith('+')) return `<span class="diff-add">${escaped}</span>`;
-        if (line.startsWith('-')) return `<span class="diff-del">${escaped}</span>`;
-        if (line.startsWith('@@')) return `<span class="diff-hunk">${escaped}</span>`;
-        return escaped;
-      }).join('\n');
-    } else {
-      rendered = escapeHtml(code.trim());
-    }
+    const rendered = lang === 'diff' ? renderDiffBlock(code) : escapeHtml(code.trim());
     codeBlocks.push(`<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-${lang}">${rendered}</code></pre></div>`);
     return `\x00CODEBLOCK${idx}\x00`;
   });
 
-  // Inline code
+  // Unclosed code block (still streaming) — render as a code block in progress
+  text = text.replace(/```(\w*)\n([\s\S]*)$/g, (_, lang, code) => {
+    const idx = codeBlocks.length;
+    const rendered = lang === 'diff' ? renderDiffBlock(code) : escapeHtml(code);
+    codeBlocks.push(`<pre class="streaming"><code class="language-${lang}">${rendered}</code></pre>`);
+    return `\x00CODEBLOCK${idx}\x00`;
+  });
+
+  // Inline code (but not triple backticks)
   text = text.replace(/`([^`]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
 
   // Headers
