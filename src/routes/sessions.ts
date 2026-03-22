@@ -1,11 +1,16 @@
 import { Router, Request, Response } from 'express';
-import { listSessions, createSession, deleteSession, getSession, getMessages, updateSession } from '../services/session-store';
+import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession } from '../services/session-store';
 import { getMode, setMode, Mode } from '../config';
 
 const router = Router();
 
-router.get('/', (_req: Request, res: Response) => {
-  res.json(listSessions());
+router.get('/', (req: Request, res: Response) => {
+  const mode = req.query.mode as string | undefined;
+  if (mode === 'work' || mode === 'personal') {
+    res.json(listSessionsByMode(mode));
+  } else {
+    res.json(listSessions());
+  }
 });
 
 router.post('/', (req: Request, res: Response) => {

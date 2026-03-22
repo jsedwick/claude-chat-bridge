@@ -1,6 +1,6 @@
 import fs from 'fs';
 import crypto from 'crypto';
-import { config } from '../config';
+import { config, getMode } from '../config';
 import { ChatSession, ChatMessage } from '../types';
 
 let sessions: ChatSession[] = [];
@@ -36,6 +36,7 @@ export function createSession(name?: string): ChatSession {
     id: crypto.randomUUID(),
     claudeSessionId: null,
     name: name || `Chat ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+    mode: getMode(),
     created: new Date().toISOString(),
     lastActivity: new Date().toISOString(),
     lastMessage: '',
@@ -45,6 +46,12 @@ export function createSession(name?: string): ChatSession {
   sessions.push(session);
   save();
   return session;
+}
+
+export function listSessionsByMode(mode: string): ChatSession[] {
+  return sessions
+    .filter(s => (s.mode || 'work') === mode)
+    .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
 }
 
 export function updateSession(id: string, updates: Partial<ChatSession>): ChatSession | undefined {

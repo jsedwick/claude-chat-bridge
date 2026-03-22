@@ -1,6 +1,7 @@
 // State
 let currentSessionId = null;
 let isStreaming = false;
+let currentMode = 'work';
 
 // Message history (server-backed)
 async function restoreMessages(sessionId) {
@@ -58,13 +59,13 @@ async function loadMode() {
   try {
     const res = await fetch('/api/sessions/mode/current');
     const { mode } = await res.json();
+    currentMode = mode;
     updateModeUI(mode);
   } catch {}
 }
 
 async function toggleMode() {
-  const current = modeToggle.textContent.trim().toLowerCase();
-  const next = current === 'work' ? 'personal' : 'work';
+  const next = currentMode === 'work' ? 'personal' : 'work';
   try {
     const res = await fetch('/api/sessions/mode/current', {
       method: 'POST',
@@ -72,7 +73,25 @@ async function toggleMode() {
       body: JSON.stringify({ mode: next }),
     });
     const { mode } = await res.json();
+    currentMode = mode;
     updateModeUI(mode);
+
+    // Deselect current chat if it doesn't belong to this mode
+    if (currentSessionId) {
+      try {
+        const s = await fetch(`/api/sessions/${currentSessionId}`).then(r => r.json());
+        if ((s.mode || 'work') !== mode) {
+          currentSessionId = null;
+          chatTitle.textContent = 'Claude Chat Bridge';
+          welcomeEl.style.display = 'flex';
+          inputArea.style.display = 'none';
+          clearMessages();
+        }
+      } catch {}
+    }
+
+    // Reload sidebar with filtered sessions
+    loadSessions();
   } catch (err) {
     console.error('Failed to switch mode:', err);
   }
@@ -110,7 +129,7 @@ function handleKeydown(e) {
 // Sessions
 async function loadSessions() {
   try {
-    const res = await fetch('/api/sessions');
+    const res = await fetch(`/api/sessions?mode=${currentMode}`);
     const sessions = await res.json();
     renderSessionList(sessions);
   } catch (err) {

@@ -8,6 +8,7 @@ export interface ChatSession {
   id: string;
   claudeSessionId: string | null;
   name: string;
+  mode: 'work' | 'personal';
   created: string;
   lastActivity: string;
   lastMessage: string;
