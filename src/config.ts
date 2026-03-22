@@ -12,13 +12,8 @@ export const config = {
   permissionMode: 'bypassPermissions' as const,
   sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
   defaultMode: 'work' as Mode,
-  // Allowed working directories (shown as options in the UI)
-  workingDirs: [
-    { path: '/Users/jsedwick', label: 'Home (default)' },
-    { path: '/Users/jsedwick/Projects/obsidian-mcp-server', label: 'obsidian-mcp-server' },
-    { path: '/Users/jsedwick/Projects/claude-chat-bridge', label: 'claude-chat-bridge' },
-    { path: '/Users/jsedwick/Projects', label: 'Projects' },
-  ],
+  // Directories to scan for project subdirectories
+  projectScanDirs: ['/Users/jsedwick/Projects'],
 };
 
 // Global mutable mode state

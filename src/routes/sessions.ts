@@ -1,4 +1,6 @@
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession } from '../services/session-store';
 import { getMode, setMode, Mode, config } from '../config';
 
@@ -15,18 +17,46 @@ router.get('/', (req: Request, res: Response) => {
 
 router.post('/', (req: Request, res: Response) => {
   const { name, workingDir } = req.body || {};
-  // Validate workingDir against allowed list
-  if (workingDir && !config.workingDirs.some(d => d.path === workingDir)) {
-    res.status(400).json({ error: 'Invalid working directory' });
-    return;
+  // Validate workingDir — must be home, a scan dir, or a direct child of a scan dir
+  if (workingDir) {
+    const isHome = workingDir === config.workingDir;
+    const isScanDir = config.projectScanDirs.includes(workingDir);
+    const isChildOfScanDir = config.projectScanDirs.some(d =>
+      workingDir.startsWith(d + '/') && !workingDir.substring(d.length + 1).includes('/')
+    );
+    if (!isHome && !isScanDir && !isChildOfScanDir) {
+      res.status(400).json({ error: 'Invalid working directory' });
+      return;
+    }
   }
   const session = createSession(name, workingDir || undefined);
   res.status(201).json(session);
 });
 
-// Available working directories
+// Available working directories (dynamically scanned)
 router.get('/dirs/available', (_req: Request, res: Response) => {
-  res.json(config.workingDirs);
+  const dirs: Array<{ path: string; label: string }> = [
+    { path: config.workingDir, label: 'Home (default)' },
+  ];
+
+  for (const scanDir of config.projectScanDirs) {
+    try {
+      const entries = fs.readdirSync(scanDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          dirs.push({
+            path: path.join(scanDir, entry.name),
+            label: entry.name,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // Sort projects alphabetically (after Home)
+  const [home, ...projects] = dirs;
+  projects.sort((a, b) => a.label.localeCompare(b.label));
+  res.json([home, ...projects]);
 });
 
 // Mode endpoints (must be before /:id to avoid param capture)
