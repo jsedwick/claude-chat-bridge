@@ -52,16 +52,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
 
   let assistantText = '';
 
-  // On first message of a new session, prepend mode command
-  const isNewSession = !session.claudeSessionId;
-  const cliMessage = isNewSession
-    ? `/${session.mode || 'work'}\n\n${message}`
-    : message;
-
   runClaude({
     sessionId: session.claudeSessionId || undefined,
     appSessionId: sessionId,
-    message: cliMessage,
+    message: message,
     model: model || undefined,
     workingDir: session.workingDir || undefined,
     attachments: attachments || undefined,

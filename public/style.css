@@ -238,36 +238,43 @@ html, body {
   overflow: visible;
 }
 
-.mode-toggle {
-  padding: 4px 10px;
+/* Mode tabs in sidebar */
+.mode-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 10px 0;
+  background: none;
   border: none;
-  border-radius: 12px;
-  font-size: 11px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 13px;
   font-weight: 600;
   font-family: var(--font-sans);
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  transition: background 0.2s, color 0.2s;
-  flex-shrink: 0;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
 
-.mode-work {
-  background: #1e3a5f;
+.mode-tab:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mode-tab.active[data-mode="work"] {
   color: #6bb3ff;
+  border-bottom-color: #6bb3ff;
+  background: rgba(107, 179, 255, 0.06);
 }
 
-.mode-work:hover {
-  background: #254a75;
-}
-
-.mode-personal {
-  background: #1e4a3a;
+.mode-tab.active[data-mode="personal"] {
   color: #6bdfb0;
-}
-
-.mode-personal:hover {
-  background: #255a48;
+  border-bottom-color: #6bdfb0;
+  background: rgba(107, 223, 176, 0.06);
 }
 
 .model-select {

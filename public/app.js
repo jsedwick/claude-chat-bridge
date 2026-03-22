@@ -83,7 +83,6 @@ const sidebarOverlay = document.getElementById('sidebar-overlay');
 const sessionListEl = document.getElementById('session-list');
 
 const modelSelect = document.getElementById('model-select');
-const modeToggle = document.getElementById('mode-toggle');
 const dirSelect = document.getElementById('dir-select');
 
 // Restore saved model
@@ -104,27 +103,27 @@ async function loadMode() {
     const res = await fetch('/api/sessions/mode/current');
     const { mode } = await res.json();
     currentMode = mode;
-    updateModeUI(mode);
+    updateModeTabsUI(mode);
   } catch {}
 }
 
-async function toggleMode() {
-  const next = currentMode === 'work' ? 'personal' : 'work';
+async function setMode(mode) {
+  if (mode === currentMode) return;
   try {
     const res = await fetch('/api/sessions/mode/current', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: next }),
+      body: JSON.stringify({ mode }),
     });
-    const { mode } = await res.json();
-    currentMode = mode;
-    updateModeUI(mode);
+    const result = await res.json();
+    currentMode = result.mode;
+    updateModeTabsUI(result.mode);
 
     // Deselect current chat if it doesn't belong to this mode
     if (currentSessionId) {
       try {
         const s = await fetch(`/api/sessions/${currentSessionId}`).then(r => r.json());
-        if ((s.mode || 'work') !== mode) {
+        if ((s.mode || 'work') !== result.mode) {
           currentSessionId = null;
           chatTitle.textContent = 'Claude Chat Bridge';
           welcomeEl.style.display = 'flex';
@@ -141,9 +140,10 @@ async function toggleMode() {
   }
 }
 
-function updateModeUI(mode) {
-  modeToggle.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-  modeToggle.className = `mode-toggle mode-${mode}`;
+function updateModeTabsUI(mode) {
+  document.querySelectorAll('.mode-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.mode === mode);
+  });
 }
 
 // Load available working directories
@@ -279,7 +279,11 @@ async function createNewSession() {
     resetTokenCounter();
     loadSessions();
     if (sidebar.classList.contains('open')) toggleSidebar();
-    messageInput.focus();
+
+    // Auto-send /work or /personal based on active mode tab
+    const modeCommand = currentMode === 'personal' ? '/personal' : '/work';
+    messageInput.value = modeCommand;
+    sendMessage();
   } catch (err) {
     console.error('Failed to create session:', err);
   }

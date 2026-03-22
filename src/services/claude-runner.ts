@@ -230,7 +230,9 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   proc.stderr!.on('data', (chunk: Buffer) => {
     const text = chunk.toString().trim();
     if (!text) return;
-    // Surface hook failures as errors so the user can see what was blocked
+    // Ignore session-end hook failures — expected in -p mode
+    if (text.includes('SessionEnd') || text.includes('session-end')) return;
+    // Surface other hook failures as errors so the user can see what was blocked
     if (text.includes('Hook cancelled') || text.includes('hook')) {
       emitToStream(appSessionId, { type: 'error', data: `Hook: ${text}` });
     } else {

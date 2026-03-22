@@ -19,14 +19,23 @@ const AUTO_ALLOW_PATTERNS = [
   'Read', 'Glob', 'Grep', 'ToolSearch', 'Skill',
   'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop',
   'EnterPlanMode', 'ExitPlanMode',
-  'AskUserQuestion',
+  'AskUserQuestion', 'Agent',
   'WebSearch', 'WebFetch',
 ];
 
-// MCP tool prefixes that are read-only
+// MCP tool name prefixes that are safe to auto-allow (checked against last segment after __)
 const AUTO_ALLOW_MCP_PREFIXES = [
   'search_', 'get_', 'list_', 'find_', 'detect_', 'analyze_',
   'calendar_', 'email_',
+  'switch_', 'toggle_', 'restore_',
+  'link_session', 'submit_topic',
+  'track_file',
+];
+
+// MCP tool names (last segment after __) that are safe to auto-allow (exact match)
+const AUTO_ALLOW_MCP_NAMES = [
+  'append_to_accumulator', 'record_commit', 'workflow',
+  'close_session', 'vault_custodian',
 ];
 
 const PERMISSION_TIMEOUT_MS = 120_000; // 2 minutes
@@ -38,13 +47,14 @@ const pendingPermissions = new Map<string, PendingPermission>();
 const sessionAllowAll = new Map<string, Set<string>>();
 
 export function isAutoAllowed(toolName: string): boolean {
-  // Check exact match
+  // Check exact match on built-in tools
   if (AUTO_ALLOW_PATTERNS.includes(toolName)) return true;
 
-  // Check MCP tool prefixes (tool name after last __)
+  // Check MCP tool name (last segment after __)
   const mcpPart = toolName.includes('__') ? toolName.split('__').pop() || '' : '';
-  if (mcpPart && AUTO_ALLOW_MCP_PREFIXES.some(prefix => mcpPart.startsWith(prefix))) {
-    return true;
+  if (mcpPart) {
+    if (AUTO_ALLOW_MCP_PREFIXES.some(prefix => mcpPart.startsWith(prefix))) return true;
+    if (AUTO_ALLOW_MCP_NAMES.includes(mcpPart)) return true;
   }
 
   return false;
