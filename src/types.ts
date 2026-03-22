@@ -22,7 +22,11 @@ export interface StreamEvent {
 
 export interface ClaudeRunnerOptions {
   sessionId?: string;
+  appSessionId: string;
   message: string;
+  model?: string;
+  mode?: 'work' | 'personal';
+  attachments?: Array<{ filename: string; path: string }>;
   onEvent: (event: StreamEvent) => void;
   onClose: (claudeSessionId: string | null) => void;
 }

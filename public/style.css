@@ -136,6 +136,14 @@ html, body {
   text-overflow: ellipsis;
 }
 
+.session-item-name.editing {
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
+}
+
 .session-item-preview {
   font-size: 12px;
   color: var(--text-muted);
@@ -214,8 +222,53 @@ html, body {
   padding: 0 8px;
 }
 
-.header-spacer {
-  width: 38px;
+.mode-toggle {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: background 0.2s, color 0.2s;
+  flex-shrink: 0;
+}
+
+.mode-work {
+  background: #1e3a5f;
+  color: #6bb3ff;
+}
+
+.mode-work:hover {
+  background: #254a75;
+}
+
+.mode-personal {
+  background: #1e4a3a;
+  color: #6bdfb0;
+}
+
+.mode-personal:hover {
+  background: #255a48;
+}
+
+.model-select {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.model-select:focus {
+  border-color: var(--accent);
 }
 
 /* Messages */
@@ -327,6 +380,45 @@ html, body {
   padding: 0;
   font-size: 13px;
   line-height: 1.6;
+}
+
+/* Code block copy button */
+.code-block-wrapper {
+  position: relative;
+}
+
+.btn-copy-code {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 8px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  z-index: 1;
+  font-family: var(--font-sans);
+}
+
+.code-block-wrapper:hover .btn-copy-code {
+  opacity: 1;
+}
+
+.btn-copy-code:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.btn-copy-code.copied {
+  opacity: 1;
+  background: #2ea043;
+  color: white;
+  border-color: #2ea043;
 }
 
 /* Tool use group (collapsed by default) */
@@ -544,6 +636,70 @@ html, body {
 .btn-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-stop {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #e05555;
+  border: none;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.btn-stop:hover {
+  background: #c94444;
+}
+
+/* Attachment preview */
+.attachment-preview {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 0;
+  flex-wrap: wrap;
+}
+
+.attachment-thumb {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-remove:hover {
+  background: var(--error);
 }
 
 /* Desktop breakpoint */

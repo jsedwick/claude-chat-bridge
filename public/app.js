@@ -32,12 +32,59 @@ const welcomeEl = document.getElementById('welcome');
 const inputArea = document.getElementById('input-area');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
+const stopBtn = document.getElementById('stop-btn');
 const chatTitle = document.getElementById('chat-title');
 const sidebar = document.getElementById('sidebar');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
 const sessionListEl = document.getElementById('session-list');
 
+const modelSelect = document.getElementById('model-select');
+const modeToggle = document.getElementById('mode-toggle');
+
+// Restore saved model
+const savedModel = localStorage.getItem('chat-bridge-model') || 'opus';
+modelSelect.value = savedModel;
+
+function saveModel(value) {
+  localStorage.setItem('chat-bridge-model', value);
+}
+
+function getSelectedModel() {
+  return modelSelect.value;
+}
+
+// Mode management
+async function loadMode() {
+  try {
+    const res = await fetch('/api/sessions/mode/current');
+    const { mode } = await res.json();
+    updateModeUI(mode);
+  } catch {}
+}
+
+async function toggleMode() {
+  const current = modeToggle.textContent.trim().toLowerCase();
+  const next = current === 'work' ? 'personal' : 'work';
+  try {
+    const res = await fetch('/api/sessions/mode/current', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: next }),
+    });
+    const { mode } = await res.json();
+    updateModeUI(mode);
+  } catch (err) {
+    console.error('Failed to switch mode:', err);
+  }
+}
+
+function updateModeUI(mode) {
+  modeToggle.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+  modeToggle.className = `mode-toggle mode-${mode}`;
+}
+
 // Initialize
+loadMode();
 loadSessions();
 
 // Sidebar toggle
@@ -76,7 +123,7 @@ function renderSessionList(sessions) {
     <div class="session-item ${s.id === currentSessionId ? 'active' : ''}"
          onclick="switchSession('${s.id}')">
       <button class="session-item-delete" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')">&times;</button>
-      <div class="session-item-name">${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} messages</span>
@@ -84,6 +131,45 @@ function renderSessionList(sessions) {
       </div>
     </div>
   `).join('');
+}
+
+function renameSession(id, el) {
+  el.contentEditable = true;
+  el.classList.add('editing');
+  el.focus();
+  // Select all text
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  async function finish() {
+    el.contentEditable = false;
+    el.classList.remove('editing');
+    const name = el.textContent.trim();
+    if (!name) {
+      loadSessions();
+      return;
+    }
+    try {
+      await fetch(`/api/sessions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (currentSessionId === id) chatTitle.textContent = name;
+      loadSessions();
+    } catch (err) {
+      console.error('Failed to rename session:', err);
+      loadSessions();
+    }
+  }
+
+  el.onblur = finish;
+  el.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (e.key === 'Escape') { el.contentEditable = false; el.classList.remove('editing'); loadSessions(); }
+  };
 }
 
 async function createNewSession() {
@@ -268,17 +354,157 @@ function scrollToBottom() {
   });
 }
 
+// Image paste handling
+let pendingAttachments = [];
+
+messageInput.addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result;
+        const ext = file.type.split('/')[1] || 'png';
+        pendingAttachments.push({ filename: `paste.${ext}`, path: base64 });
+        showAttachmentPreview(base64);
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+});
+
+function showAttachmentPreview(dataUrl) {
+  let container = document.getElementById('attachment-preview');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'attachment-preview';
+    container.className = 'attachment-preview';
+    document.querySelector('.input-container').before(container);
+  }
+  const wrapper = document.createElement('div');
+  wrapper.className = 'attachment-thumb';
+  wrapper.innerHTML = `
+    <img src="${dataUrl}" alt="attachment">
+    <button class="attachment-remove" onclick="removeAttachment(this)">&times;</button>
+  `;
+  container.appendChild(wrapper);
+}
+
+function removeAttachment(btn) {
+  const wrapper = btn.parentElement;
+  const container = wrapper.parentElement;
+  const idx = Array.from(container.children).indexOf(wrapper);
+  pendingAttachments.splice(idx, 1);
+  wrapper.remove();
+  if (container.children.length === 0) container.remove();
+}
+
+function clearAttachments() {
+  pendingAttachments = [];
+  const container = document.getElementById('attachment-preview');
+  if (container) container.remove();
+}
+
+// SSE stream reader (shared between send and reconnect)
+async function readSSEStream(response, processEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let lastEventType = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        lastEventType = line.substring(7).trim();
+        continue;
+      }
+      if (line.startsWith('data: ')) {
+        const rawData = line.substring(6);
+        let data;
+        try {
+          data = JSON.parse(rawData);
+        } catch {
+          data = rawData;
+        }
+        processEvent(lastEventType, data);
+      }
+    }
+  }
+}
+
+// Reconnect to an active stream
+async function attemptReconnect(sessionId, processEvent) {
+  addInfoMessage('Connection lost, reconnecting...');
+  try {
+    const res = await fetch(`/api/chat/${sessionId}/reconnect`);
+    if (!res.ok) return false;
+
+    // Clear current assistant content and re-render from buffer replay
+    clearMessages();
+    await restoreMessages(sessionId);
+    addTypingIndicator();
+
+    let reconnectedAssistantEl = null;
+    let reconnectedText = '';
+
+    function reconnectProcessor(type, data) {
+      if (type === 'text') {
+        removeTypingIndicator();
+        if (!reconnectedAssistantEl) {
+          reconnectedAssistantEl = createAssistantMessage();
+        }
+        reconnectedText += data;
+        reconnectedAssistantEl.innerHTML = renderMarkdown(reconnectedText);
+        scrollToBottom();
+      } else {
+        processEvent(type, data);
+      }
+    }
+
+    await readSSEStream(res, reconnectProcessor);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Cancel active stream
+async function cancelStream() {
+  if (!currentSessionId || !isStreaming) return;
+  try {
+    await fetch(`/api/chat/${currentSessionId}/cancel`, { method: 'POST' });
+  } catch (err) {
+    console.error('Failed to cancel:', err);
+  }
+}
+
 // Send message with streaming SSE parsing
 async function sendMessage() {
   const text = messageInput.value.trim();
-  if (!text || !currentSessionId || isStreaming) return;
+  if ((!text && pendingAttachments.length === 0) || !currentSessionId || isStreaming) return;
 
   isStreaming = true;
-  sendBtn.disabled = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = 'flex';
   messageInput.value = '';
   messageInput.style.height = 'auto';
 
   addUserMessage(text);
+  if (pendingAttachments.length > 0) {
+    addInfoMessage(`${pendingAttachments.length} image(s) attached`);
+  }
+  clearAttachments();
   addTypingIndicator();
 
   let assistantEl = null;
@@ -356,7 +582,11 @@ async function sendMessage() {
     const res = await fetch(`/api/chat/${currentSessionId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({
+        message: text || 'Please analyze the attached image(s).',
+        model: getSelectedModel(),
+        attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
+      }),
     });
 
     if (!res.ok) {
@@ -364,45 +594,30 @@ async function sendMessage() {
       throw new Error(err.error || 'Request failed');
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          lastEventType = line.substring(7).trim();
-          continue;
-        }
-        if (line.startsWith('data: ')) {
-          const rawData = line.substring(6);
-          let data;
-          try {
-            data = JSON.parse(rawData);
-          } catch {
-            data = rawData;
-          }
-          processEvent(lastEventType, data);
-        }
-      }
-    }
+    await readSSEStream(res, processEvent);
   } catch (err) {
     removeTypingIndicator();
-    const errEl = document.createElement('div');
-    errEl.className = 'message message-error';
-    errEl.textContent = err.message;
-    messagesEl.appendChild(errEl);
-    scrollToBottom();
+    // Attempt reconnect if we were mid-stream
+    if (currentSessionId && err.name !== 'AbortError') {
+      const reconnected = await attemptReconnect(currentSessionId, processEvent);
+      if (!reconnected) {
+        const errEl = document.createElement('div');
+        errEl.className = 'message message-error';
+        errEl.textContent = 'Connection lost. Response may be incomplete.';
+        messagesEl.appendChild(errEl);
+        scrollToBottom();
+      }
+    } else {
+      const errEl = document.createElement('div');
+      errEl.className = 'message message-error';
+      errEl.textContent = err.message;
+      messagesEl.appendChild(errEl);
+      scrollToBottom();
+    }
   } finally {
     isStreaming = false;
-    sendBtn.disabled = false;
+    sendBtn.style.display = 'flex';
+    stopBtn.style.display = 'none';
     removeTypingIndicator();
     if (thinkingEl) {
       const label = thinkingEl.childNodes[0];
@@ -411,6 +626,11 @@ async function sendMessage() {
       }
     }
     loadSessions();
+    // Refresh header title (may have been auto-named)
+    try {
+      const s = await fetch(`/api/sessions/${currentSessionId}`).then(r => r.json());
+      chatTitle.textContent = s.name;
+    } catch {}
     messageInput.focus();
   }
 }
@@ -421,7 +641,7 @@ function renderMarkdown(text) {
   const codeBlocks = [];
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
-    codeBlocks.push(`<pre><code class="language-${lang}">${escapeHtml(code.trim())}</code></pre>`);
+    codeBlocks.push(`<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-${lang}">${escapeHtml(code.trim())}</code></pre></div>`);
     return `\x00CODEBLOCK${idx}\x00`;
   });
 
@@ -458,6 +678,19 @@ function renderMarkdown(text) {
   text = text.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
 
   return text;
+}
+
+// Copy code block
+function copyCode(btn) {
+  const code = btn.nextElementSibling.querySelector('code');
+  navigator.clipboard.writeText(code.textContent).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 1500);
+  });
 }
 
 // Utilities

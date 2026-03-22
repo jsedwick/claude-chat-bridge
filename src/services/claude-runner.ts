@@ -1,8 +1,68 @@
 import { spawn, ChildProcess } from 'child_process';
-import { config } from '../config';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { config, getMode } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
 
+const UPLOAD_DIR = '/tmp/claude-chat-bridge/uploads';
+
 const activeSessions = new Map<string, ChildProcess>();
+// Maps app session ID → tracking ID for cancel support
+const appSessionMap = new Map<string, string>();
+
+// Stream buffering and pub/sub for reconnect support
+interface ActiveStream {
+  buffer: StreamEvent[];
+  listeners: Set<(event: StreamEvent) => void>;
+  done: boolean;
+}
+const activeStreams = new Map<string, ActiveStream>();
+const STREAM_BUFFER_TTL = 60_000; // Keep buffer 60s after stream ends
+
+function getOrCreateStream(appSessionId: string): ActiveStream {
+  let stream = activeStreams.get(appSessionId);
+  if (!stream) {
+    stream = { buffer: [], listeners: new Set(), done: false };
+    activeStreams.set(appSessionId, stream);
+  }
+  return stream;
+}
+
+function emitToStream(appSessionId: string, event: StreamEvent): void {
+  const stream = activeStreams.get(appSessionId);
+  if (!stream) return;
+  stream.buffer.push(event);
+  for (const listener of stream.listeners) {
+    listener(event);
+  }
+}
+
+function closeStream(appSessionId: string): void {
+  const stream = activeStreams.get(appSessionId);
+  if (stream) {
+    stream.done = true;
+    // Clean up after TTL
+    setTimeout(() => activeStreams.delete(appSessionId), STREAM_BUFFER_TTL);
+  }
+}
+
+export function isStreamActive(appSessionId: string): boolean {
+  const stream = activeStreams.get(appSessionId);
+  return !!stream && !stream.done;
+}
+
+export function getStreamBuffer(appSessionId: string): StreamEvent[] | null {
+  const stream = activeStreams.get(appSessionId);
+  return stream ? [...stream.buffer] : null;
+}
+
+export function subscribeToStream(appSessionId: string, listener: (event: StreamEvent) => void): (() => void) | null {
+  const stream = activeStreams.get(appSessionId);
+  if (!stream) return null;
+  stream.listeners.add(listener);
+  return () => stream.listeners.delete(listener);
+}
 
 export function getActiveSessionCount(): number {
   return activeSessions.size;
@@ -20,13 +80,38 @@ export function killSession(sessionId: string): void {
   }
 }
 
+export function cancelByAppSession(appSessionId: string): boolean {
+  const trackingId = appSessionMap.get(appSessionId);
+  if (trackingId) {
+    killSession(trackingId);
+    appSessionMap.delete(appSessionId);
+    return true;
+  }
+  return false;
+}
+
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, message, onEvent, onClose } = options;
+  const { sessionId, appSessionId, message, model, attachments, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
     onClose(null);
     return;
+  }
+
+  // Save any image attachments to temp files
+  const savedFiles: string[] = [];
+  if (attachments?.length) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    for (const att of attachments) {
+      const ext = att.filename.split('.').pop() || 'png';
+      const filename = `${crypto.randomUUID()}.${ext}`;
+      const filepath = path.join(UPLOAD_DIR, filename);
+      // att.path contains base64 data
+      const base64Data = att.path.replace(/^data:image\/\w+;base64,/, '');
+      fs.writeFileSync(filepath, Buffer.from(base64Data, 'base64'));
+      savedFiles.push(filepath);
+    }
   }
 
   const args = [
@@ -37,11 +122,34 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--permission-mode', config.permissionMode,
   ];
 
+  if (model) {
+    args.push('--model', model);
+  }
+
+  // Add uploaded images directory
+  if (savedFiles.length > 0) {
+    args.push('--add-dir', UPLOAD_DIR);
+  }
+
+  // Append mode-specific system prompt
+  const mode = getMode();
+  const modeConfig = config.modes[mode];
+  if (modeConfig?.systemPrompt) {
+    args.push('--append-system-prompt', modeConfig.systemPrompt);
+  }
+
   if (sessionId) {
     args.push('--resume', sessionId);
   }
 
-  args.push(message);
+  // Build message with image references
+  let fullMessage = message;
+  if (savedFiles.length > 0) {
+    const refs = savedFiles.map(f => f).join(', ');
+    fullMessage = `${message}\n\n[Attached image(s): ${refs}]`;
+  }
+
+  args.push(fullMessage);
 
   const proc = spawn(config.claudePath, args, {
     cwd: config.workingDir,
@@ -51,6 +159,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   const trackingId = sessionId || 'pending-' + Date.now();
   activeSessions.set(trackingId, proc);
+  appSessionMap.set(appSessionId, trackingId);
+
+  // Set up stream buffer and register initial listener
+  const stream = getOrCreateStream(appSessionId);
+  stream.listeners.add(onEvent);
 
   let capturedSessionId: string | null = sessionId || null;
   let buffer = '';
@@ -66,7 +179,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         const parsed = JSON.parse(line);
         const event = parseClaudeEvent(parsed);
         if (event) {
-          onEvent(event);
+          emitToStream(appSessionId, event);
         }
 
         // Capture session ID from init event
@@ -79,7 +192,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           capturedSessionId = parsed.session_id;
           const usage = parsed.usage;
           const cost = parsed.total_cost_usd;
-          onEvent({
+          emitToStream(appSessionId, {
             type: 'done',
             data: JSON.stringify({
               session_id: parsed.session_id,
@@ -100,12 +213,13 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     const text = chunk.toString().trim();
     // Filter out expected hook noise
     if (text && !text.includes('Hook cancelled') && !text.includes('hook')) {
-      onEvent({ type: 'error', data: text });
+      emitToStream(appSessionId, { type: 'error', data: text });
     }
   });
 
   proc.on('close', (code) => {
     activeSessions.delete(trackingId);
+    appSessionMap.delete(appSessionId);
     if (capturedSessionId && trackingId !== capturedSessionId) {
       activeSessions.delete(capturedSessionId);
     }
@@ -122,15 +236,26 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       }
     }
 
-    if (code !== 0 && code !== null) {
-      onEvent({ type: 'error', data: `Claude process exited with code ${code}` });
+    // Clean up temp image files
+    for (const f of savedFiles) {
+      try { fs.unlinkSync(f); } catch {}
     }
+
+    if (code !== 0 && code !== null) {
+      emitToStream(appSessionId, { type: 'error', data: `Claude process exited with code ${code}` });
+    }
+
+    // Remove the initial listener and close the stream
+    stream.listeners.delete(onEvent);
+    closeStream(appSessionId);
     onClose(capturedSessionId);
   });
 
   proc.on('error', (err) => {
     activeSessions.delete(trackingId);
-    onEvent({ type: 'error', data: `Failed to spawn claude: ${err.message}` });
+    emitToStream(appSessionId, { type: 'error', data: `Failed to spawn claude: ${err.message}` });
+    stream.listeners.delete(onEvent);
+    closeStream(appSessionId);
     onClose(null);
   });
 }

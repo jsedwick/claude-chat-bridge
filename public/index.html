@@ -23,8 +23,12 @@
   <main class="chat-main">
     <header class="chat-header">
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+      <button id="mode-toggle" class="mode-toggle mode-work" onclick="toggleMode()" title="Switch mode">Work</button>
       <h1 id="chat-title" class="chat-title">Claude Chat Bridge</h1>
-      <div class="header-spacer"></div>
+      <select id="model-select" class="model-select" onchange="saveModel(this.value)">
+        <option value="opus">Opus</option>
+        <option value="sonnet">Sonnet</option>
+      </select>
     </header>
 
     <div id="messages" class="messages">
@@ -48,6 +52,11 @@
         <button id="send-btn" class="btn-send" onclick="sendMessage()" aria-label="Send">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+        <button id="stop-btn" class="btn-stop" onclick="cancelStream()" aria-label="Stop" style="display:none">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" rx="2"/>
           </svg>
         </button>
       </div>
