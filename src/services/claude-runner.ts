@@ -92,7 +92,7 @@ export function getAppSessionByClaudeId(claudeSessionId: string): string | undef
 }
 
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, appSessionId, message, model, workingDir, attachments, onEvent, onClose } = options;
+  const { sessionId, appSessionId, message, model, mode, workingDir, attachments, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
@@ -139,6 +139,10 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   if (model) {
     args.push('--model', model);
+  }
+
+  if (mode && mode !== 'work') {
+    args.push('--append-system-prompt', `You are in ${mode} mode. Run /${mode} at the start of this session to load the correct vault context.`);
   }
 
   if (sessionId) {
@@ -189,7 +193,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        const result = parseClaudeEvent(parsed);
+        const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId));
         if (result) {
           const events = Array.isArray(result) ? result : [result];
           for (const event of events) {
@@ -267,7 +271,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     }
 
     // Remove the initial listener and close the stream
-    emittedToolUseIds.clear();
+    sessionToolUseIds.delete(appSessionId);
     stream.listeners.delete(onEvent);
     closeStream(appSessionId);
     onClose(capturedSessionId);
@@ -282,10 +286,19 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   });
 }
 
-// Track tool_use IDs we've already emitted to avoid duplicates
-const emittedToolUseIds = new Set<string>();
+// Track tool_use IDs per session to avoid duplicates
+const sessionToolUseIds = new Map<string, Set<string>>();
 
-function parseClaudeEvent(parsed: any): StreamEvent | StreamEvent[] | null {
+function getEmittedToolIds(appSessionId: string): Set<string> {
+  let ids = sessionToolUseIds.get(appSessionId);
+  if (!ids) {
+    ids = new Set();
+    sessionToolUseIds.set(appSessionId, ids);
+  }
+  return ids;
+}
+
+function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>): StreamEvent | StreamEvent[] | null {
   // Init event
   if (parsed.type === 'system' && parsed.subtype === 'init') {
     return { type: 'init', data: JSON.stringify({ session_id: parsed.session_id }) };

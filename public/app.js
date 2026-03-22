@@ -1,6 +1,6 @@
 // State
 let currentSessionId = null;
-let isStreaming = false;
+const streamingSessions = new Set(); // track which sessions are actively streaming
 let currentMode = 'work';
 let lastInputTokens = 0;
 
@@ -309,6 +309,14 @@ async function switchSession(id) {
   resetTokenCounter();
   restoreMessages(id);
   loadSessions();
+  // Show correct button state for this session
+  if (streamingSessions.has(id)) {
+    sendBtn.style.display = 'none';
+    stopBtn.style.display = 'flex';
+  } else {
+    sendBtn.style.display = 'flex';
+    stopBtn.style.display = 'none';
+  }
   if (sidebar.classList.contains('open')) toggleSidebar();
   messageInput.focus();
 }
@@ -424,6 +432,28 @@ function addToolIndicator(name, id, input) {
   list.appendChild(item);
   updateToolGroupCount(group);
   scrollToBottom();
+}
+
+function updateToolDetails(id, name, input) {
+  const item = document.getElementById(`tool-${id}`);
+  if (!item || !input) return;
+  const detailHtml = renderToolInput(name, input);
+  if (!detailHtml) return;
+
+  // Add chevron if missing
+  const header = item.querySelector('.tool-item-header');
+  if (header && !header.querySelector('.tool-detail-chevron')) {
+    header.insertAdjacentHTML('beforeend', '<span class="tool-detail-chevron">&#9654;</span>');
+  }
+
+  // Add or replace detail section
+  let detailEl = item.querySelector('.tool-item-detail');
+  if (!detailEl) {
+    detailEl = document.createElement('div');
+    detailEl.className = 'tool-item-detail';
+    item.appendChild(detailEl);
+  }
+  detailEl.innerHTML = detailHtml;
 }
 
 function renderToolInput(toolName, input) {
@@ -659,7 +689,7 @@ async function attemptReconnect(sessionId, processEvent) {
 
 // Cancel active stream
 async function cancelStream() {
-  if (!currentSessionId || !isStreaming) return;
+  if (!currentSessionId || !streamingSessions.has(currentSessionId)) return;
   try {
     await fetch(`/api/chat/${currentSessionId}/cancel`, { method: 'POST' });
   } catch (err) {
@@ -670,9 +700,10 @@ async function cancelStream() {
 // Send message with streaming SSE parsing
 async function sendMessage() {
   const text = messageInput.value.trim();
-  if ((!text && pendingAttachments.length === 0) || !currentSessionId || isStreaming) return;
+  if ((!text && pendingAttachments.length === 0) || !currentSessionId || streamingSessions.has(currentSessionId)) return;
 
-  isStreaming = true;
+  const streamSessionId = currentSessionId;
+  streamingSessions.add(streamSessionId);
   sendBtn.style.display = 'none';
   stopBtn.style.display = 'flex';
   messageInput.value = '';
@@ -734,6 +765,14 @@ async function sendMessage() {
           addToolIndicator(data, 'unknown');
         }
         addTypingIndicator();
+        break;
+
+      case 'tool_update':
+        // Update existing tool indicator with full details (input arrived after initial stream event)
+        try {
+          const tool = JSON.parse(data);
+          updateToolDetails(tool.id, tool.name, tool.input);
+        } catch {}
         break;
 
       case 'tool_result':
@@ -810,9 +849,12 @@ async function sendMessage() {
       scrollToBottom();
     }
   } finally {
-    isStreaming = false;
-    sendBtn.style.display = 'flex';
-    stopBtn.style.display = 'none';
+    streamingSessions.delete(streamSessionId);
+    // Only update UI buttons if we're still viewing the session that finished
+    if (currentSessionId === streamSessionId) {
+      sendBtn.style.display = 'flex';
+      stopBtn.style.display = 'none';
+    }
     removeTypingIndicator();
     if (thinkingEl) {
       const label = thinkingEl.childNodes[0];
