@@ -369,9 +369,8 @@ function addUsageInfo(data) {
     const info = JSON.parse(data);
     const parts = [];
     if (info.duration_ms) parts.push(`${(info.duration_ms / 1000).toFixed(1)}s`);
-    if (info.input_tokens) parts.push(`${info.input_tokens} in`);
-    if (info.output_tokens) parts.push(`${info.output_tokens} out`);
-    if (info.cost_usd) parts.push(`$${info.cost_usd.toFixed(4)}`);
+    if (info.input_tokens) parts.push(`${(info.input_tokens / 1000).toFixed(1)}k in`);
+    if (info.output_tokens) parts.push(`${(info.output_tokens / 1000).toFixed(1)}k out`);
     if (parts.length > 0) {
       const el = document.createElement('div');
       el.className = 'message-usage';
