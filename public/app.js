@@ -2,6 +2,44 @@
 let currentSessionId = null;
 let isStreaming = false;
 let currentMode = 'work';
+let lastInputTokens = 0;
+
+// Context window limits by model
+const MODEL_CONTEXT_LIMITS = {
+  opus: 1000000,
+  sonnet: 200000,
+};
+
+function updateTokenCounter(inputTokens) {
+  lastInputTokens = inputTokens;
+  const counterEl = document.getElementById('token-counter');
+  const countEl = document.getElementById('token-count');
+  const limitEl = document.getElementById('token-limit');
+  const model = getSelectedModel();
+  const limit = MODEL_CONTEXT_LIMITS[model] || 200000;
+
+  countEl.textContent = formatTokenCount(inputTokens);
+  limitEl.textContent = formatTokenCount(limit);
+  counterEl.style.display = '';
+
+  // Color thresholds
+  const ratio = inputTokens / limit;
+  counterEl.classList.toggle('warn', ratio >= 0.7 && ratio < 0.9);
+  counterEl.classList.toggle('critical', ratio >= 0.9);
+}
+
+function resetTokenCounter() {
+  lastInputTokens = 0;
+  const counterEl = document.getElementById('token-counter');
+  counterEl.style.display = 'none';
+  counterEl.classList.remove('warn', 'critical');
+}
+
+function formatTokenCount(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(0) + 'k';
+  return String(n);
+}
 
 // Message history (server-backed)
 async function restoreMessages(sessionId) {
@@ -16,7 +54,12 @@ async function restoreMessages(sessionId) {
         const el = createAssistantMessage();
         el.innerHTML = renderMarkdown(msg.content);
       } else if (msg.role === 'tool') {
-        addToolIndicator(msg.content, 'restored-' + Math.random());
+        try {
+          const tool = JSON.parse(msg.content);
+          addToolIndicator(tool.name, tool.id || 'restored-' + Math.random(), tool.input);
+        } catch {
+          addToolIndicator(msg.content, 'restored-' + Math.random());
+        }
       } else if (msg.role === 'usage') {
         addUsageInfo(msg.content);
       }
@@ -233,6 +276,7 @@ async function createNewSession() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     clearMessages();
+    resetTokenCounter();
     loadSessions();
     if (sidebar.classList.contains('open')) toggleSidebar();
     messageInput.focus();
@@ -248,6 +292,7 @@ async function switchSession(id) {
   chatTitle.textContent = session.name;
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
+  resetTokenCounter();
   restoreMessages(id);
   loadSessions();
   if (sidebar.classList.contains('open')) toggleSidebar();
@@ -263,6 +308,7 @@ async function deleteSessionItem(id) {
     welcomeEl.style.display = 'flex';
     inputArea.style.display = 'none';
     clearMessages();
+    resetTokenCounter();
   }
   loadSessions();
 }
@@ -341,20 +387,82 @@ function updateToolGroupCount(group) {
   if (countEl) countEl.textContent = `(${count})`;
 }
 
-function addToolIndicator(name, id) {
+function addToolIndicator(name, id, input) {
   const group = getOrCreateToolGroup();
   const list = group.querySelector('.tool-group-list');
   const item = document.createElement('div');
   item.className = 'tool-item';
   item.id = `tool-${id}`;
+
+  let detailHtml = '';
+  if (input) {
+    detailHtml = renderToolInput(name, input);
+  }
+
   item.innerHTML = `
-    <span class="tool-item-icon">&#9881;</span>
-    <span class="tool-item-name">${escapeHtml(name)}</span>
+    <div class="tool-item-header" onclick="event.stopPropagation(); this.parentElement.classList.toggle('tool-detail-open')">
+      <span class="tool-item-icon">&#9881;</span>
+      <span class="tool-item-name">${escapeHtml(name)}</span>
+      ${detailHtml ? '<span class="tool-detail-chevron">&#9654;</span>' : ''}
+    </div>
+    ${detailHtml ? `<div class="tool-item-detail">${detailHtml}</div>` : ''}
     <div class="tool-item-result"></div>
   `;
   list.appendChild(item);
   updateToolGroupCount(group);
   scrollToBottom();
+}
+
+function renderToolInput(toolName, input) {
+  const name = toolName.toLowerCase();
+
+  // code_file edits — show diff
+  if (name.includes('code_file') && input.operation === 'edit' && input.old_string) {
+    const file = input.file_path ? input.file_path.split('/').slice(-2).join('/') : '';
+    const diffLines = [];
+    if (file) diffLines.push(`@@ ${file} @@`);
+    for (const line of (input.old_string || '').split('\n')) {
+      diffLines.push(`-${line}`);
+    }
+    for (const line of (input.content || '').split('\n')) {
+      diffLines.push(`+${line}`);
+    }
+    return `<pre class="tool-diff">${renderDiffBlock(diffLines.join('\n'))}</pre>`;
+  }
+
+  // code_file write — show content
+  if (name.includes('code_file') && input.operation === 'write' && input.content) {
+    const file = input.file_path ? input.file_path.split('/').slice(-2).join('/') : '';
+    const lang = (input.file_path || '').split('.').pop() || '';
+    return `<div class="tool-file-label">${escapeHtml(file)}</div><pre><code class="language-${lang}">${escapeHtml(input.content)}</code></pre>`;
+  }
+
+  // update_document — show content/strategy
+  if (name.includes('update_document')) {
+    const parts = [];
+    if (input.file_path) parts.push(`<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`);
+    if (input.strategy) parts.push(`<div class="tool-meta">Strategy: ${escapeHtml(input.strategy)}</div>`);
+    if (input.content) parts.push(`<pre><code>${escapeHtml(input.content)}</code></pre>`);
+    return parts.join('');
+  }
+
+  // Bash — show command
+  if (name === 'bash' && input.command) {
+    return `<pre><code class="language-sh">${escapeHtml(input.command)}</code></pre>`;
+  }
+
+  // search_vault — show query
+  if (name.includes('search_vault') && input.query) {
+    return `<div class="tool-meta">Query: ${escapeHtml(input.query)}</div>`;
+  }
+
+  // Generic fallback for tools with small input
+  const json = JSON.stringify(input, null, 2);
+  if (json.length < 500) {
+    return `<pre><code>${escapeHtml(json)}</code></pre>`;
+  }
+
+  return '';
 }
 
 function updateToolResult(toolUseId, content) {
@@ -382,15 +490,21 @@ function addThinkingIndicator() {
 function addUsageInfo(data) {
   try {
     const info = JSON.parse(data);
+    const totalInput = (info.input_tokens || 0)
+      + (info.cache_creation_input_tokens || 0)
+      + (info.cache_read_input_tokens || 0);
     const parts = [];
     if (info.duration_ms) parts.push(`${(info.duration_ms / 1000).toFixed(1)}s`);
-    if (info.input_tokens) parts.push(`${(info.input_tokens / 1000).toFixed(1)}k in`);
+    if (totalInput) parts.push(`${(totalInput / 1000).toFixed(1)}k in`);
     if (info.output_tokens) parts.push(`${(info.output_tokens / 1000).toFixed(1)}k out`);
     if (parts.length > 0) {
       const el = document.createElement('div');
       el.className = 'message-usage';
       el.textContent = parts.join(' \u00b7 ');
       messagesEl.appendChild(el);
+    }
+    if (totalInput > 0) {
+      updateTokenCounter(totalInput);
     }
   } catch {}
 }
@@ -423,6 +537,21 @@ messageInput.addEventListener('paste', (e) => {
     }
   }
 });
+
+function handleImageSelect(input) {
+  for (const file of input.files) {
+    if (!file.type.startsWith('image/')) continue;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result;
+      const ext = file.type.split('/')[1] || 'png';
+      pendingAttachments.push({ filename: file.name || `image.${ext}`, path: base64 });
+      showAttachmentPreview(base64);
+    };
+    reader.readAsDataURL(file);
+  }
+  input.value = '';
+}
 
 function showAttachmentPreview(dataUrl) {
   let container = document.getElementById('attachment-preview');
@@ -547,9 +676,12 @@ async function sendMessage() {
   messageInput.value = '';
   messageInput.style.height = 'auto';
 
+  // Capture attachments before clearing UI
+  const messageAttachments = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined;
+
   addUserMessage(text);
-  if (pendingAttachments.length > 0) {
-    addInfoMessage(`${pendingAttachments.length} image(s) attached`);
+  if (messageAttachments) {
+    addInfoMessage(`${messageAttachments.length} image(s) attached`);
   }
   clearAttachments();
   addTypingIndicator();
@@ -563,7 +695,7 @@ async function sendMessage() {
   function processEvent(type, data) {
     switch (type) {
       case 'init':
-        removeTypingIndicator();
+        // Don't remove typing indicator — keep it visible until content arrives
         break;
 
       case 'text':
@@ -590,22 +722,31 @@ async function sendMessage() {
       case 'tool_use':
         removeTypingIndicator();
         if (assistantEl && currentText) {
-          saveMessage(currentSessionId, 'assistant', currentText);
           assistantEl = null;
           currentText = '';
         }
         try {
           const tool = JSON.parse(data);
-          addToolIndicator(tool.name, tool.id);
+          addToolIndicator(tool.name, tool.id, tool.input);
         } catch {
           addToolIndicator(data, 'unknown');
         }
+        addTypingIndicator();
         break;
 
       case 'tool_result':
         try {
           const result = JSON.parse(data);
           updateToolResult(result.tool_use_id, result.content);
+        } catch {}
+        addTypingIndicator();
+        break;
+
+      case 'permission_request':
+        removeTypingIndicator();
+        try {
+          const perm = JSON.parse(data);
+          showPermissionDialog(perm.id, perm.toolName, perm.toolInput);
         } catch {}
         break;
 
@@ -634,7 +775,7 @@ async function sendMessage() {
       body: JSON.stringify({
         message: text || 'Please analyze the attached image(s).',
         model: getSelectedModel(),
-        attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
+        attachments: messageAttachments,
       }),
     });
 
@@ -644,17 +785,24 @@ async function sendMessage() {
     }
 
     await readSSEStream(res, processEvent);
+
+    // Stream ended without a 'done' event — connection likely dropped (common on mobile)
+    if (!streamCompleted && currentSessionId) {
+      const reconnected = await attemptReconnect(currentSessionId, processEvent);
+      if (!reconnected) {
+        // Reload saved messages as fallback — server saves text on process exit
+        await restoreMessages(currentSessionId);
+      }
+    }
   } catch (err) {
     removeTypingIndicator();
     // Only attempt reconnect if we were genuinely mid-stream (not completed/cancelled)
     if (currentSessionId && !streamCompleted && err.name !== 'AbortError') {
       const reconnected = await attemptReconnect(currentSessionId, processEvent);
       if (!reconnected) {
-        const errEl = document.createElement('div');
-        errEl.className = 'message message-error';
-        errEl.textContent = 'Connection lost. Response may be incomplete.';
-        messagesEl.appendChild(errEl);
-        scrollToBottom();
+        // Fallback: reload saved messages after a brief delay for server to finish saving
+        await new Promise(r => setTimeout(r, 2000));
+        await restoreMessages(currentSessionId);
       }
     } else if (!streamCompleted) {
       const errEl = document.createElement('div');
@@ -695,59 +843,57 @@ function renderDiffBlock(code) {
   }).join('\n');
 }
 
+// Configure marked
+const markedRenderer = new marked.Renderer();
+
+// Custom code block renderer — diff highlighting + copy button
+markedRenderer.code = function({ text, lang }) {
+  const language = lang || '';
+  if (language === 'diff') {
+    return `<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-diff">${renderDiffBlock(text)}</code></pre></div>`;
+  }
+  const escaped = escapeHtml(text);
+  return `<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-${language}">${escaped}</code></pre></div>`;
+};
+
+// Open links in new tab
+markedRenderer.link = function({ href, text }) {
+  return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+};
+
+marked.setDefaults({
+  renderer: markedRenderer,
+  breaks: true,
+  gfm: true,
+});
+
 function renderMarkdown(text) {
-  // Code blocks first (protect from other replacements)
-  const codeBlocks = [];
+  // Handle unclosed code block (still streaming) — close it temporarily for parsing
+  const unclosedMatch = text.match(/```(\w*)\n([^`]*)$/);
+  if (unclosedMatch) {
+    // Append a closing fence so marked can parse it, then mark it as streaming
+    const closed = text + '\n```';
+    let html = marked.parse(closed);
+    // Replace last code-block-wrapper with streaming style (no copy button)
+    html = html.replace(
+      /(<div class="code-block-wrapper"><button class="btn-copy-code"[^>]*>Copy<\/button>)(<pre>)(?![\s\S]*<div class="code-block-wrapper">)/,
+      '$2'.replace('<pre>', '<pre class="streaming">')
+    );
+    // Simpler approach: just swap the last wrapper
+    const lastWrapperIdx = html.lastIndexOf('<div class="code-block-wrapper">');
+    if (lastWrapperIdx !== -1) {
+      const before = html.substring(0, lastWrapperIdx);
+      let after = html.substring(lastWrapperIdx);
+      // Remove copy button and add streaming class
+      after = after.replace('<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre>', '<pre class="streaming">');
+      // Remove the trailing </div> that matched the wrapper
+      after = after.replace(/<\/div>\s*$/, '');
+      html = before + after;
+    }
+    return html;
+  }
 
-  // Completed code blocks
-  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
-    const rendered = lang === 'diff' ? renderDiffBlock(code) : escapeHtml(code.trim());
-    codeBlocks.push(`<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-${lang}">${rendered}</code></pre></div>`);
-    return `\x00CODEBLOCK${idx}\x00`;
-  });
-
-  // Unclosed code block (still streaming) — render as a code block in progress
-  text = text.replace(/```(\w*)\n([\s\S]*)$/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
-    const rendered = lang === 'diff' ? renderDiffBlock(code) : escapeHtml(code);
-    codeBlocks.push(`<pre class="streaming"><code class="language-${lang}">${rendered}</code></pre>`);
-    return `\x00CODEBLOCK${idx}\x00`;
-  });
-
-  // Inline code (but not triple backticks)
-  text = text.replace(/`([^`]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
-
-  // Headers
-  text = text.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Bold and italic
-  text = text.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  // Lists
-  text = text.replace(/^[\s]*[-*] (.+)$/gm, '<li>$1</li>');
-  text = text.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-  text = text.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
-  // Clean up nested ul tags
-  text = text.replace(/<\/ul>\s*<ul>/g, '');
-
-  // Links
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-
-  // Paragraphs
-  text = text.replace(/\n\n/g, '</p><p>');
-  text = text.replace(/\n/g, '<br>');
-  if (!text.startsWith('<')) text = '<p>' + text + '</p>';
-
-  // Restore code blocks
-  text = text.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
-
-  return text;
+  return marked.parse(text);
 }
 
 // Copy code block
@@ -779,4 +925,49 @@ function formatTime(iso) {
   if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
   if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// Permission dialog
+let pendingPermissionId = null;
+
+function showPermissionDialog(id, toolName, toolInput) {
+  pendingPermissionId = id;
+  document.getElementById('permission-tool-name').textContent = toolName;
+
+  // Format the tool input for display
+  let detail = '';
+  if (toolName === 'Bash' && toolInput?.command) {
+    detail = toolInput.command;
+  } else if ((toolName === 'Edit' || toolName === 'Write') && toolInput?.file_path) {
+    detail = toolInput.file_path;
+  } else if (toolInput) {
+    const json = JSON.stringify(toolInput, null, 2);
+    detail = json.length > 500 ? json.substring(0, 500) + '...' : json;
+  }
+  document.getElementById('permission-tool-detail').textContent = detail || '(no details)';
+  document.getElementById('permission-overlay').style.display = '';
+}
+
+async function respondPermission(decision, allowAll) {
+  const overlay = document.getElementById('permission-overlay');
+  overlay.style.display = 'none';
+
+  if (!pendingPermissionId) return;
+
+  try {
+    await fetch('/api/permissions/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: pendingPermissionId,
+        decision,
+        allowAll: !!allowAll,
+      }),
+    });
+  } catch (err) {
+    console.error('Failed to respond to permission:', err);
+  }
+
+  pendingPermissionId = null;
+  addTypingIndicator();
 }

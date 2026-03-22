@@ -45,6 +45,11 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  // Keepalive ping every 15s to prevent idle connection drops
+  const keepalive = setInterval(() => {
+    try { res.write(': keepalive\n\n'); } catch {}
+  }, 15000);
+
   let assistantText = '';
 
   // On first message of a new session, prepend mode command
@@ -66,14 +71,9 @@ router.post('/:sessionId', (req: Request, res: Response) => {
       if (event.type === 'text') {
         assistantText += event.data;
       }
-      // Save tool use
+      // Save tool use (preserve full data for restore)
       if (event.type === 'tool_use') {
-        try {
-          const tool = JSON.parse(event.data);
-          addMessage(sessionId, 'tool', tool.name);
-        } catch {
-          addMessage(sessionId, 'tool', event.data);
-        }
+        addMessage(sessionId, 'tool', event.data);
       }
       // Save usage
       if (event.type === 'done') {
@@ -81,6 +81,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
       }
     },
     onClose: (claudeSessionId) => {
+      clearInterval(keepalive);
       // Save accumulated assistant response
       if (assistantText) {
         addMessage(sessionId, 'assistant', assistantText);
@@ -99,6 +100,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
 
   // Handle client disconnect
   req.on('close', () => {
+    clearInterval(keepalive);
     // The claude process will continue running and complete naturally
     // This is fine - we just won't send more events
   });
@@ -144,12 +146,18 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     return;
   }
 
+  // Keepalive ping every 15s
+  const keepalive = setInterval(() => {
+    try { res.write(': keepalive\n\n'); } catch {}
+  }, 15000);
+
   // Subscribe to live events going forward
   const unsubscribe = subscribeToStream(sessionId, (event) => {
     sendSSE(event.type, event.data);
   });
 
   if (!unsubscribe) {
+    clearInterval(keepalive);
     res.write('event: close\ndata: "done"\n\n');
     res.end();
     return;
@@ -160,6 +168,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
   const checkDone = setInterval(() => {
     if (!isStreamActive(sessionId)) {
       clearInterval(checkDone);
+      clearInterval(keepalive);
       unsubscribe();
       res.write('event: close\ndata: "done"\n\n');
       res.end();
@@ -168,6 +177,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
 
   req.on('close', () => {
     clearInterval(checkDone);
+    clearInterval(keepalive);
     unsubscribe();
   });
 });

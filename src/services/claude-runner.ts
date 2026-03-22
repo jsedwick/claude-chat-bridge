@@ -1,15 +1,12 @@
 import { spawn, ChildProcess } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
 import { config } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
-
-const UPLOAD_DIR = '/tmp/claude-chat-bridge/uploads';
 
 const activeSessions = new Map<string, ChildProcess>();
 // Maps app session ID → tracking ID for cancel support
 const appSessionMap = new Map<string, string>();
+// Reverse map: Claude session ID → app session ID
+const claudeToAppMap = new Map<string, string>();
 
 // Stream buffering and pub/sub for reconnect support
 interface ActiveStream {
@@ -29,7 +26,7 @@ function getOrCreateStream(appSessionId: string): ActiveStream {
   return stream;
 }
 
-function emitToStream(appSessionId: string, event: StreamEvent): void {
+export function emitToStream(appSessionId: string, event: StreamEvent): void {
   const stream = activeStreams.get(appSessionId);
   if (!stream) return;
   stream.buffer.push(event);
@@ -90,6 +87,10 @@ export function cancelByAppSession(appSessionId: string): boolean {
   return false;
 }
 
+export function getAppSessionByClaudeId(claudeSessionId: string): string | undefined {
+  return claudeToAppMap.get(claudeSessionId);
+}
+
 export function runClaude(options: ClaudeRunnerOptions): void {
   const { sessionId, appSessionId, message, model, workingDir, attachments, onEvent, onClose } = options;
 
@@ -99,20 +100,30 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     return;
   }
 
-  // Save any image attachments to temp files
-  const savedFiles: string[] = [];
+  // Build message content blocks
+  const contentBlocks: Array<Record<string, unknown>> = [];
+
+  // Add image content blocks from attachments
   if (attachments?.length) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     for (const att of attachments) {
-      const ext = att.filename.split('.').pop() || 'png';
-      const filename = `${crypto.randomUUID()}.${ext}`;
-      const filepath = path.join(UPLOAD_DIR, filename);
-      // att.path contains base64 data
-      const base64Data = att.path.replace(/^data:image\/\w+;base64,/, '');
-      fs.writeFileSync(filepath, Buffer.from(base64Data, 'base64'));
-      savedFiles.push(filepath);
+      const match = att.path.match(/^data:(image\/[^;]+);base64,(.+)$/s);
+      if (match) {
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: match[1],
+            data: match[2],
+          },
+        });
+      }
     }
   }
+
+  // Add text content block
+  contentBlocks.push({ type: 'text', text: message });
+
+  const hasImages = contentBlocks.some(b => b.type === 'image');
 
   const args = [
     '-p',
@@ -122,33 +133,41 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--permission-mode', config.permissionMode,
   ];
 
-  if (model) {
-    args.push('--model', model);
+  if (hasImages) {
+    args.push('--input-format', 'stream-json');
   }
 
-  // Add uploaded images directory
-  if (savedFiles.length > 0) {
-    args.push('--add-dir', UPLOAD_DIR);
+  if (model) {
+    args.push('--model', model);
   }
 
   if (sessionId) {
     args.push('--resume', sessionId);
   }
 
-  // Build message with image references
-  let fullMessage = message;
-  if (savedFiles.length > 0) {
-    const refs = savedFiles.map(f => f).join(', ');
-    fullMessage = `${message}\n\n[Attached image(s): ${refs}]`;
+  // When no images, pass message as CLI arg (simpler)
+  if (!hasImages) {
+    args.push(message);
   }
-
-  args.push(fullMessage);
 
   const proc = spawn(config.claudePath, args, {
     cwd: workingDir || config.workingDir,
-    env: { ...process.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, CHAT_BRIDGE_SESSION: appSessionId },
+    stdio: [hasImages ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   });
+
+  // Pipe image+text content via stdin for stream-json input
+  if (hasImages && proc.stdin) {
+    const inputMessage = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: contentBlocks,
+      },
+    });
+    proc.stdin.write(inputMessage + '\n');
+    proc.stdin.end();
+  }
 
   const trackingId = sessionId || 'pending-' + Date.now();
   activeSessions.set(trackingId, proc);
@@ -161,7 +180,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   let capturedSessionId: string | null = sessionId || null;
   let buffer = '';
 
-  proc.stdout.on('data', (chunk: Buffer) => {
+  proc.stdout!.on('data', (chunk: Buffer) => {
     buffer += chunk.toString();
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -170,14 +189,18 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        const event = parseClaudeEvent(parsed);
-        if (event) {
-          emitToStream(appSessionId, event);
+        const result = parseClaudeEvent(parsed);
+        if (result) {
+          const events = Array.isArray(result) ? result : [result];
+          for (const event of events) {
+            emitToStream(appSessionId, event);
+          }
         }
 
         // Capture session ID from init event
         if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.session_id) {
           capturedSessionId = parsed.session_id;
+          claudeToAppMap.set(parsed.session_id, appSessionId);
         }
 
         // Capture session ID from result event
@@ -193,6 +216,8 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               cost_usd: cost,
               input_tokens: usage?.input_tokens,
               output_tokens: usage?.output_tokens,
+              cache_creation_input_tokens: usage?.cache_creation_input_tokens,
+              cache_read_input_tokens: usage?.cache_read_input_tokens,
             }),
           });
         }
@@ -202,10 +227,13 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     }
   });
 
-  proc.stderr.on('data', (chunk: Buffer) => {
+  proc.stderr!.on('data', (chunk: Buffer) => {
     const text = chunk.toString().trim();
-    // Filter out expected hook noise
-    if (text && !text.includes('Hook cancelled') && !text.includes('hook')) {
+    if (!text) return;
+    // Surface hook failures as errors so the user can see what was blocked
+    if (text.includes('Hook cancelled') || text.includes('hook')) {
+      emitToStream(appSessionId, { type: 'error', data: `Hook: ${text}` });
+    } else {
       emitToStream(appSessionId, { type: 'error', data: text });
     }
   });
@@ -213,8 +241,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   proc.on('close', (code) => {
     activeSessions.delete(trackingId);
     appSessionMap.delete(appSessionId);
-    if (capturedSessionId && trackingId !== capturedSessionId) {
-      activeSessions.delete(capturedSessionId);
+    if (capturedSessionId) {
+      claudeToAppMap.delete(capturedSessionId);
+      if (trackingId !== capturedSessionId) {
+        activeSessions.delete(capturedSessionId);
+      }
     }
 
     // Process any remaining buffer
@@ -229,16 +260,12 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       }
     }
 
-    // Clean up temp image files
-    for (const f of savedFiles) {
-      try { fs.unlinkSync(f); } catch {}
-    }
-
     if (code !== 0 && code !== null) {
       emitToStream(appSessionId, { type: 'error', data: `Claude process exited with code ${code}` });
     }
 
     // Remove the initial listener and close the stream
+    emittedToolUseIds.clear();
     stream.listeners.delete(onEvent);
     closeStream(appSessionId);
     onClose(capturedSessionId);
@@ -253,10 +280,45 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   });
 }
 
-function parseClaudeEvent(parsed: any): StreamEvent | null {
+// Track tool_use IDs we've already emitted to avoid duplicates
+const emittedToolUseIds = new Set<string>();
+
+function parseClaudeEvent(parsed: any): StreamEvent | StreamEvent[] | null {
   // Init event
   if (parsed.type === 'system' && parsed.subtype === 'init') {
     return { type: 'init', data: JSON.stringify({ session_id: parsed.session_id }) };
+  }
+
+  // Assistant message — contains complete tool_use and text blocks
+  if (parsed.type === 'assistant' && parsed.message?.content) {
+    const events: StreamEvent[] = [];
+    for (const block of parsed.message.content) {
+      if (block.type === 'tool_use' && !emittedToolUseIds.has(block.id)) {
+        emittedToolUseIds.add(block.id);
+        events.push({
+          type: 'tool_use',
+          data: JSON.stringify({ id: block.id, name: block.name, input: block.input }),
+        });
+      }
+    }
+    return events.length > 0 ? events : null;
+  }
+
+  // User message with tool_result
+  if (parsed.type === 'user' && parsed.message?.content) {
+    const events: StreamEvent[] = [];
+    for (const block of parsed.message.content) {
+      if (block.type === 'tool_result') {
+        events.push({
+          type: 'tool_result',
+          data: JSON.stringify({
+            tool_use_id: block.tool_use_id,
+            content: block.content,
+          }),
+        });
+      }
+    }
+    return events.length > 0 ? events : null;
   }
 
   // Stream events
@@ -273,8 +335,10 @@ function parseClaudeEvent(parsed: any): StreamEvent | null {
       return { type: 'thinking', data: evt.delta.thinking };
     }
 
-    // Tool use start
+    // Tool use start (from stream)
     if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+      if (emittedToolUseIds.has(evt.content_block.id)) return null;
+      emittedToolUseIds.add(evt.content_block.id);
       return {
         type: 'tool_use',
         data: JSON.stringify({
@@ -284,7 +348,7 @@ function parseClaudeEvent(parsed: any): StreamEvent | null {
       };
     }
 
-    // Tool result
+    // Tool result (from stream)
     if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_result') {
       return {
         type: 'tool_result',

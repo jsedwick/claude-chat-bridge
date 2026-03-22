@@ -7,6 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Claude Chat Bridge</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <!-- Session Sidebar -->
@@ -44,7 +45,18 @@
     </div>
 
     <div id="input-area" class="input-area" style="display: none;">
+      <div id="token-counter" class="token-counter" style="display:none">
+        <span id="token-count">0k</span> / <span id="token-limit">200k</span>
+      </div>
       <div class="input-container">
+        <input type="file" id="image-input" accept="image/*" multiple hidden onchange="handleImageSelect(this)">
+        <button class="btn-attach" onclick="document.getElementById('image-input').click()" aria-label="Attach image">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </button>
         <textarea
           id="message-input"
           class="message-input"
@@ -66,6 +78,22 @@
       </div>
     </div>
   </main>
+
+  <!-- Permission Request Dialog -->
+  <div id="permission-overlay" class="permission-overlay" style="display:none">
+    <div class="permission-dialog">
+      <div class="permission-header">Permission Request</div>
+      <div class="permission-body">
+        <div class="permission-tool" id="permission-tool-name"></div>
+        <div class="permission-detail" id="permission-tool-detail"></div>
+      </div>
+      <div class="permission-actions">
+        <button class="permission-btn permission-btn-deny" onclick="respondPermission('deny')">Deny</button>
+        <button class="permission-btn permission-btn-allow-all" onclick="respondPermission('allow', true)">Allow All</button>
+        <button class="permission-btn permission-btn-allow" onclick="respondPermission('allow')">Allow</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

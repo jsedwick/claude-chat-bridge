@@ -7,6 +7,7 @@ import path from 'path';
 import { config } from './config';
 import chatRoutes from './routes/chat';
 import sessionRoutes from './routes/sessions';
+import permissionRoutes from './routes/permissions';
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // API routes
 app.use('/api/chat', chatRoutes);
 app.use('/api/sessions', sessionRoutes);
+app.use('/api/permissions', permissionRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
