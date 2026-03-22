@@ -152,7 +152,20 @@ function renderSessionList(sessions) {
   `).join('');
 }
 
+// Rename via header title click
+function renameCurrentSession() {
+  if (!currentSessionId) return;
+  startEditing(currentSessionId, chatTitle);
+}
+
+// Rename via sidebar double-click
 function renameSession(id, el) {
+  startEditing(id, el);
+}
+
+// Shared rename logic
+function startEditing(id, el) {
+  const originalText = el.textContent;
   el.contentEditable = true;
   el.classList.add('editing');
   el.focus();
@@ -167,27 +180,28 @@ function renameSession(id, el) {
     el.classList.remove('editing');
     const name = el.textContent.trim();
     if (!name) {
-      loadSessions();
+      el.textContent = originalText;
       return;
     }
+    if (name === originalText) return;
     try {
       await fetch(`/api/sessions/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
-      if (currentSessionId === id) chatTitle.textContent = name;
+      chatTitle.textContent = name;
       loadSessions();
     } catch (err) {
       console.error('Failed to rename session:', err);
-      loadSessions();
+      el.textContent = originalText;
     }
   }
 
   el.onblur = finish;
   el.onkeydown = (e) => {
     if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-    if (e.key === 'Escape') { el.contentEditable = false; el.classList.remove('editing'); loadSessions(); }
+    if (e.key === 'Escape') { el.contentEditable = false; el.classList.remove('editing'); el.textContent = originalText; }
   };
 }
 

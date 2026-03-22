@@ -219,7 +219,23 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 0 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.chat-title:hover {
+  background: var(--bg-primary);
+}
+
+.chat-title.editing {
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  outline: none;
+  cursor: text;
+  white-space: normal;
+  overflow: visible;
 }
 
 .mode-toggle {

@@ -24,7 +24,7 @@
     <header class="chat-header">
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
       <button id="mode-toggle" class="mode-toggle mode-work" onclick="toggleMode()" title="Switch mode">Work</button>
-      <h1 id="chat-title" class="chat-title">Claude Chat Bridge</h1>
+      <h1 id="chat-title" class="chat-title" onclick="renameCurrentSession()">Claude Chat Bridge</h1>
       <select id="model-select" class="model-select" onchange="saveModel(this.value)">
         <option value="opus">Opus</option>
         <option value="sonnet">Sonnet</option>
