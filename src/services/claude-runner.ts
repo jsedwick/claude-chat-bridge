@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { config, getMode } from '../config';
+import { config } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
 
 const UPLOAD_DIR = '/tmp/claude-chat-bridge/uploads';
@@ -129,13 +129,6 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   // Add uploaded images directory
   if (savedFiles.length > 0) {
     args.push('--add-dir', UPLOAD_DIR);
-  }
-
-  // Append mode-specific system prompt
-  const mode = getMode();
-  const modeConfig = config.modes[mode];
-  if (modeConfig?.systemPrompt) {
-    args.push('--append-system-prompt', modeConfig.systemPrompt);
   }
 
   if (sessionId) {

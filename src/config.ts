@@ -11,16 +11,6 @@ export const config = {
   claudePath: process.env.CHAT_BRIDGE_CLAUDE_PATH || '/Users/jsedwick/.local/bin/claude',
   permissionMode: 'bypassPermissions' as const,
   sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
-  modes: {
-    work: {
-      label: 'Work',
-      systemPrompt: 'You are in work mode. Start by calling the switch_mode MCP tool with mode "work" if not already in work mode.',
-    },
-    personal: {
-      label: 'Personal',
-      systemPrompt: 'You are in personal mode. Start by calling the switch_mode MCP tool with mode "personal" if not already in personal mode.',
-    },
-  } as Record<Mode, { label: string; systemPrompt: string }>,
   defaultMode: 'work' as Mode,
 };
 
