@@ -291,15 +291,17 @@ function parseClaudeEvent(parsed: any): StreamEvent | StreamEvent[] | null {
     return { type: 'init', data: JSON.stringify({ session_id: parsed.session_id }) };
   }
 
-  // Assistant message — contains complete tool_use and text blocks
+  // Assistant message — contains complete tool_use and text blocks (including input)
   if (parsed.type === 'assistant' && parsed.message?.content) {
     const events: StreamEvent[] = [];
     for (const block of parsed.message.content) {
-      if (block.type === 'tool_use' && !emittedToolUseIds.has(block.id)) {
+      if (block.type === 'tool_use') {
+        const alreadyEmitted = emittedToolUseIds.has(block.id);
         emittedToolUseIds.add(block.id);
         events.push({
+          // Use tool_use for new tools, tool_use for updates (with _update flag for chat.ts)
           type: 'tool_use',
-          data: JSON.stringify({ id: block.id, name: block.name, input: block.input }),
+          data: JSON.stringify({ id: block.id, name: block.name, input: block.input, _update: alreadyEmitted }),
         });
       }
     }

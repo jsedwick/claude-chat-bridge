@@ -157,10 +157,20 @@ async function loadDirs() {
   } catch {}
 }
 
-// Initialize
-loadMode();
-loadDirs();
-loadSessions();
+// Initialize — always start in work mode on page load
+(async () => {
+  try {
+    await fetch('/api/sessions/mode/current', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'work' }),
+    });
+  } catch {}
+  currentMode = 'work';
+  updateModeTabsUI('work');
+  loadDirs();
+  loadSessions();
+})();
 
 // Sidebar toggle
 function toggleSidebar() {
@@ -410,7 +420,6 @@ function addToolIndicator(name, id, input) {
       ${detailHtml ? '<span class="tool-detail-chevron">&#9654;</span>' : ''}
     </div>
     ${detailHtml ? `<div class="tool-item-detail">${detailHtml}</div>` : ''}
-    <div class="tool-item-result"></div>
   `;
   list.appendChild(item);
   updateToolGroupCount(group);
@@ -467,17 +476,6 @@ function renderToolInput(toolName, input) {
   }
 
   return '';
-}
-
-function updateToolResult(toolUseId, content) {
-  const items = document.querySelectorAll('.tool-item');
-  for (const item of items) {
-    const resultEl = item.querySelector('.tool-item-result');
-    if (resultEl && !resultEl.textContent) {
-      resultEl.textContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      break;
-    }
-  }
 }
 
 function addThinkingIndicator() {
@@ -739,11 +737,7 @@ async function sendMessage() {
         break;
 
       case 'tool_result':
-        try {
-          const result = JSON.parse(data);
-          updateToolResult(result.tool_use_id, result.content);
-        } catch {}
-        addTypingIndicator();
+        // Results are saved server-side but not displayed (too verbose)
         break;
 
       case 'permission_request':

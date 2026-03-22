@@ -1,5 +1,5 @@
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'tool' | 'usage';
+  role: 'user' | 'assistant' | 'tool' | 'tool_result' | 'usage';
   content: string;
   timestamp: number;
 }

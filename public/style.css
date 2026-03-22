@@ -704,16 +704,7 @@ pre.streaming {
   margin-bottom: 4px;
 }
 
-.tool-item-result {
-  width: 100%;
-  font-size: 11px;
-  color: var(--text-muted);
-  max-height: 150px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  font-family: var(--font-mono);
-  padding-left: 18px;
-}
+/* Tool results are saved server-side but not displayed */
 
 /* Thinking */
 .thinking-indicator {

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStreamBuffer, subscribeToStream } from '../services/claude-runner';
-import { getSession, updateSession, addMessage } from '../services/session-store';
+import { getSession, updateSession, addMessage, updateToolMessage } from '../services/session-store';
 
 const router = Router();
 
@@ -60,14 +60,30 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     workingDir: session.workingDir || undefined,
     attachments: attachments || undefined,
     onEvent: (event) => {
+      // Handle _update tool_use events (from assistant message with complete data)
+      // These only update persistence — don't send to client (it already has the item from stream)
+      if (event.type === 'tool_use') {
+        try {
+          const toolData = JSON.parse(event.data);
+          if (toolData._update) {
+            updateToolMessage(sessionId, toolData.id, event.data);
+            return;
+          }
+        } catch {}
+        sendSSE(event.type, event.data);
+        addMessage(sessionId, 'tool', event.data);
+        return;
+      }
+
       sendSSE(event.type, event.data);
+
       // Accumulate assistant text
       if (event.type === 'text') {
         assistantText += event.data;
       }
-      // Save tool use (preserve full data for restore)
-      if (event.type === 'tool_use') {
-        addMessage(sessionId, 'tool', event.data);
+      // Save tool result for restore
+      if (event.type === 'tool_result') {
+        addMessage(sessionId, 'tool_result', event.data);
       }
       // Save usage
       if (event.type === 'done') {
@@ -128,8 +144,11 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  // Replay buffered events
+  // Replay buffered events (skip _update tool_use — persistence only)
   for (const event of buffer) {
+    if (event.type === 'tool_use') {
+      try { if (JSON.parse(event.data)._update) continue; } catch {}
+    }
     sendSSE(event.type, event.data);
   }
 
@@ -145,8 +164,11 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     try { res.write(': keepalive\n\n'); } catch {}
   }, 15000);
 
-  // Subscribe to live events going forward
+  // Subscribe to live events going forward (skip _update tool_use)
   const unsubscribe = subscribeToStream(sessionId, (event) => {
+    if (event.type === 'tool_use') {
+      try { if (JSON.parse(event.data)._update) return; } catch {}
+    }
     sendSSE(event.type, event.data);
   });
 

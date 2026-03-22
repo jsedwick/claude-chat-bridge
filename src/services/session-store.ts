@@ -79,6 +79,23 @@ export function addMessage(sessionId: string, role: ChatMessage['role'], content
   save();
 }
 
+export function updateToolMessage(sessionId: string, toolId: string, content: string): boolean {
+  const session = sessions.find(s => s.id === sessionId);
+  if (!session?.messages) return false;
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const msg = session.messages[i];
+    if (msg.role !== 'tool') continue;
+    try {
+      if (JSON.parse(msg.content).id === toolId) {
+        msg.content = content;
+        save();
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
 export function getMessages(sessionId: string): ChatMessage[] {
   const session = sessions.find(s => s.id === sessionId);
   return session?.messages || [];
