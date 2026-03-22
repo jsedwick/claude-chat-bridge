@@ -437,6 +437,28 @@ html, body {
   border-color: #2ea043;
 }
 
+/* Diff highlighting */
+.diff-add {
+  display: inline-block;
+  width: 100%;
+  background: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+}
+
+.diff-del {
+  display: inline-block;
+  width: 100%;
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+.diff-hunk {
+  display: inline-block;
+  width: 100%;
+  color: #8b949e;
+  background: rgba(56, 139, 253, 0.1);
+}
+
 /* Tool use group (collapsed by default) */
 .tool-group {
   background: var(--tool-bg);

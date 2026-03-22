@@ -673,7 +673,20 @@ function renderMarkdown(text) {
   const codeBlocks = [];
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
-    codeBlocks.push(`<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-${lang}">${escapeHtml(code.trim())}</code></pre></div>`);
+    const isDiff = lang === 'diff';
+    let rendered;
+    if (isDiff) {
+      rendered = code.trim().split('\n').map(line => {
+        const escaped = escapeHtml(line);
+        if (line.startsWith('+')) return `<span class="diff-add">${escaped}</span>`;
+        if (line.startsWith('-')) return `<span class="diff-del">${escaped}</span>`;
+        if (line.startsWith('@@')) return `<span class="diff-hunk">${escaped}</span>`;
+        return escaped;
+      }).join('\n');
+    } else {
+      rendered = escapeHtml(code.trim());
+    }
+    codeBlocks.push(`<div class="code-block-wrapper"><button class="btn-copy-code" onclick="copyCode(this)">Copy</button><pre><code class="language-${lang}">${rendered}</code></pre></div>`);
     return `\x00CODEBLOCK${idx}\x00`;
   });
 
