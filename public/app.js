@@ -178,6 +178,77 @@ function toggleSidebar() {
   sidebarOverlay.classList.toggle('active');
 }
 
+// Action menu commands
+const ACTION_MENU_ITEMS = [
+  { label: 'Attach Image', icon: 'image', action: 'image' },
+  { divider: true },
+  { label: 'Workflow', icon: 'play', command: '/workflow' },
+  { label: 'Close Session', icon: 'check-circle', command: '/close' },
+  { label: 'Close (No Git)', icon: 'x-circle', command: '/close-no-git' },
+  { divider: true },
+  { label: 'Sessions', icon: 'list', command: '/sessions' },
+  { label: 'Projects', icon: 'folder', command: '/projects' },
+  { label: 'Issue', icon: 'alert-triangle', command: '/issue' },
+];
+
+const ACTION_ICONS = {
+  image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+  play: '<polygon points="5 3 19 12 5 21 5 3"/>',
+  'check-circle': '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+  'x-circle': '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
+  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  'alert-triangle': '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+};
+
+function buildActionMenu() {
+  const menu = document.getElementById('action-menu');
+  menu.innerHTML = ACTION_MENU_ITEMS.map(item => {
+    if (item.divider) return '<div class="action-menu-divider"></div>';
+    const iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ACTION_ICONS[item.icon]}</svg>`;
+    if (item.action === 'image') {
+      return `<button class="action-menu-item" onclick="triggerImageAttach()">${iconSvg}<span>${item.label}</span></button>`;
+    }
+    return `<button class="action-menu-item" onclick="fireCommand('${item.command}')">${iconSvg}<span>${item.label}</span></button>`;
+  }).join('');
+}
+
+function toggleActionMenu() {
+  const menu = document.getElementById('action-menu');
+  const btn = document.querySelector('.btn-attach');
+  const isOpen = menu.style.display !== 'none';
+  menu.style.display = isOpen ? 'none' : 'block';
+  btn.classList.toggle('active', !isOpen);
+}
+
+function closeActionMenu() {
+  const menu = document.getElementById('action-menu');
+  const btn = document.querySelector('.btn-attach');
+  menu.style.display = 'none';
+  btn.classList.remove('active');
+}
+
+function triggerImageAttach() {
+  closeActionMenu();
+  document.getElementById('image-input').click();
+}
+
+function fireCommand(command) {
+  closeActionMenu();
+  if (!currentSessionId) return;
+  messageInput.value = command;
+  sendMessage();
+}
+
+// Close action menu when clicking outside
+document.addEventListener('click', (e) => {
+  const wrapper = e.target.closest('.action-menu-wrapper');
+  if (!wrapper) closeActionMenu();
+});
+
+// Build menu immediately (script loads after DOM)
+buildActionMenu();
+
 // Auto-resize textarea
 function autoResize(el) {
   el.style.height = 'auto';
@@ -195,19 +266,39 @@ function handleKeydown(e) {
 // Sessions
 async function loadSessions() {
   try {
-    const res = await fetch(`/api/sessions?mode=${currentMode}`);
-    const sessions = await res.json();
-    renderSessionList(sessions);
+    const [activeRes, archivedRes] = await Promise.all([
+      fetch(`/api/sessions?mode=${currentMode}`),
+      fetch(`/api/sessions?mode=${currentMode}&archived=true`),
+    ]);
+    const activeSessions = await activeRes.json();
+    const allSessions = await archivedRes.json();
+    const archivedSessions = allSessions.filter(s => s.archived);
+    renderSessionList(activeSessions);
+    renderArchiveList(archivedSessions);
   } catch (err) {
     console.error('Failed to load sessions:', err);
   }
 }
 
-function renderSessionList(sessions) {
-  sessionListEl.innerHTML = sessions.map(s => `
-    <div class="session-item ${s.id === currentSessionId ? 'active' : ''}"
+function renderSessionItem(s, isArchived) {
+  const actions = isArchived
+    ? `<div class="session-item-actions">
+         <button class="session-item-action" onclick="event.stopPropagation(); unarchiveSessionItem('${s.id}')" title="Unarchive">
+           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+         </button>
+         <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')" title="Delete permanently">&times;</button>
+       </div>`
+    : `<div class="session-item-actions">
+         <button class="session-item-action" onclick="event.stopPropagation(); archiveSessionItem('${s.id}')" title="Archive">
+           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+         </button>
+         <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')" title="Delete">&times;</button>
+       </div>`;
+
+  return `
+    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''}"
          onclick="switchSession('${s.id}')">
-      <button class="session-item-delete" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')">&times;</button>
+      ${actions}
       <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
@@ -215,8 +306,46 @@ function renderSessionList(sessions) {
         ${s.workingDir ? `<span class="session-item-dir">${s.workingDir.split('/').pop()}</span>` : ''}
         <span>${formatTime(s.lastActivity)}</span>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+}
+
+function renderSessionList(sessions) {
+  sessionListEl.innerHTML = sessions.map(s => renderSessionItem(s, false)).join('');
+}
+
+function renderArchiveList(sessions) {
+  const countEl = document.getElementById('archive-count');
+  const listEl = document.getElementById('archive-list');
+  countEl.textContent = sessions.length;
+  listEl.innerHTML = sessions.length
+    ? sessions.map(s => renderSessionItem(s, true)).join('')
+    : '<div class="archive-empty">No archived sessions</div>';
+}
+
+function toggleArchiveSection() {
+  const listEl = document.getElementById('archive-list');
+  const chevron = document.querySelector('.archive-chevron');
+  const isOpen = listEl.style.display !== 'none';
+  listEl.style.display = isOpen ? 'none' : 'block';
+  chevron.classList.toggle('expanded', !isOpen);
+}
+
+async function archiveSessionItem(id) {
+  await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+  if (currentSessionId === id) {
+    currentSessionId = null;
+    chatTitle.textContent = 'Claude Chat Bridge';
+    welcomeEl.style.display = 'flex';
+    inputArea.style.display = 'none';
+    clearMessages();
+    resetTokenCounter();
+  }
+  loadSessions();
+}
+
+async function unarchiveSessionItem(id) {
+  await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+  loadSessions();
 }
 
 // Rename via header title click
@@ -361,8 +490,54 @@ function addInfoMessage(text) {
 function createAssistantMessage() {
   const el = document.createElement('div');
   el.className = 'message message-assistant';
+  attachCopyMenu(el);
   messagesEl.appendChild(el);
   return el;
+}
+
+// Long-press (mobile) / right-click (desktop) copy menu for assistant messages
+function attachCopyMenu(el) {
+  let longPressTimer = null;
+  let didLongPress = false;
+
+  function showCopyToast(el) {
+    // Copy the rendered text content (not HTML)
+    navigator.clipboard.writeText(el.innerText).then(() => {
+      const toast = document.createElement('div');
+      toast.className = 'copy-toast';
+      toast.textContent = 'Copied to clipboard';
+      el.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('visible'));
+      setTimeout(() => {
+        toast.classList.remove('visible');
+        setTimeout(() => toast.remove(), 200);
+      }, 1200);
+    });
+  }
+
+  // Long press for mobile
+  el.addEventListener('touchstart', (e) => {
+    didLongPress = false;
+    longPressTimer = setTimeout(() => {
+      didLongPress = true;
+      e.preventDefault();
+      showCopyToast(el);
+    }, 500);
+  }, { passive: false });
+
+  el.addEventListener('touchend', () => {
+    clearTimeout(longPressTimer);
+  });
+
+  el.addEventListener('touchmove', () => {
+    clearTimeout(longPressTimer);
+  });
+
+  // Right-click for desktop
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showCopyToast(el);
+  });
 }
 
 function addTypingIndicator() {
@@ -624,59 +799,74 @@ async function readSSEStream(response, processEvent) {
   let buffer = '';
   let lastEventType = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        lastEventType = line.substring(7).trim();
-        continue;
-      }
-      if (line.startsWith('data: ')) {
-        const rawData = line.substring(6);
-        let data;
-        try {
-          data = JSON.parse(rawData);
-        } catch {
-          data = rawData;
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          lastEventType = line.substring(7).trim();
+          continue;
         }
-        processEvent(lastEventType, data);
+        if (line.startsWith('data: ')) {
+          const rawData = line.substring(6);
+          let data;
+          try {
+            data = JSON.parse(rawData);
+          } catch {
+            data = rawData;
+          }
+          processEvent(lastEventType, data);
+        }
       }
     }
+  } catch (err) {
+    console.error('SSE stream read error:', err);
+    throw err; // Re-throw so caller can handle reconnect
   }
 }
 
 // Reconnect to an active stream
 async function attemptReconnect(sessionId, processEvent) {
-  addInfoMessage('Connection lost, reconnecting...');
   try {
     const res = await fetch(`/api/chat/${sessionId}/reconnect`);
     if (!res.ok) return false;
 
-    // Clear current assistant content and re-render from buffer replay
-    clearMessages();
-    await restoreMessages(sessionId);
-    addTypingIndicator();
+    // Don't clear messages — preserve what's already visible on screen.
+    // The buffer replay will rebuild from the full stream, so we clear
+    // only the in-progress elements (thinking, typing) and let replay rebuild.
+    removeTypingIndicator();
+    const existingThinking = document.getElementById('thinking-current');
+    if (existingThinking) existingThinking.remove();
 
+    // Find the last assistant message element to continue appending to it
     let reconnectedAssistantEl = null;
     let reconnectedText = '';
+    addTypingIndicator();
 
     function reconnectProcessor(type, data) {
-      if (type === 'text') {
-        removeTypingIndicator();
-        if (!reconnectedAssistantEl) {
-          reconnectedAssistantEl = createAssistantMessage();
+      try {
+        if (type === 'text') {
+          removeTypingIndicator();
+          if (!reconnectedAssistantEl) {
+            reconnectedAssistantEl = createAssistantMessage();
+          }
+          reconnectedText += data;
+          reconnectedAssistantEl.innerHTML = renderMarkdown(reconnectedText);
+          scrollToBottom();
+        } else {
+          processEvent(type, data);
         }
-        reconnectedText += data;
-        reconnectedAssistantEl.innerHTML = renderMarkdown(reconnectedText);
-        scrollToBottom();
-      } else {
-        processEvent(type, data);
+      } catch (err) {
+        console.error('reconnectProcessor error:', type, err);
+        if (type === 'text' && reconnectedAssistantEl && reconnectedText) {
+          reconnectedAssistantEl.textContent = reconnectedText;
+        }
       }
     }
 
@@ -726,82 +916,90 @@ async function sendMessage() {
   let streamCompleted = false;
 
   function processEvent(type, data) {
-    switch (type) {
-      case 'init':
-        // Don't remove typing indicator — keep it visible until content arrives
-        break;
+    try {
+      switch (type) {
+        case 'init':
+          // Don't remove typing indicator — keep it visible until content arrives
+          break;
 
-      case 'text':
-        removeTypingIndicator();
-        if (!assistantEl) {
-          assistantEl = createAssistantMessage();
-        }
-        currentText += data;
-        assistantEl.innerHTML = renderMarkdown(currentText);
-        scrollToBottom();
-        break;
+        case 'text':
+          removeTypingIndicator();
+          if (!assistantEl) {
+            assistantEl = createAssistantMessage();
+          }
+          currentText += data;
+          assistantEl.innerHTML = renderMarkdown(currentText);
+          scrollToBottom();
+          break;
 
-      case 'thinking':
-        removeTypingIndicator();
-        if (!thinkingEl) {
-          thinkingEl = addThinkingIndicator();
-        }
-        const contentEl = thinkingEl.querySelector('.thinking-content');
-        if (contentEl) {
-          contentEl.textContent += data;
-        }
-        break;
+        case 'thinking':
+          removeTypingIndicator();
+          if (!thinkingEl) {
+            thinkingEl = addThinkingIndicator();
+          }
+          const contentEl = thinkingEl.querySelector('.thinking-content');
+          if (contentEl) {
+            contentEl.textContent += data;
+          }
+          break;
 
-      case 'tool_use':
-        removeTypingIndicator();
-        if (assistantEl && currentText) {
-          assistantEl = null;
-          currentText = '';
-        }
-        try {
-          const tool = JSON.parse(data);
-          addToolIndicator(tool.name, tool.id, tool.input);
-        } catch {
-          addToolIndicator(data, 'unknown');
-        }
-        addTypingIndicator();
-        break;
+        case 'tool_use':
+          removeTypingIndicator();
+          if (assistantEl && currentText) {
+            assistantEl = null;
+            currentText = '';
+          }
+          try {
+            const tool = JSON.parse(data);
+            addToolIndicator(tool.name, tool.id, tool.input);
+          } catch {
+            addToolIndicator(data, 'unknown');
+          }
+          addTypingIndicator();
+          break;
 
-      case 'tool_update':
-        // Update existing tool indicator with full details (input arrived after initial stream event)
-        try {
-          const tool = JSON.parse(data);
-          updateToolDetails(tool.id, tool.name, tool.input);
-        } catch {}
-        break;
+        case 'tool_update':
+          // Update existing tool indicator with full details (input arrived after initial stream event)
+          try {
+            const tool = JSON.parse(data);
+            updateToolDetails(tool.id, tool.name, tool.input);
+          } catch {}
+          break;
 
-      case 'tool_result':
-        // Results are saved server-side but not displayed (too verbose)
-        break;
+        case 'tool_result':
+          // Results are saved server-side but not displayed (too verbose)
+          break;
 
-      case 'permission_request':
-        removeTypingIndicator();
-        try {
-          const perm = JSON.parse(data);
-          showPermissionDialog(perm.id, perm.toolName, perm.toolInput);
-        } catch {}
-        break;
+        case 'permission_request':
+          removeTypingIndicator();
+          try {
+            const perm = JSON.parse(data);
+            showPermissionDialog(perm.id, perm.toolName, perm.toolInput);
+          } catch {}
+          break;
 
-      case 'error':
-        removeTypingIndicator();
-        const errEl = document.createElement('div');
-        errEl.className = 'message message-error';
-        errEl.textContent = data;
-        messagesEl.appendChild(errEl);
-        scrollToBottom();
-        break;
+        case 'error':
+          removeTypingIndicator();
+          const errEl = document.createElement('div');
+          errEl.className = 'message message-error';
+          errEl.textContent = data;
+          messagesEl.appendChild(errEl);
+          scrollToBottom();
+          break;
 
-      case 'done':
-        removeTypingIndicator();
-        addUsageInfo(data);
-        streamCompleted = true;
-        scrollToBottom();
-        break;
+        case 'done':
+          removeTypingIndicator();
+          addUsageInfo(data);
+          streamCompleted = true;
+          scrollToBottom();
+          break;
+      }
+    } catch (err) {
+      console.error('processEvent error:', type, err);
+      // Ensure the message is still visible even if rendering failed
+      if (type === 'text' && assistantEl && currentText) {
+        assistantEl.textContent = currentText;
+      }
     }
   }
 

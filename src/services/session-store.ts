@@ -22,9 +22,9 @@ function save(): void {
 load();
 
 export function listSessions(): ChatSession[] {
-  return sessions.sort((a, b) =>
-    new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
-  );
+  return sessions
+    .filter(s => !s.archived)
+    .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
 }
 
 export function getSession(id: string): ChatSession | undefined {
@@ -49,10 +49,26 @@ export function createSession(name?: string, workingDir?: string): ChatSession {
   return session;
 }
 
-export function listSessionsByMode(mode: string): ChatSession[] {
+export function listSessionsByMode(mode: string, includeArchived = false): ChatSession[] {
   return sessions
-    .filter(s => (s.mode || 'work') === mode)
+    .filter(s => (s.mode || 'work') === mode && (includeArchived || !s.archived))
     .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
+}
+
+export function archiveSession(id: string): ChatSession | undefined {
+  const session = sessions.find(s => s.id === id);
+  if (!session) return undefined;
+  session.archived = true;
+  save();
+  return session;
+}
+
+export function unarchiveSession(id: string): ChatSession | undefined {
+  const session = sessions.find(s => s.id === id);
+  if (!session) return undefined;
+  session.archived = false;
+  save();
+  return session;
 }
 
 export function updateSession(id: string, updates: Partial<ChatSession>): ChatSession | undefined {

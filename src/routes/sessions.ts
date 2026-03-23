@@ -1,15 +1,16 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession } from '../services/session-store';
+import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession } from '../services/session-store';
 import { getMode, setMode, Mode, config } from '../config';
 
 const router = Router();
 
 router.get('/', (req: Request, res: Response) => {
   const mode = req.query.mode as string | undefined;
+  const includeArchived = req.query.archived === 'true';
   if (mode === 'work' || mode === 'personal') {
-    res.json(listSessionsByMode(mode));
+    res.json(listSessionsByMode(mode, includeArchived));
   } else {
     res.json(listSessions());
   }
@@ -72,6 +73,24 @@ router.post('/mode/current', (req: Request, res: Response) => {
   }
   setMode(mode as Mode);
   res.json({ mode: getMode() });
+});
+
+router.post('/:id/archive', (req: Request, res: Response) => {
+  const session = archiveSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  res.json(session);
+});
+
+router.post('/:id/unarchive', (req: Request, res: Response) => {
+  const session = unarchiveSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  res.json(session);
 });
 
 router.get('/:id', (req: Request, res: Response) => {

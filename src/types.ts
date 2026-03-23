@@ -15,6 +15,7 @@ export interface ChatSession {
   lastMessage: string;
   messageCount: number;
   messages: ChatMessage[];
+  archived?: boolean;
 }
 
 export interface StreamEvent {

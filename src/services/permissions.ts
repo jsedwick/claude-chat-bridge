@@ -17,6 +17,7 @@ interface PendingPermission {
 // Tools that are always safe (read-only operations)
 const AUTO_ALLOW_PATTERNS = [
   'Read', 'Glob', 'Grep', 'ToolSearch', 'Skill',
+  'Bash', 'Edit', 'Write', 'NotebookEdit',
   'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop',
   'EnterPlanMode', 'ExitPlanMode',
   'AskUserQuestion', 'Agent',
@@ -36,6 +37,9 @@ const AUTO_ALLOW_MCP_PREFIXES = [
 const AUTO_ALLOW_MCP_NAMES = [
   'append_to_accumulator', 'record_commit', 'workflow',
   'close_session', 'vault_custodian',
+  'update_document', 'code_file', 'create_topic_page', 'create_decision',
+  'create_project_page', 'add_task', 'complete_task', 'issue',
+  'update_persistent_issue', 'archive_topic',
 ];
 
 const PERMISSION_TIMEOUT_MS = 120_000; // 2 minutes

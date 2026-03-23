@@ -161,7 +161,26 @@ html, body {
   justify-content: space-between;
 }
 
-.session-item-delete {
+.session-item-actions {
+  float: right;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .session-item-actions {
+  opacity: 1;
+}
+
+/* On touch devices, always show actions */
+@media (hover: none) {
+  .session-item-actions {
+    opacity: 1;
+  }
+}
+
+.session-item-action {
   color: var(--text-muted);
   background: none;
   border: none;
@@ -169,13 +188,80 @@ html, body {
   font-size: 16px;
   padding: 2px 6px;
   border-radius: 4px;
-  float: right;
   line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.session-item-delete:hover {
+.session-item-action:hover {
+  color: var(--accent);
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.session-item-action-danger:hover {
   color: var(--error);
   background: rgba(255, 107, 107, 0.1);
+}
+
+.session-item.archived {
+  opacity: 0.7;
+}
+
+/* Archive Section */
+.archive-section {
+  border-top: 1px solid var(--border);
+  padding: 4px 8px 8px;
+}
+
+.archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.archive-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.archive-chevron {
+  transition: transform 0.2s;
+}
+
+.archive-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.archive-count {
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.archive-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.archive-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 /* Main Chat */
@@ -411,6 +497,30 @@ html, body {
   background: var(--bg-assistant-msg);
   align-self: flex-start;
   border-bottom-left-radius: 4px;
+  position: relative;
+}
+
+/* Copy toast for assistant messages */
+.copy-toast {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100%);
+  background: #2ea043;
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.copy-toast.visible {
+  opacity: 1;
 }
 
 .message-assistant p {
@@ -471,6 +581,18 @@ html, body {
   border: none;
   border-top: 1px solid var(--border);
   margin: 12px 0;
+}
+
+.message-assistant a {
+  color: #6bb3ff;
+  text-decoration: underline;
+  text-decoration-color: rgba(107, 179, 255, 0.4);
+  text-underline-offset: 2px;
+}
+
+.message-assistant a:hover {
+  color: #8ec8ff;
+  text-decoration-color: rgba(142, 200, 255, 0.6);
 }
 
 .message-assistant blockquote {
@@ -836,6 +958,63 @@ pre.streaming {
 .btn-attach:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.btn-attach.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+/* Action Menu */
+.action-menu-wrapper {
+  position: relative;
+}
+
+.action-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  min-width: 200px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+}
+
+.action-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.action-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.action-menu-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.action-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
 }
 
 .btn-send {
