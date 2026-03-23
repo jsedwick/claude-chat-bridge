@@ -274,15 +274,39 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       }
     }
 
-    // Process any remaining buffer
+    // Process any remaining buffer — emit events, not just capture session ID
     if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer);
-        if (parsed.type === 'result' && parsed.session_id) {
-          capturedSessionId = parsed.session_id;
+      for (const line of buffer.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId));
+          if (result) {
+            const events = Array.isArray(result) ? result : [result];
+            for (const event of events) {
+              emitToStream(appSessionId, event);
+            }
+          }
+          if (parsed.type === 'result' && parsed.session_id) {
+            capturedSessionId = parsed.session_id;
+            const usage = parsed.usage;
+            const cost = parsed.total_cost_usd;
+            emitToStream(appSessionId, {
+              type: 'done',
+              data: JSON.stringify({
+                session_id: parsed.session_id,
+                duration_ms: parsed.duration_ms,
+                cost_usd: cost,
+                input_tokens: usage?.input_tokens,
+                output_tokens: usage?.output_tokens,
+                cache_creation_input_tokens: usage?.cache_creation_input_tokens,
+                cache_read_input_tokens: usage?.cache_read_input_tokens,
+              }),
+            });
+          }
+        } catch {
+          // Non-JSON line, skip
         }
-      } catch {
-        // ignore
       }
     }
 

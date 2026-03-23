@@ -35,12 +35,20 @@ router.post('/:sessionId', (req: Request, res: Response) => {
   // Save user message server-side
   addMessage(sessionId, 'user', message);
 
+  let clientDisconnected = false;
+
   const sendSSE = (event: string, data: string) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (clientDisconnected) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      clientDisconnected = true;
+    }
   };
 
   // Keepalive ping every 15s to prevent idle connection drops
   const keepalive = setInterval(() => {
+    if (clientDisconnected) return;
     try { res.write(': keepalive\n\n'); } catch {}
   }, 15000);
 
@@ -104,16 +112,23 @@ router.post('/:sessionId', (req: Request, res: Response) => {
         messageCount: session.messageCount + 1,
       });
 
-      res.write('event: close\ndata: "done"\n\n');
-      res.end();
+      if (!clientDisconnected) {
+        try {
+          res.write('event: close\ndata: "done"\n\n');
+          res.end();
+        } catch {
+          // Client already gone
+        }
+      }
     },
   });
 
   // Handle client disconnect
   req.on('close', () => {
+    clientDisconnected = true;
     clearInterval(keepalive);
     // The claude process will continue running and complete naturally
-    // This is fine - we just won't send more events
+    // Events continue to be saved server-side even though we can't send them
   });
 });
 
@@ -135,8 +150,15 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     'X-Accel-Buffering': 'no',
   });
 
+  let reconnectDisconnected = false;
+
   const sendSSE = (event: string, data: string) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (reconnectDisconnected) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      reconnectDisconnected = true;
+    }
   };
 
   const sendEvent = (event: { type: string, data: string }) => {
@@ -159,8 +181,12 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
       return;
     }
     for (const event of buffer) sendEvent(event);
-    res.write('event: close\ndata: "done"\n\n');
-    res.end();
+    if (!reconnectDisconnected) {
+      try {
+        res.write('event: close\ndata: "done"\n\n');
+        res.end();
+      } catch {}
+    }
     return;
   }
 
@@ -168,8 +194,12 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
   const result = subscribeWithBuffer(sessionId, (event) => sendEvent(event));
 
   if (!result) {
-    res.write('event: close\ndata: "done"\n\n');
-    res.end();
+    if (!reconnectDisconnected) {
+      try {
+        res.write('event: close\ndata: "done"\n\n');
+        res.end();
+      } catch {}
+    }
     return;
   }
 
@@ -180,6 +210,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
 
   // Keepalive ping every 15s
   const keepalive = setInterval(() => {
+    if (reconnectDisconnected) return;
     try { res.write(': keepalive\n\n'); } catch {}
   }, 15000);
 
@@ -190,12 +221,17 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
       clearInterval(checkDone);
       clearInterval(keepalive);
       unsubscribe();
-      res.write('event: close\ndata: "done"\n\n');
-      res.end();
+      if (!reconnectDisconnected) {
+        try {
+          res.write('event: close\ndata: "done"\n\n');
+          res.end();
+        } catch {}
+      }
     }
   }, 500);
 
   req.on('close', () => {
+    reconnectDisconnected = true;
     clearInterval(checkDone);
     clearInterval(keepalive);
     unsubscribe();

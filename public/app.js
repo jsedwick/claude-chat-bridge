@@ -886,6 +886,25 @@ async function readSSEStream(response, processEvent) {
   let buffer = '';
   let lastEventType = '';
 
+  function processLines(lines) {
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        lastEventType = line.substring(7).trim();
+        continue;
+      }
+      if (line.startsWith('data: ')) {
+        const rawData = line.substring(6);
+        let data;
+        try {
+          data = JSON.parse(rawData);
+        } catch {
+          data = rawData;
+        }
+        processEvent(lastEventType, data);
+      }
+    }
+  }
+
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -894,23 +913,12 @@ async function readSSEStream(response, processEvent) {
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
+      processLines(lines);
+    }
 
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          lastEventType = line.substring(7).trim();
-          continue;
-        }
-        if (line.startsWith('data: ')) {
-          const rawData = line.substring(6);
-          let data;
-          try {
-            data = JSON.parse(rawData);
-          } catch {
-            data = rawData;
-          }
-          processEvent(lastEventType, data);
-        }
-      }
+    // Flush any remaining data in the buffer after stream ends
+    if (buffer.trim()) {
+      processLines(buffer.split('\n'));
     }
   } catch (err) {
     console.error('SSE stream read error:', err);
