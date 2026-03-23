@@ -17,12 +17,24 @@ interface PendingPermission {
 // Tools that are always safe (read-only operations)
 const AUTO_ALLOW_PATTERNS = [
   'Read', 'Glob', 'Grep', 'ToolSearch', 'Skill',
-  'Bash', 'Edit', 'Write', 'NotebookEdit',
+  'Edit', 'Write', 'NotebookEdit',
   'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop',
   'EnterPlanMode', 'ExitPlanMode',
   'AskUserQuestion', 'Agent',
   'WebSearch', 'WebFetch',
 ];
+
+// Bash commands that require user approval via the permission dialog
+const BASH_ASK_PATTERNS = [
+  /^git\s+(add|commit|push|reset|rebase|merge|checkout|switch|cherry-pick|revert)\b/,
+  /^rm\s/,
+];
+
+// Check if a Bash command needs user permission
+function bashNeedsPermission(toolInput: Record<string, unknown>): boolean {
+  const command = (toolInput.command as string) || '';
+  return BASH_ASK_PATTERNS.some(pattern => pattern.test(command));
+}
 
 // MCP tool name prefixes that are safe to auto-allow (checked against last segment after __)
 const AUTO_ALLOW_MCP_PREFIXES = [
@@ -50,8 +62,12 @@ const pendingPermissions = new Map<string, PendingPermission>();
 // Per-session allow-all sets: sessionId → Set of tool names allowed for this session
 const sessionAllowAll = new Map<string, Set<string>>();
 
+export function isBashAskCommand(toolInput: Record<string, unknown>): boolean {
+  return bashNeedsPermission(toolInput);
+}
+
 export function isAutoAllowed(toolName: string): boolean {
-  // Check exact match on built-in tools
+  // Check exact match on built-in tools (Bash handled separately in route)
   if (AUTO_ALLOW_PATTERNS.includes(toolName)) return true;
 
   // Check MCP tool name (last segment after __)

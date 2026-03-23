@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getAppSessionByClaudeId, emitToStream } from '../services/claude-runner';
 import {
   isAutoAllowed,
+  isBashAskCommand,
   isSessionAllowed,
   createPermissionRequest,
   resolvePermission,
@@ -29,6 +30,12 @@ router.post('/request', async (req: Request, res: Response) => {
 
   // Auto-allow safe tools
   if (isAutoAllowed(tool_name)) {
+    res.json({ decision: 'allow' });
+    return;
+  }
+
+  // Bash: auto-allow unless it's a git write or destructive command
+  if (tool_name === 'Bash' && !isBashAskCommand(tool_input || {})) {
     res.json({ decision: 'allow' });
     return;
   }

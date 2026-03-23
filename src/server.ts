@@ -14,8 +14,15 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Static files
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// Static files — no caching to ensure latest code is always served
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+  },
+}));
 
 // API routes
 app.use('/api/chat', chatRoutes);
