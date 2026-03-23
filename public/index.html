@@ -15,7 +15,17 @@
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-header">
       <h2>Sessions</h2>
-      <button id="new-chat-btn" class="btn-new-chat" onclick="createNewSession()">+ New Chat</button>
+      <div class="sidebar-new-chat">
+        <div class="sidebar-dir-wrapper">
+          <button class="btn-sidebar-dir" onclick="toggleSidebarDirPicker()" aria-label="Select working directory">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <div id="sidebar-dir-picker" class="sidebar-dir-picker" style="display:none"></div>
+        </div>
+        <button id="new-chat-btn" class="btn-new-chat" disabled onclick="createNewSession()">+ New Chat</button>
+      </div>
     </div>
     <div class="mode-tabs">
       <button class="mode-tab active" data-mode="work" onclick="setMode('work')">Work</button>
@@ -38,6 +48,14 @@
   <main class="chat-main">
     <header class="chat-header">
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+      <div class="dir-picker-wrapper" style="display:none">
+        <button class="btn-dir" onclick="toggleDirPicker()" aria-label="Change working directory">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+        </button>
+        <div id="dir-picker" class="dir-picker" style="display:none"></div>
+      </div>
       <h1 id="chat-title" class="chat-title" onclick="renameCurrentSession()">Claude Chat Bridge</h1>
       <select id="model-select" class="model-select" onchange="saveModel(this.value)">
         <option value="opus">Opus</option>
@@ -49,11 +67,7 @@
       <div id="welcome" class="welcome-message">
         <h2>Claude Chat Bridge</h2>
         <p>Chat with Claude + your Obsidian vault from any device.</p>
-        <div class="welcome-dir-picker">
-          <label for="dir-select">Working directory:</label>
-          <select id="dir-select" class="dir-select"></select>
-        </div>
-        <button class="btn-new-chat btn-welcome" onclick="createNewSession()">Start a New Chat</button>
+        <p class="welcome-hint">Select a directory and start a new chat from the sidebar.</p>
       </div>
     </div>
 

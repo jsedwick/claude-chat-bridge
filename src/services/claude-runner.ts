@@ -192,6 +192,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   stream.listeners.add(onEvent);
 
   let capturedSessionId: string | null = sessionId || null;
+  let authFailed = false;
   let buffer = '';
 
   proc.stdout!.on('data', (chunk: Buffer) => {
@@ -215,6 +216,15 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         if (parsed.type === 'system' && parsed.subtype === 'init' && parsed.session_id) {
           capturedSessionId = parsed.session_id;
           claudeToAppMap.set(parsed.session_id, appSessionId);
+        }
+
+        // Detect authentication failure
+        if (parsed.type === 'assistant' && parsed.error === 'authentication_failed') {
+          authFailed = true;
+          emitToStream(appSessionId, {
+            type: 'error',
+            data: 'Claude authentication expired. Please run `claude` in a terminal and log in, then try again.',
+          });
         }
 
         // Capture session ID from result event
@@ -276,7 +286,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       }
     }
 
-    if (code !== 0 && code !== null) {
+    if (code !== 0 && code !== null && !authFailed) {
       emitToStream(appSessionId, { type: 'error', data: `Claude process exited with code ${code}` });
     }
 

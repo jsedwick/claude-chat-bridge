@@ -88,6 +88,61 @@ html, body {
   color: var(--text-primary);
 }
 
+.sidebar-new-chat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-dir-wrapper {
+  position: relative;
+}
+
+.btn-sidebar-dir {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-sidebar-dir:hover {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+}
+
+.btn-sidebar-dir.selected {
+  color: var(--accent);
+}
+
+.sidebar-dir-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 110;
+  box-shadow: 0 8px 24px var(--shadow);
+  padding: 4px;
+}
+
+.btn-new-chat:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--border);
+}
+
 .btn-new-chat {
   padding: 8px 14px;
   background: var(--accent);
@@ -100,7 +155,7 @@ html, body {
   transition: background 0.15s;
 }
 
-.btn-new-chat:hover {
+.btn-new-chat:hover:not(:disabled) {
   background: var(--accent-hover);
 }
 
@@ -297,6 +352,73 @@ html, body {
   background: var(--bg-primary);
 }
 
+/* Directory picker in toolbar */
+.dir-picker-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.btn-dir {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.btn-dir:hover {
+  background: var(--bg-primary);
+}
+
+.btn-dir svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.dir-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 8px 24px var(--shadow);
+  padding: 4px;
+}
+
+.dir-picker-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.dir-picker-item:hover {
+  background: var(--bg-primary);
+}
+
+.dir-picker-item.active {
+  color: var(--accent);
+  background: rgba(74, 158, 255, 0.08);
+}
+
 .chat-title {
   font-size: 15px;
   font-weight: 600;
@@ -432,35 +554,9 @@ html, body {
   font-size: 15px;
 }
 
-.welcome-dir-picker {
-  margin-bottom: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.welcome-dir-picker label {
+.welcome-hint {
   font-size: 13px;
   color: var(--text-muted);
-}
-
-.dir-select {
-  background: var(--bg-input);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 14px;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  outline: none;
-  min-width: 220px;
-  text-align: center;
-}
-
-.dir-select:focus {
-  border-color: var(--accent);
 }
 
 .session-item-dir {
@@ -469,11 +565,6 @@ html, body {
   border-radius: 3px;
   font-size: 10px;
   color: var(--accent);
-}
-
-.btn-welcome {
-  font-size: 16px;
-  padding: 12px 24px;
 }
 
 /* Message bubbles */
@@ -491,6 +582,7 @@ html, body {
   background: var(--bg-user-msg);
   align-self: flex-end;
   border-bottom-right-radius: 4px;
+  position: relative;
 }
 
 .message-assistant {
@@ -500,27 +592,30 @@ html, body {
   position: relative;
 }
 
-/* Copy toast for assistant messages */
-.copy-toast {
+/* Copy button for assistant messages */
+.btn-copy-msg {
   position: absolute;
-  top: -8px;
-  left: 50%;
-  transform: translateX(-50%) translateY(-100%);
-  background: #2ea043;
-  color: white;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 5px 12px;
-  border-radius: 6px;
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
-  z-index: 10;
+  top: 6px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  opacity: 0.3;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s, background 0.15s;
+  line-height: 0;
 }
 
-.copy-toast.visible {
-  opacity: 1;
+.message-assistant:hover .btn-copy-msg,
+.message-user:hover .btn-copy-msg {
+  opacity: 0.5;
+}
+
+.btn-copy-msg:hover {
+  opacity: 1 !important;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .message-assistant p {
@@ -742,6 +837,16 @@ pre.streaming {
 
 .tool-group.expanded .tool-group-list {
   display: block;
+}
+
+.tool-group.active {
+  border-color: var(--accent);
+  animation: tool-pulse 2s ease-in-out infinite;
+}
+
+@keyframes tool-pulse {
+  0%, 100% { border-color: var(--accent); box-shadow: 0 0 0 0 rgba(74, 158, 255, 0); }
+  50% { border-color: var(--accent); box-shadow: 0 0 8px 1px rgba(74, 158, 255, 0.25); }
 }
 
 .tool-item {

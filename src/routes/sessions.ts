@@ -108,12 +108,28 @@ router.get('/:id/messages', (req: Request, res: Response) => {
 });
 
 router.patch('/:id', (req: Request, res: Response) => {
-  const { name } = req.body || {};
-  if (!name || typeof name !== 'string') {
-    res.status(400).json({ error: 'Name is required' });
+  const { name, workingDir } = req.body || {};
+  const updates: Record<string, unknown> = {};
+  if (name && typeof name === 'string') updates.name = name.trim();
+  if (workingDir !== undefined) {
+    if (workingDir) {
+      const isHome = workingDir === config.workingDir;
+      const isScanDir = config.projectScanDirs.includes(workingDir);
+      const isChildOfScanDir = config.projectScanDirs.some((d: string) =>
+        workingDir.startsWith(d + '/') && !workingDir.substring(d.length + 1).includes('/')
+      );
+      if (!isHome && !isScanDir && !isChildOfScanDir) {
+        res.status(400).json({ error: 'Invalid working directory' });
+        return;
+      }
+    }
+    updates.workingDir = workingDir || undefined;
+  }
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: 'No valid fields to update' });
     return;
   }
-  const session = updateSession(req.params.id as string, { name: name.trim() });
+  const session = updateSession(req.params.id as string, updates);
   if (!session) {
     res.status(404).json({ error: 'Session not found' });
     return;

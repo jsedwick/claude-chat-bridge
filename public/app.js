@@ -1,6 +1,7 @@
 // State
 let currentSessionId = null;
 const streamingSessions = new Set(); // track which sessions are actively streaming
+const sessionInputDrafts = new Map(); // preserve input text per session
 let currentMode = 'work';
 let lastInputTokens = 0;
 
@@ -53,6 +54,7 @@ async function restoreMessages(sessionId) {
       } else if (msg.role === 'assistant') {
         const el = createAssistantMessage();
         el.innerHTML = renderMarkdown(msg.content);
+        ensureCopyButton(el);
       } else if (msg.role === 'tool') {
         try {
           const tool = JSON.parse(msg.content);
@@ -83,7 +85,10 @@ const sidebarOverlay = document.getElementById('sidebar-overlay');
 const sessionListEl = document.getElementById('session-list');
 
 const modelSelect = document.getElementById('model-select');
-const dirSelect = document.getElementById('dir-select');
+const sidebarDirPicker = document.getElementById('sidebar-dir-picker');
+const sidebarDirBtn = document.querySelector('.btn-sidebar-dir');
+const newChatBtn = document.getElementById('new-chat-btn');
+let selectedNewChatDir = '';
 
 // Restore saved model
 const savedModel = localStorage.getItem('chat-bridge-model') || 'opus';
@@ -126,8 +131,10 @@ async function setMode(mode) {
         if ((s.mode || 'work') !== result.mode) {
           currentSessionId = null;
           chatTitle.textContent = 'Claude Chat Bridge';
+          currentWorkingDir = '';
           welcomeEl.style.display = 'flex';
           inputArea.style.display = 'none';
+          document.querySelector('.dir-picker-wrapper').style.display = 'none';
           clearMessages();
         }
       } catch {}
@@ -147,15 +154,78 @@ function updateModeTabsUI(mode) {
 }
 
 // Load available working directories
+let availableDirs = [];
+let currentWorkingDir = '';
+const dirPicker = document.getElementById('dir-picker');
+
 async function loadDirs() {
   try {
     const res = await fetch('/api/sessions/dirs/available');
-    const dirs = await res.json();
-    dirSelect.innerHTML = dirs.map((d, i) =>
-      `<option value="${d.path}"${i === 0 ? ' selected' : ''}>${d.label}</option>`
-    ).join('');
+    availableDirs = await res.json();
   } catch {}
 }
+
+function toggleSidebarDirPicker() {
+  const isOpen = sidebarDirPicker.style.display !== 'none';
+  if (isOpen) { sidebarDirPicker.style.display = 'none'; return; }
+  sidebarDirPicker.innerHTML = '';
+  for (const d of availableDirs) {
+    const btn = document.createElement('button');
+    btn.className = 'dir-picker-item' + (d.path === selectedNewChatDir ? ' active' : '');
+    btn.textContent = d.label;
+    btn.onclick = () => selectSidebarDir(d.path);
+    sidebarDirPicker.appendChild(btn);
+  }
+  sidebarDirPicker.style.display = 'block';
+}
+
+function selectSidebarDir(dirPath) {
+  sidebarDirPicker.style.display = 'none';
+  selectedNewChatDir = dirPath;
+  sidebarDirBtn.classList.add('selected');
+  sidebarDirBtn.title = availableDirs.find(d => d.path === dirPath)?.label || dirPath;
+  newChatBtn.disabled = false;
+}
+
+function toggleDirPicker() {
+  if (!currentSessionId) return;
+  const isOpen = dirPicker.style.display !== 'none';
+  if (isOpen) { dirPicker.style.display = 'none'; return; }
+  dirPicker.innerHTML = '';
+  for (const d of availableDirs) {
+    const btn = document.createElement('button');
+    btn.className = 'dir-picker-item' + (d.path === currentWorkingDir ? ' active' : '');
+    btn.textContent = d.label;
+    btn.onclick = () => selectDir(d.path);
+    dirPicker.appendChild(btn);
+  }
+  dirPicker.style.display = 'block';
+}
+
+async function selectDir(dirPath) {
+  dirPicker.style.display = 'none';
+  if (!currentSessionId || dirPath === currentWorkingDir) return;
+  try {
+    await fetch(`/api/sessions/${currentSessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingDir: dirPath }),
+    });
+    currentWorkingDir = dirPath;
+  } catch (err) {
+    console.error('Failed to update working directory:', err);
+  }
+}
+
+// Close dir pickers on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.dir-picker-wrapper')) {
+    dirPicker.style.display = 'none';
+  }
+  if (!e.target.closest('.sidebar-dir-wrapper')) {
+    sidebarDirPicker.style.display = 'none';
+  }
+});
 
 // Initialize — always start in work mode on page load
 (async () => {
@@ -335,8 +405,10 @@ async function archiveSessionItem(id) {
   if (currentSessionId === id) {
     currentSessionId = null;
     chatTitle.textContent = 'Claude Chat Bridge';
+    currentWorkingDir = '';
     welcomeEl.style.display = 'flex';
     inputArea.style.display = 'none';
+    document.querySelector('.dir-picker-wrapper').style.display = 'none';
     clearMessages();
     resetTokenCounter();
   }
@@ -402,21 +474,28 @@ function startEditing(id, el) {
 }
 
 async function createNewSession() {
+  if (!selectedNewChatDir) return;
   try {
-    const selectedDir = dirSelect.value || undefined;
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir: selectedDir }),
+      body: JSON.stringify({ workingDir: selectedNewChatDir }),
     });
     const session = await res.json();
     currentSessionId = session.id;
     chatTitle.textContent = session.name;
+    currentWorkingDir = session.workingDir || '';
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
+    document.querySelector('.dir-picker-wrapper').style.display = '';
     clearMessages();
     resetTokenCounter();
     loadSessions();
+    // Reset sidebar dir picker for next time
+    selectedNewChatDir = '';
+    sidebarDirBtn.classList.remove('selected');
+    sidebarDirBtn.title = '';
+    newChatBtn.disabled = true;
     if (sidebar.classList.contains('open')) toggleSidebar();
 
     // Auto-send /work or /personal based on active mode tab
@@ -429,12 +508,21 @@ async function createNewSession() {
 }
 
 async function switchSession(id) {
+  // Save current input draft before switching
+  if (currentSessionId) {
+    sessionInputDrafts.set(currentSessionId, messageInput.value);
+  }
   currentSessionId = id;
+  // Restore target session's draft
+  messageInput.value = sessionInputDrafts.get(id) || '';
+  messageInput.style.height = 'auto';
   const res = await fetch(`/api/sessions/${id}`);
   const session = await res.json();
   chatTitle.textContent = session.name;
+  currentWorkingDir = session.workingDir || '';
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
+  document.querySelector('.dir-picker-wrapper').style.display = '';
   resetTokenCounter();
   restoreMessages(id);
   loadSessions();
@@ -453,11 +541,14 @@ async function switchSession(id) {
 async function deleteSessionItem(id) {
   if (!confirm('Delete this session?')) return;
   await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+  sessionInputDrafts.delete(id);
   if (currentSessionId === id) {
     currentSessionId = null;
     chatTitle.textContent = 'Claude Chat Bridge';
+    currentWorkingDir = '';
     welcomeEl.style.display = 'flex';
     inputArea.style.display = 'none';
+    document.querySelector('.dir-picker-wrapper').style.display = 'none';
     clearMessages();
     resetTokenCounter();
   }
@@ -473,6 +564,7 @@ function addUserMessage(text) {
   const el = document.createElement('div');
   el.className = 'message message-user';
   el.textContent = text;
+  ensureCopyButton(el);
   messagesEl.appendChild(el);
   scrollToBottom();
 }
@@ -490,54 +582,44 @@ function addInfoMessage(text) {
 function createAssistantMessage() {
   const el = document.createElement('div');
   el.className = 'message message-assistant';
-  attachCopyMenu(el);
   messagesEl.appendChild(el);
   return el;
 }
 
-// Long-press (mobile) / right-click (desktop) copy menu for assistant messages
-function attachCopyMenu(el) {
-  let longPressTimer = null;
-  let didLongPress = false;
-
-  function showCopyToast(el) {
-    // Copy the rendered text content (not HTML)
-    navigator.clipboard.writeText(el.innerText).then(() => {
-      const toast = document.createElement('div');
-      toast.className = 'copy-toast';
-      toast.textContent = 'Copied to clipboard';
-      el.appendChild(toast);
-      requestAnimationFrame(() => toast.classList.add('visible'));
-      setTimeout(() => {
-        toast.classList.remove('visible');
-        setTimeout(() => toast.remove(), 200);
-      }, 1200);
-    });
+function ensureCopyButton(el) {
+  let btn = el.querySelector('.btn-copy-msg');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.className = 'btn-copy-msg';
+    btn.title = 'Copy message';
+    btn.onclick = () => {
+      const text = el.innerText;
+      const doCopy = navigator.clipboard?.writeText
+        ? navigator.clipboard.writeText(text)
+        : new Promise((resolve, reject) => {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy') ? resolve() : reject();
+            ta.remove();
+          });
+      doCopy.then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        }, 1500);
+      });
+    };
   }
-
-  // Long press for mobile
-  el.addEventListener('touchstart', (e) => {
-    didLongPress = false;
-    longPressTimer = setTimeout(() => {
-      didLongPress = true;
-      e.preventDefault();
-      showCopyToast(el);
-    }, 500);
-  }, { passive: false });
-
-  el.addEventListener('touchend', () => {
-    clearTimeout(longPressTimer);
-  });
-
-  el.addEventListener('touchmove', () => {
-    clearTimeout(longPressTimer);
-  });
-
-  // Right-click for desktop
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    showCopyToast(el);
-  });
+  if (!btn.classList.contains('copied')) {
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  }
+  el.appendChild(btn);
 }
 
 function addTypingIndicator() {
@@ -576,6 +658,11 @@ function getOrCreateToolGroup() {
   `;
   messagesEl.appendChild(group);
   return group;
+}
+
+function deactivateToolGroup() {
+  const groups = messagesEl.querySelectorAll('.tool-group.active');
+  groups.forEach(g => g.classList.remove('active'));
 }
 
 function updateToolGroupCount(group) {
@@ -858,6 +945,7 @@ async function attemptReconnect(sessionId, processEvent) {
           }
           reconnectedText += data;
           reconnectedAssistantEl.innerHTML = renderMarkdown(reconnectedText);
+          ensureCopyButton(reconnectedAssistantEl);
           scrollToBottom();
         } else if (type === 'tool_use') {
           // Reset text element so next text creates a new bubble after the tool group
@@ -923,6 +1011,8 @@ async function sendMessage() {
   let streamCompleted = false;
 
   function processEvent(type, data) {
+    // Don't update DOM if user switched to a different session
+    if (currentSessionId !== streamSessionId) return;
     try {
       switch (type) {
         case 'init':
@@ -931,11 +1021,13 @@ async function sendMessage() {
 
         case 'text':
           removeTypingIndicator();
+          deactivateToolGroup();
           if (!assistantEl) {
             assistantEl = createAssistantMessage();
           }
           currentText += data;
           assistantEl.innerHTML = renderMarkdown(currentText);
+          ensureCopyButton(assistantEl);
           scrollToBottom();
           break;
 
@@ -962,6 +1054,9 @@ async function sendMessage() {
           } catch {
             addToolIndicator(data, 'unknown');
           }
+          // Pulse the tool group to show Claude is still working
+          const activeGroup = getOrCreateToolGroup();
+          activeGroup.classList.add('active');
           addTypingIndicator();
           break;
 
@@ -987,6 +1082,7 @@ async function sendMessage() {
 
         case 'error':
           removeTypingIndicator();
+          deactivateToolGroup();
           const errEl = document.createElement('div');
           errEl.className = 'message message-error';
           errEl.textContent = data;
@@ -996,6 +1092,7 @@ async function sendMessage() {
 
         case 'done':
           removeTypingIndicator();
+          deactivateToolGroup();
           addUsageInfo(data);
           streamCompleted = true;
           scrollToBottom();
@@ -1029,22 +1126,22 @@ async function sendMessage() {
     await readSSEStream(res, processEvent);
 
     // Stream ended without a 'done' event — connection likely dropped (common on mobile)
-    if (!streamCompleted && currentSessionId) {
-      const reconnected = await attemptReconnect(currentSessionId, processEvent);
-      if (!reconnected) {
-        // Reload saved messages as fallback — server saves text on process exit
-        await restoreMessages(currentSessionId);
+    if (!streamCompleted) {
+      const reconnected = await attemptReconnect(streamSessionId, processEvent);
+      if (!reconnected && currentSessionId === streamSessionId) {
+        // Reload saved messages as fallback — only if still viewing this session
+        await restoreMessages(streamSessionId);
       }
     }
   } catch (err) {
-    removeTypingIndicator();
+    if (currentSessionId === streamSessionId) removeTypingIndicator();
     // Only attempt reconnect if we were genuinely mid-stream (not completed/cancelled)
-    if (currentSessionId && !streamCompleted && err.name !== 'AbortError') {
-      const reconnected = await attemptReconnect(currentSessionId, processEvent);
-      if (!reconnected) {
+    if (!streamCompleted && err.name !== 'AbortError') {
+      const reconnected = await attemptReconnect(streamSessionId, processEvent);
+      if (!reconnected && currentSessionId === streamSessionId) {
         // Fallback: reload saved messages after a brief delay for server to finish saving
         await new Promise(r => setTimeout(r, 2000));
-        await restoreMessages(currentSessionId);
+        await restoreMessages(streamSessionId);
       }
     } else if (!streamCompleted) {
       const errEl = document.createElement('div');
@@ -1055,25 +1152,25 @@ async function sendMessage() {
     }
   } finally {
     streamingSessions.delete(streamSessionId);
-    // Only update UI buttons if we're still viewing the session that finished
+    // Only update DOM if we're still viewing the session that finished
     if (currentSessionId === streamSessionId) {
       sendBtn.style.display = 'flex';
       stopBtn.style.display = 'none';
-    }
-    removeTypingIndicator();
-    if (thinkingEl) {
-      const label = thinkingEl.childNodes[0];
-      if (label && label.nodeType === Node.TEXT_NODE) {
-        label.textContent = 'Thought process (tap to expand)';
+      removeTypingIndicator();
+      if (thinkingEl) {
+        const label = thinkingEl.childNodes[0];
+        if (label && label.nodeType === Node.TEXT_NODE) {
+          label.textContent = 'Thought process (tap to expand)';
+        }
       }
+      // Refresh header title (may have been auto-named)
+      try {
+        const s = await fetch(`/api/sessions/${streamSessionId}`).then(r => r.json());
+        chatTitle.textContent = s.name;
+      } catch {}
+      messageInput.focus();
     }
     loadSessions();
-    // Refresh header title (may have been auto-named)
-    try {
-      const s = await fetch(`/api/sessions/${currentSessionId}`).then(r => r.json());
-      chatTitle.textContent = s.name;
-    } catch {}
-    messageInput.focus();
   }
 }
 
