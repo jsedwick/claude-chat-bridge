@@ -61,6 +61,16 @@ export function subscribeToStream(appSessionId: string, listener: (event: Stream
   return () => stream.listeners.delete(listener);
 }
 
+// Atomically get buffer snapshot and subscribe — no events can be missed between the two
+export function subscribeWithBuffer(appSessionId: string, listener: (event: StreamEvent) => void): { buffer: StreamEvent[], unsubscribe: () => void } | null {
+  const stream = activeStreams.get(appSessionId);
+  if (!stream) return null;
+  // Snapshot buffer and subscribe in same tick — emitToStream is synchronous
+  const buffer = [...stream.buffer];
+  stream.listeners.add(listener);
+  return { buffer, unsubscribe: () => stream.listeners.delete(listener) };
+}
+
 export function getActiveSessionCount(): number {
   return activeSessions.size;
 }

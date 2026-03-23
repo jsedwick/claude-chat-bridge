@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStreamBuffer, subscribeToStream } from '../services/claude-runner';
+import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStreamBuffer, subscribeWithBuffer } from '../services/claude-runner';
 import { getSession, updateSession, addMessage, updateToolMessage } from '../services/session-store';
 
 const router = Router();
@@ -66,6 +66,11 @@ router.post('/:sessionId', (req: Request, res: Response) => {
             return;
           }
         } catch {}
+        // Save accumulated text segment before tool call (preserves interleaving)
+        if (assistantText) {
+          addMessage(sessionId, 'assistant', assistantText);
+          assistantText = '';
+        }
         sendSSE(event.type, event.data);
         addMessage(sessionId, 'tool', event.data);
         return;
@@ -120,13 +125,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     return;
   }
 
-  const buffer = getStreamBuffer(sessionId);
   const streamActive = isStreamActive(sessionId);
-
-  if (!buffer) {
-    res.status(404).json({ error: 'No stream data available' });
-    return;
-  }
 
   // Set up SSE
   res.writeHead(200, {
@@ -140,33 +139,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
-  // Replay buffered events — convert _update tool_use to tool_update for client
-  for (const event of buffer) {
-    if (event.type === 'tool_use') {
-      try {
-        if (JSON.parse(event.data)._update) {
-          sendSSE('tool_update', event.data);
-          continue;
-        }
-      } catch {}
-    }
-    sendSSE(event.type, event.data);
-  }
-
-  if (!streamActive) {
-    // Stream already finished — just send close after replay
-    res.write('event: close\ndata: "done"\n\n');
-    res.end();
-    return;
-  }
-
-  // Keepalive ping every 15s
-  const keepalive = setInterval(() => {
-    try { res.write(': keepalive\n\n'); } catch {}
-  }, 15000);
-
-  // Subscribe to live events going forward — convert _update tool_use to tool_update
-  const unsubscribe = subscribeToStream(sessionId, (event) => {
+  const sendEvent = (event: { type: string, data: string }) => {
     if (event.type === 'tool_use') {
       try {
         if (JSON.parse(event.data)._update) {
@@ -176,14 +149,39 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
       } catch {}
     }
     sendSSE(event.type, event.data);
-  });
+  };
 
-  if (!unsubscribe) {
-    clearInterval(keepalive);
+  if (!streamActive) {
+    // Stream already finished — replay buffer and close
+    const buffer = getStreamBuffer(sessionId);
+    if (!buffer) {
+      res.end();
+      return;
+    }
+    for (const event of buffer) sendEvent(event);
     res.write('event: close\ndata: "done"\n\n');
     res.end();
     return;
   }
+
+  // Atomically get buffer + subscribe so no events are lost between snapshot and subscribe
+  const result = subscribeWithBuffer(sessionId, (event) => sendEvent(event));
+
+  if (!result) {
+    res.write('event: close\ndata: "done"\n\n');
+    res.end();
+    return;
+  }
+
+  const { buffer, unsubscribe } = result;
+
+  // Replay buffered events
+  for (const event of buffer) sendEvent(event);
+
+  // Keepalive ping every 15s
+  const keepalive = setInterval(() => {
+    try { res.write(': keepalive\n\n'); } catch {}
+  }, 15000);
 
   // When stream finishes, the close event will come through the subscriber
   // but we also need to end the response

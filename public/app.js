@@ -859,6 +859,13 @@ async function attemptReconnect(sessionId, processEvent) {
           reconnectedText += data;
           reconnectedAssistantEl.innerHTML = renderMarkdown(reconnectedText);
           scrollToBottom();
+        } else if (type === 'tool_use') {
+          // Reset text element so next text creates a new bubble after the tool group
+          if (reconnectedAssistantEl && reconnectedText) {
+            reconnectedAssistantEl = null;
+            reconnectedText = '';
+          }
+          processEvent(type, data);
         } else {
           processEvent(type, data);
         }
