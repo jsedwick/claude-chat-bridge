@@ -73,6 +73,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
             sendSSE('tool_update', event.data);
             return;
           }
+          // Detect close_session MCP tool call — mark session as closed
+          if (toolData.name?.endsWith('__close_session')) {
+            updateSession(sessionId, { closedAt: new Date().toISOString() });
+          }
         } catch {}
         // Save accumulated text segment before tool call (preserves interleaving)
         if (assistantText) {

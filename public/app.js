@@ -366,10 +366,10 @@ function renderSessionItem(s, isArchived) {
        </div>`;
 
   return `
-    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''}"
+    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''}"
          onclick="switchSession('${s.id}')">
       ${actions}
-      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${s.closedAt ? '<span class="session-closed-badge" title="Session closed">&#10003;</span>' : ''}${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} msgs</span>
@@ -942,10 +942,15 @@ async function attemptReconnect(sessionId, processEvent) {
     // Find the last assistant message element to continue appending to it
     let reconnectedAssistantEl = null;
     let reconnectedText = '';
+    let receivedContent = false;
     addTypingIndicator();
 
     function reconnectProcessor(type, data) {
       try {
+        // Track whether we received any meaningful content
+        if (type === 'text' || type === 'tool_use' || type === 'done') {
+          receivedContent = true;
+        }
         if (type === 'text') {
           removeTypingIndicator();
           if (!reconnectedAssistantEl) {
@@ -974,7 +979,8 @@ async function attemptReconnect(sessionId, processEvent) {
     }
 
     await readSSEStream(res, reconnectProcessor);
-    return true;
+    removeTypingIndicator();
+    return receivedContent;
   } catch {
     return false;
   }
