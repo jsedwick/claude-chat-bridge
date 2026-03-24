@@ -37,11 +37,18 @@ router.post('/:sessionId', (req: Request, res: Response) => {
 
   let clientDisconnected = false;
 
+  let sseEventCount = 0;
+
   const sendSSE = (event: string, data: string) => {
-    if (clientDisconnected) return;
+    sseEventCount++;
+    if (clientDisconnected) {
+      console.log(`[sse:${sessionId.slice(0, 8)}] #${sseEventCount} SUPPRESSED (disconnected) ${event}`);
+      return;
+    }
     try {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     } catch {
+      console.log(`[sse:${sessionId.slice(0, 8)}] #${sseEventCount} WRITE_FAILED ${event}`);
       clientDisconnected = true;
     }
   };
@@ -98,12 +105,31 @@ router.post('/:sessionId', (req: Request, res: Response) => {
       if (event.type === 'tool_result') {
         addMessage(sessionId, 'tool_result', event.data);
       }
-      // Save usage
+      // Save usage and flush remaining text on done
       if (event.type === 'done') {
-        addMessage(sessionId, 'usage', event.data);
+        const hadText = !!assistantText;
+        if (assistantText) {
+          addMessage(sessionId, 'assistant', assistantText);
+          assistantText = '';
+        }
+        // Safety net: if no text was accumulated but result contains it, save it
+        let usageData = event.data;
+        try {
+          const doneData = JSON.parse(event.data);
+          if (!hadText && doneData.result_text) {
+            addMessage(sessionId, 'assistant', doneData.result_text);
+          }
+          // Strip result_text from usage storage (can be very large)
+          if (doneData.result_text) {
+            const { result_text: _, ...rest } = doneData;
+            usageData = JSON.stringify(rest);
+          }
+        } catch {}
+        addMessage(sessionId, 'usage', usageData);
       }
     },
     onClose: (claudeSessionId) => {
+      console.log(`[sse:${sessionId.slice(0, 8)}] STREAM_CLOSE total=${sseEventCount} disconnected=${clientDisconnected} textLen=${assistantText.length}`);
       clearInterval(keepalive);
       // Save accumulated assistant response
       if (assistantText) {
@@ -132,6 +158,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
   // req to emit 'close' on the next tick (Node.js Readable behavior), which
   // would prematurely set clientDisconnected=true and suppress all SSE events.
   res.on('close', () => {
+    console.log(`[sse:${sessionId.slice(0, 8)}] CLIENT_DISCONNECT after ${sseEventCount} events`);
     clientDisconnected = true;
     clearInterval(keepalive);
     // The claude process will continue running and complete naturally

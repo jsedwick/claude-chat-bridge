@@ -263,6 +263,15 @@ html, body {
   opacity: 0.7;
 }
 
+.session-item.working .session-item-name {
+  animation: pulse-working 2s ease-in-out infinite;
+}
+
+@keyframes pulse-working {
+  0%, 100% { color: var(--text-primary); }
+  50% { color: var(--accent); }
+}
+
 .session-item.closed {
   opacity: 0.55;
 }
@@ -517,27 +526,6 @@ html, body {
   border-color: var(--accent);
 }
 
-.token-counter {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  text-align: right;
-  padding: 0 4px 4px;
-  max-width: 800px;
-  margin: 0 auto;
-  white-space: nowrap;
-  transition: color 0.3s;
-}
-
-.token-counter.warn {
-  color: #e8a838;
-  border-color: rgba(232, 168, 56, 0.4);
-}
-
-.token-counter.critical {
-  color: var(--error);
-  border-color: rgba(255, 107, 107, 0.4);
-}
 
 /* Messages */
 .messages {
@@ -1135,6 +1123,91 @@ pre.streaming {
   height: 1px;
   background: var(--border);
   margin: 4px 0;
+}
+
+/* Flyout submenu */
+.action-menu-item-flyout {
+  position: relative;
+}
+
+.action-menu-item-flyout .action-menu-item {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.flyout-chevron {
+  margin-left: auto;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.flyout-menu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  bottom: 0;
+  min-width: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  z-index: 110;
+}
+
+.action-menu-item-flyout.flyout-open > .flyout-menu {
+  display: block;
+}
+
+.flyout-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+  gap: 2px;
+}
+
+.flyout-item:hover {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.flyout-item-label {
+  text-transform: capitalize;
+}
+
+.flyout-item-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flyout-empty {
+  padding: 10px 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* On narrow screens, position flyout above instead of to the side */
+@media (max-width: 480px) {
+  .flyout-menu {
+    left: 0;
+    bottom: 100%;
+    margin-left: 0;
+    margin-bottom: 4px;
+  }
 }
 
 .btn-send {

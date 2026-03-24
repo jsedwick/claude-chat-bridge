@@ -75,6 +75,10 @@ export function getActiveSessionCount(): number {
   return activeSessions.size;
 }
 
+export function getActiveAppSessionIds(): string[] {
+  return Array.from(appSessionMap.keys());
+}
+
 export function isSessionBusy(sessionId: string): boolean {
   return activeSessions.has(sessionId);
 }
@@ -242,6 +246,8 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               output_tokens: usage?.output_tokens,
               cache_creation_input_tokens: usage?.cache_creation_input_tokens,
               cache_read_input_tokens: usage?.cache_read_input_tokens,
+              // Include final response text for recovery when text_delta events are lost
+              result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
             }),
           });
         }
@@ -256,12 +262,14 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     if (!text) return;
     // Ignore session-end hook failures — expected in -p mode
     if (text.includes('SessionEnd') || text.includes('session-end')) return;
-    // Surface other hook failures as errors so the user can see what was blocked
+    // Surface hook failures as errors so the user can see what was blocked
     if (text.includes('Hook cancelled') || text.includes('hook')) {
       emitToStream(appSessionId, { type: 'error', data: `Hook: ${text}` });
-    } else {
+    } else if (/error|ENOENT|EACCES|EPERM|fatal|panic|crash/i.test(text)) {
+      // Only emit stderr as error if it looks like an actual error
       emitToStream(appSessionId, { type: 'error', data: text });
     }
+    // Verbose/informational stderr output is silently dropped
   });
 
   proc.on('close', (code) => {
@@ -301,6 +309,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
                 output_tokens: usage?.output_tokens,
                 cache_creation_input_tokens: usage?.cache_creation_input_tokens,
                 cache_read_input_tokens: usage?.cache_read_input_tokens,
+                result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
               }),
             });
           }

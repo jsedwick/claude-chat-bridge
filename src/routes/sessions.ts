@@ -4,6 +4,7 @@ import path from 'path';
 import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession } from '../services/session-store';
 import { getMode, setMode, Mode, config } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
+import { getActiveAppSessionIds } from '../services/claude-runner';
 
 const router = Router();
 
@@ -59,6 +60,11 @@ router.get('/dirs/available', (_req: Request, res: Response) => {
   const [home, ...projects] = dirs;
   projects.sort((a, b) => a.label.localeCompare(b.label));
   res.json([home, ...projects]);
+});
+
+// Active sessions endpoint (must be before /:id to avoid param capture)
+router.get('/active', (_req: Request, res: Response) => {
+  res.json(getActiveAppSessionIds());
 });
 
 // Mode endpoints (must be before /:id to avoid param capture)

@@ -16,6 +16,11 @@ export const config = {
   defaultMode: 'work' as Mode,
   // Directories to scan for project subdirectories
   projectScanDirs: ['/Users/jsedwick/Projects'],
+  // Obsidian vault paths per mode
+  vaultPaths: {
+    work: '/Users/jsedwick/Documents/Obsidian/AI-Work',
+    personal: '/Users/jsedwick/Documents/Obsidian/AI-Home',
+  } as Record<Mode, string>,
 };
 
 // Global mutable mode state

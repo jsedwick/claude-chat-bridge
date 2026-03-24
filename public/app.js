@@ -3,47 +3,10 @@ let currentSessionId = null;
 const streamingSessions = new Set(); // track which sessions are actively streaming
 const sessionInputDrafts = new Map(); // preserve input text per session
 let currentMode = 'work';
-let lastInputTokens = 0;
-
-// Context window limits by model
-const MODEL_CONTEXT_LIMITS = {
-  opus: 1000000,
-  sonnet: 200000,
-};
-
-function updateTokenCounter(inputTokens) {
-  lastInputTokens = inputTokens;
-  const counterEl = document.getElementById('token-counter');
-  const countEl = document.getElementById('token-count');
-  const limitEl = document.getElementById('token-limit');
-  const model = getSelectedModel();
-  const limit = MODEL_CONTEXT_LIMITS[model] || 200000;
-
-  countEl.textContent = formatTokenCount(inputTokens);
-  limitEl.textContent = formatTokenCount(limit);
-  counterEl.style.display = '';
-
-  // Color thresholds
-  const ratio = inputTokens / limit;
-  counterEl.classList.toggle('warn', ratio >= 0.7 && ratio < 0.9);
-  counterEl.classList.toggle('critical', ratio >= 0.9);
-}
-
-function resetTokenCounter() {
-  lastInputTokens = 0;
-  const counterEl = document.getElementById('token-counter');
-  counterEl.style.display = 'none';
-  counterEl.classList.remove('warn', 'critical');
-}
-
-function formatTokenCount(n) {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(0) + 'k';
-  return String(n);
-}
 
 // Message history (server-backed)
 async function restoreMessages(sessionId) {
+  console.log('[SSE] restoreMessages called', sessionId, new Error().stack?.split('\n').slice(1,4).join(' <- '));
   clearMessages();
   try {
     const res = await fetch(`/api/sessions/${sessionId}/messages`);
@@ -227,6 +190,9 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Track which sessions are actively working (polled from backend)
+let activeSessionIds = new Set();
+
 // Initialize — always start in work mode on page load
 (async () => {
   try {
@@ -240,7 +206,31 @@ document.addEventListener('click', (e) => {
   updateModeTabsUI('work');
   loadDirs();
   loadSessions();
+  startActiveSessionPolling();
 })();
+
+// Poll for active (working) sessions to show pulse indicator
+function startActiveSessionPolling() {
+  async function poll() {
+    try {
+      const res = await fetch('/api/sessions/active');
+      const ids = await res.json();
+      const newSet = new Set(ids);
+      // Only update DOM if the set changed
+      if (ids.length !== activeSessionIds.size || ids.some(id => !activeSessionIds.has(id))) {
+        activeSessionIds = newSet;
+        document.querySelectorAll('.session-item').forEach(el => {
+          const sessionId = el.getAttribute('onclick')?.match(/switchSession\('([^']+)'\)/)?.[1];
+          if (sessionId) {
+            el.classList.toggle('working', activeSessionIds.has(sessionId));
+          }
+        });
+      }
+    } catch {}
+  }
+  poll();
+  setInterval(poll, 2000);
+}
 
 // Sidebar toggle
 function toggleSidebar() {
@@ -252,13 +242,13 @@ function toggleSidebar() {
 const ACTION_MENU_ITEMS = [
   { label: 'Attach Image', icon: 'image', action: 'image' },
   { divider: true },
-  { label: 'Workflow', icon: 'play', command: '/workflow' },
+  { label: 'Workflow', icon: 'play', command: '/workflow', flyout: 'workflows' },
   { label: 'Close Session', icon: 'check-circle', command: '/close' },
   { label: 'Close (No Git)', icon: 'x-circle', command: '/close-no-git' },
   { divider: true },
   { label: 'Sessions', icon: 'list', command: '/sessions' },
   { label: 'Projects', icon: 'folder', command: '/projects' },
-  { label: 'Issue', icon: 'alert-triangle', command: '/issue' },
+  { label: 'Issue', icon: 'alert-triangle', command: '/issue', flyout: 'issues' },
 ];
 
 const ACTION_ICONS = {
@@ -271,6 +261,14 @@ const ACTION_ICONS = {
   'alert-triangle': '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 };
 
+async function fetchFlyoutData(type) {
+  try {
+    const res = await fetch(`/api/vault/${type}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
+
 function buildActionMenu() {
   const menu = document.getElementById('action-menu');
   menu.innerHTML = ACTION_MENU_ITEMS.map(item => {
@@ -279,8 +277,78 @@ function buildActionMenu() {
     if (item.action === 'image') {
       return `<button class="action-menu-item" onclick="triggerImageAttach()">${iconSvg}<span>${item.label}</span></button>`;
     }
+    if (item.flyout) {
+      const chevron = '<svg class="flyout-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+      return `<div class="action-menu-item-flyout" data-flyout="${item.flyout}" data-command="${item.command}">
+        <button class="action-menu-item" onclick="handleFlyoutClick(event, '${item.command}')">${iconSvg}<span>${item.label}</span>${chevron}</button>
+        <div class="flyout-menu" id="flyout-${item.flyout}"></div>
+      </div>`;
+    }
     return `<button class="action-menu-item" onclick="fireCommand('${item.command}')">${iconSvg}<span>${item.label}</span></button>`;
   }).join('');
+
+  // Attach hover/touch listeners for flyout items
+  menu.querySelectorAll('.action-menu-item-flyout').forEach(el => {
+    const flyoutType = el.dataset.flyout;
+    let enterTimeout;
+    let leaveTimeout;
+
+    el.addEventListener('mouseenter', () => {
+      clearTimeout(leaveTimeout);
+      enterTimeout = setTimeout(() => showFlyout(el, flyoutType), 150);
+    });
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(enterTimeout);
+      leaveTimeout = setTimeout(() => hideFlyout(el), 100);
+    });
+  });
+}
+
+async function showFlyout(wrapperEl, type) {
+  const items = await fetchFlyoutData(type);
+
+  const flyoutMenu = wrapperEl.querySelector('.flyout-menu');
+  const command = wrapperEl.dataset.command;
+
+  if (!items || items.length === 0) {
+    flyoutMenu.innerHTML = '<div class="flyout-empty">None available</div>';
+  } else {
+    flyoutMenu.innerHTML = items.map(item => {
+      const slug = item.slug;
+      const label = slug.replace(/-/g, ' ');
+      const subtitle = item.description || (item.priority ? `${item.priority} priority` : '');
+      return `<button class="flyout-item" onclick="fireCommand('${command} ${slug}')">
+        <span class="flyout-item-label">${label}</span>
+        ${subtitle ? `<span class="flyout-item-desc">${subtitle}</span>` : ''}
+      </button>`;
+    }).join('');
+  }
+
+  wrapperEl.classList.add('flyout-open');
+}
+
+function hideFlyout(wrapperEl) {
+  wrapperEl.classList.remove('flyout-open');
+}
+
+function handleFlyoutClick(event, command) {
+  // On touch devices, first tap opens the flyout; second fires the base command
+  event.stopPropagation();
+  const wrapper = event.target.closest('.action-menu-item-flyout');
+  if (!wrapper) return;
+
+  // If flyout is already open (touch device second tap), fire base command
+  if (wrapper.classList.contains('flyout-open')) {
+    fireCommand(command);
+    return;
+  }
+
+  // First tap on touch — open flyout
+  // Close any other open flyouts first
+  document.querySelectorAll('.action-menu-item-flyout.flyout-open').forEach(el => {
+    el.classList.remove('flyout-open');
+  });
+  showFlyout(wrapper, wrapper.dataset.flyout);
 }
 
 function toggleActionMenu() {
@@ -289,6 +357,10 @@ function toggleActionMenu() {
   const isOpen = menu.style.display !== 'none';
   menu.style.display = isOpen ? 'none' : 'block';
   btn.classList.toggle('active', !isOpen);
+  // Close any open flyouts when toggling menu
+  if (isOpen) {
+    document.querySelectorAll('.flyout-open').forEach(el => el.classList.remove('flyout-open'));
+  }
 }
 
 function closeActionMenu() {
@@ -296,6 +368,7 @@ function closeActionMenu() {
   const btn = document.querySelector('.btn-attach');
   menu.style.display = 'none';
   btn.classList.remove('active');
+  document.querySelectorAll('.flyout-open').forEach(el => el.classList.remove('flyout-open'));
 }
 
 function triggerImageAttach() {
@@ -366,7 +439,7 @@ function renderSessionItem(s, isArchived) {
        </div>`;
 
   return `
-    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''}"
+    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''}"
          onclick="switchSession('${s.id}')">
       ${actions}
       <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${s.closedAt ? '<span class="session-closed-badge" title="Session closed">&#10003;</span>' : ''}${escapeHtml(s.name)}</div>
@@ -410,7 +483,6 @@ async function archiveSessionItem(id) {
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
     clearMessages();
-    resetTokenCounter();
   }
   loadSessions();
 }
@@ -489,7 +561,6 @@ async function createNewSession() {
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
     clearMessages();
-    resetTokenCounter();
     loadSessions();
     // Reset sidebar dir picker for next time
     selectedNewChatDir = '';
@@ -523,7 +594,6 @@ async function switchSession(id) {
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
   document.querySelector('.dir-picker-wrapper').style.display = '';
-  resetTokenCounter();
   restoreMessages(id);
   loadSessions();
   // Show correct button state for this session
@@ -550,7 +620,6 @@ async function deleteSessionItem(id) {
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
     clearMessages();
-    resetTokenCounter();
   }
   loadSessions();
 }
@@ -623,10 +692,14 @@ function ensureCopyButton(el) {
 }
 
 function addTypingIndicator() {
-  const el = document.createElement('div');
-  el.className = 'typing-indicator';
-  el.id = 'typing-indicator';
-  el.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+  let el = document.getElementById('typing-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'typing-indicator';
+    el.id = 'typing-indicator';
+    el.innerHTML = '<div class="typing-dots"><span></span><span></span><span></span></div>';
+  }
+  // Always (re-)append to keep it at the bottom
   messagesEl.appendChild(el);
   scrollToBottom();
 }
@@ -797,9 +870,6 @@ function addUsageInfo(data) {
       el.textContent = parts.join(' \u00b7 ');
       messagesEl.appendChild(el);
     }
-    if (totalInput > 0) {
-      updateTokenCounter(totalInput);
-    }
   } catch {}
 }
 
@@ -949,6 +1019,7 @@ async function attemptReconnect(sessionId, processEvent) {
     let receivedContent = false;
 
     function reconnectProcessor(type, data) {
+      console.log(`[SSE:reconnect] ${type}`, typeof data === 'string' ? data.substring(0, 80) : '', `reconnTextLen=${reconnectedText.length}`);
       // Don't update DOM if user switched to a different session
       if (currentSessionId !== sessionId) {
         // Still track content reception for return value
@@ -963,9 +1034,10 @@ async function attemptReconnect(sessionId, processEvent) {
           receivedContent = true;
         }
         if (type === 'text') {
-          removeTypingIndicator();
           if (!reconnectedAssistantEl) {
+            console.log('[SSE:reconnect] creating new assistantEl');
             reconnectedAssistantEl = createAssistantMessage();
+            addTypingIndicator(); // keep dots at bottom
           }
           reconnectedText += data;
           reconnectedAssistantEl.innerHTML = renderMarkdown(reconnectedText);
@@ -1035,20 +1107,34 @@ async function sendMessage() {
   let lastEventType = '';
   let streamCompleted = false;
 
+  // Debug logging for missing output diagnosis
+  const sseLog = [];
+  window._lastSSELog = sseLog;
+  function logSSE(action, detail) {
+    const entry = { t: Date.now(), action, detail, textLen: currentText.length, hasEl: !!assistantEl };
+    sseLog.push(entry);
+    console.log(`[SSE] ${action}`, detail, `textLen=${currentText.length} hasEl=${!!assistantEl}`);
+  }
+
   function processEvent(type, data) {
     // Don't update DOM if user switched to a different session
-    if (currentSessionId !== streamSessionId) return;
+    if (currentSessionId !== streamSessionId) {
+      logSSE('SESSION_MISMATCH', { type, current: currentSessionId, stream: streamSessionId });
+      return;
+    }
     try {
       switch (type) {
         case 'init':
+          logSSE('init', data);
           // Don't remove typing indicator — keep it visible until content arrives
           break;
 
         case 'text':
-          removeTypingIndicator();
           deactivateToolGroup();
           if (!assistantEl) {
+            logSSE('text:create_el', { dataLen: typeof data === 'string' ? data.length : 0 });
             assistantEl = createAssistantMessage();
+            addTypingIndicator(); // keep dots at bottom
           }
           currentText += data;
           assistantEl.innerHTML = renderMarkdown(currentText);
@@ -1057,9 +1143,9 @@ async function sendMessage() {
           break;
 
         case 'thinking':
-          removeTypingIndicator();
           if (!thinkingEl) {
             thinkingEl = addThinkingIndicator();
+            addTypingIndicator(); // keep dots at bottom
           }
           const contentEl = thinkingEl.querySelector('.thinking-content');
           if (contentEl) {
@@ -1068,7 +1154,7 @@ async function sendMessage() {
           break;
 
         case 'tool_use':
-          removeTypingIndicator();
+          logSSE('tool_use:clear', { hadText: currentText.length, hadEl: !!assistantEl, data: typeof data === 'string' ? data.substring(0, 100) : '' });
           if (assistantEl && currentText) {
             assistantEl = null;
             currentText = '';
@@ -1106,8 +1192,9 @@ async function sendMessage() {
           break;
 
         case 'error':
-          removeTypingIndicator();
-          deactivateToolGroup();
+          // Don't remove typing indicator — errors during streaming are often non-fatal
+          // (e.g. verbose stderr output during tool execution). The done event or
+          // finally block will clean up the indicator when the stream actually ends.
           const errEl = document.createElement('div');
           errEl.className = 'message message-error';
           errEl.textContent = data;
@@ -1116,14 +1203,34 @@ async function sendMessage() {
           break;
 
         case 'done':
+          logSSE('done', { textLen: currentText.length, streamCompleted });
+          // Safety net: recover text from result if text_delta events were lost
+          try {
+            const doneData = typeof data === 'string' ? JSON.parse(data) : data;
+            if (!currentText && doneData.result_text) {
+              logSSE('done:text_recovery', { resultLen: doneData.result_text.length });
+              deactivateToolGroup();
+              if (!assistantEl) {
+                assistantEl = createAssistantMessage();
+              }
+              currentText = doneData.result_text;
+              assistantEl.innerHTML = renderMarkdown(currentText);
+              ensureCopyButton(assistantEl);
+            }
+          } catch {}
           removeTypingIndicator();
           deactivateToolGroup();
           addUsageInfo(data);
           streamCompleted = true;
           scrollToBottom();
           break;
+
+        default:
+          logSSE('unknown_event', { type, data: typeof data === 'string' ? data.substring(0, 100) : '' });
+          break;
       }
     } catch (err) {
+      logSSE('ERROR', { type, error: err.message });
       console.error('processEvent error:', type, err);
       // Ensure the message is still visible even if rendering failed
       if (type === 'text' && assistantEl && currentText) {
@@ -1150,23 +1257,42 @@ async function sendMessage() {
 
     await readSSEStream(res, processEvent);
 
+    logSSE('stream_ended', { streamCompleted, textLen: currentText.length });
+
     // Stream ended without a 'done' event — connection likely dropped (common on mobile)
     if (!streamCompleted) {
+      logSSE('reconnect:no_done', { textLen: currentText.length });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
+      logSSE('reconnect:result', { reconnected, textLen: currentText.length });
       if (!reconnected && currentSessionId === streamSessionId) {
-        // Reload saved messages as fallback — only if still viewing this session
-        await restoreMessages(streamSessionId);
+        // Only restore if we have no visible content — otherwise keep what's on screen
+        // rather than replacing with potentially stale server data
+        const hasVisibleContent = messagesEl.querySelector('.message-assistant, .tool-group');
+        if (!hasVisibleContent) {
+          logSSE('reconnect:fallback_restore', {});
+          await restoreMessages(streamSessionId);
+        } else {
+          logSSE('reconnect:keeping_visible_content', { childCount: messagesEl.children.length });
+        }
       }
     }
   } catch (err) {
+    logSSE('stream_error', { error: err.message, streamCompleted, textLen: currentText.length });
     if (currentSessionId === streamSessionId) removeTypingIndicator();
     // Only attempt reconnect if we were genuinely mid-stream (not completed/cancelled)
     if (!streamCompleted && err.name !== 'AbortError') {
+      logSSE('reconnect:after_error', { error: err.message });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
+      logSSE('reconnect:error_result', { reconnected, textLen: currentText.length });
       if (!reconnected && currentSessionId === streamSessionId) {
-        // Fallback: reload saved messages after a brief delay for server to finish saving
-        await new Promise(r => setTimeout(r, 2000));
-        await restoreMessages(streamSessionId);
+        const hasVisibleContent = messagesEl.querySelector('.message-assistant, .tool-group');
+        if (!hasVisibleContent) {
+          logSSE('reconnect:error_fallback_restore', {});
+          await new Promise(r => setTimeout(r, 2000));
+          await restoreMessages(streamSessionId);
+        } else {
+          logSSE('reconnect:error_keeping_visible_content', { childCount: messagesEl.children.length });
+        }
       }
     } else if (!streamCompleted && currentSessionId === streamSessionId) {
       const errEl = document.createElement('div');
@@ -1182,11 +1308,19 @@ async function sendMessage() {
       sendBtn.style.display = 'flex';
       stopBtn.style.display = 'none';
       removeTypingIndicator();
+      deactivateToolGroup();
       if (thinkingEl) {
         const label = thinkingEl.childNodes[0];
         if (label && label.nodeType === Node.TEXT_NODE) {
           label.textContent = 'Thought process (tap to expand)';
         }
+      }
+      // Safety net: if stream ended without text but tools were used, restore from server
+      // The server may have result_text saved even when text_delta events were lost
+      if (!currentText && messagesEl.querySelector('.tool-group')) {
+        logSSE('finally:text_missing_restore', { streamCompleted });
+        await new Promise(r => setTimeout(r, 1500)); // Allow server-side persistence to flush
+        await restoreMessages(streamSessionId);
       }
       // Refresh header title (may have been auto-named)
       try {
