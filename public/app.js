@@ -935,17 +935,28 @@ async function attemptReconnect(sessionId, processEvent) {
     // Don't clear messages — preserve what's already visible on screen.
     // The buffer replay will rebuild from the full stream, so we clear
     // only the in-progress elements (thinking, typing) and let replay rebuild.
-    removeTypingIndicator();
-    const existingThinking = document.getElementById('thinking-current');
-    if (existingThinking) existingThinking.remove();
+    // Only manipulate DOM if we're still viewing this session
+    if (currentSessionId === sessionId) {
+      removeTypingIndicator();
+      const existingThinking = document.getElementById('thinking-current');
+      if (existingThinking) existingThinking.remove();
+      addTypingIndicator();
+    }
 
     // Find the last assistant message element to continue appending to it
     let reconnectedAssistantEl = null;
     let reconnectedText = '';
     let receivedContent = false;
-    addTypingIndicator();
 
     function reconnectProcessor(type, data) {
+      // Don't update DOM if user switched to a different session
+      if (currentSessionId !== sessionId) {
+        // Still track content reception for return value
+        if (type === 'text' || type === 'tool_use' || type === 'done') {
+          receivedContent = true;
+        }
+        return;
+      }
       try {
         // Track whether we received any meaningful content
         if (type === 'text' || type === 'tool_use' || type === 'done') {
@@ -979,7 +990,7 @@ async function attemptReconnect(sessionId, processEvent) {
     }
 
     await readSSEStream(res, reconnectProcessor);
-    removeTypingIndicator();
+    if (currentSessionId === sessionId) removeTypingIndicator();
     return receivedContent;
   } catch {
     return false;
@@ -1157,7 +1168,7 @@ async function sendMessage() {
         await new Promise(r => setTimeout(r, 2000));
         await restoreMessages(streamSessionId);
       }
-    } else if (!streamCompleted) {
+    } else if (!streamCompleted && currentSessionId === streamSessionId) {
       const errEl = document.createElement('div');
       errEl.className = 'message message-error';
       errEl.textContent = err.message;
