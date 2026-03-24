@@ -11,6 +11,8 @@ export const config = {
   claudePath: process.env.CHAT_BRIDGE_CLAUDE_PATH || '/Users/jsedwick/.local/bin/claude',
   permissionMode: 'bypassPermissions' as const,
   sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
+  autoArchiveAfterMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+  autoDeleteAfterMs: 30 * 24 * 60 * 60 * 1000, // 30 days
   defaultMode: 'work' as Mode,
   // Directories to scan for project subdirectories
   projectScanDirs: ['/Users/jsedwick/Projects'],

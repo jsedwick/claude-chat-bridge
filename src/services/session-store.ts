@@ -21,6 +21,10 @@ function save(): void {
 // Load on module init
 load();
 
+export function listAllSessions(): ChatSession[] {
+  return [...sessions];
+}
+
 export function listSessions(): ChatSession[] {
   return sessions
     .filter(s => !s.archived)

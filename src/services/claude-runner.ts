@@ -3,8 +3,8 @@ import { config } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
 
 const activeSessions = new Map<string, ChildProcess>();
-// Maps app session ID → tracking ID for cancel support
-const appSessionMap = new Map<string, string>();
+// Maps app session ID → tracking ID for cancel support (exported for shutdown cleanup)
+export const appSessionMap = new Map<string, string>();
 // Reverse map: Claude session ID → app session ID
 const claudeToAppMap = new Map<string, string>();
 

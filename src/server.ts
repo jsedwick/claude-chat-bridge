@@ -8,6 +8,7 @@ import { config } from './config';
 import chatRoutes from './routes/chat';
 import sessionRoutes from './routes/sessions';
 import permissionRoutes from './routes/permissions';
+import { startReaper, shutdownAll } from './services/session-reaper';
 
 const app = express();
 
@@ -47,6 +48,7 @@ if (useHttp) {
   const server = http.createServer(app);
   server.listen(config.port, '0.0.0.0', () => {
     console.log(`Chat Bridge running on HTTP at http://0.0.0.0:${config.port}`);
+    startReaper();
   });
 } else {
   // HTTPS mode (default)
@@ -79,6 +81,7 @@ if (useHttp) {
 
     server.listen(config.port, '0.0.0.0', () => {
       console.log(`Chat Bridge running on HTTPS at https://0.0.0.0:${config.port}`);
+      startReaper();
     });
   } catch (err: any) {
     console.error('Failed to start HTTPS server:', err.message);
@@ -89,10 +92,12 @@ if (useHttp) {
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\nShutting down...');
+  shutdownAll();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down...');
+  shutdownAll();
   process.exit(0);
 });

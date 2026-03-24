@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession } from '../services/session-store';
 import { getMode, setMode, Mode, config } from '../config';
+import { cleanupSessionResources } from '../services/session-reaper';
 
 const router = Router();
 
@@ -81,6 +82,7 @@ router.post('/:id/archive', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Session not found' });
     return;
   }
+  cleanupSessionResources(req.params.id as string);
   res.json(session);
 });
 
@@ -138,6 +140,7 @@ router.patch('/:id', (req: Request, res: Response) => {
 });
 
 router.delete('/:id', (req: Request, res: Response) => {
+  cleanupSessionResources(req.params.id as string);
   const deleted = deleteSession(req.params.id as string);
   if (!deleted) {
     res.status(404).json({ error: 'Session not found' });
