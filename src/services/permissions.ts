@@ -26,7 +26,7 @@ const AUTO_ALLOW_PATTERNS = [
 
 // Bash commands that require user approval via the permission dialog
 const BASH_ASK_PATTERNS = [
-  /^git\s+(add|commit|push|reset|rebase|merge|checkout|switch|cherry-pick|revert)\b/,
+  /^git\s+(reset|rebase|merge|checkout|switch|cherry-pick|revert)\b/,
   /^rm\s/,
 ];
 

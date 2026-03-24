@@ -123,8 +123,11 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     },
   });
 
-  // Handle client disconnect
-  req.on('close', () => {
+  // Handle client disconnect — must use res.on('close'), not req.on('close').
+  // express.json() consumes the request body before our handler runs, causing
+  // req to emit 'close' on the next tick (Node.js Readable behavior), which
+  // would prematurely set clientDisconnected=true and suppress all SSE events.
+  res.on('close', () => {
     clientDisconnected = true;
     clearInterval(keepalive);
     // The claude process will continue running and complete naturally
@@ -230,7 +233,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     }
   }, 500);
 
-  req.on('close', () => {
+  res.on('close', () => {
     reconnectDisconnected = true;
     clearInterval(checkDone);
     clearInterval(keepalive);
