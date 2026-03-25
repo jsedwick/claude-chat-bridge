@@ -170,7 +170,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   const proc = spawn(config.claudePath, args, {
     cwd: workingDir || config.workingDir,
-    env: { ...process.env, CHAT_BRIDGE_SESSION: appSessionId },
+    env: { ...process.env, CHAT_BRIDGE_SESSION: appSessionId, ...(mode ? { VAULT_MODE: mode } : {}) },
     stdio: [hasImages ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   });
 
