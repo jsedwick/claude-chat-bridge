@@ -1108,6 +1108,7 @@ async function sendMessage() {
   let thinkingEl = null;
   let lastEventType = '';
   let streamCompleted = false;
+  let everRenderedText = false; // Track if ANY text was rendered (survives tool_use clears)
 
   // Debug logging for missing output diagnosis
   const sseLog = [];
@@ -1139,6 +1140,7 @@ async function sendMessage() {
             addTypingIndicator(); // keep dots at bottom
           }
           currentText += data;
+          everRenderedText = true;
           assistantEl.innerHTML = renderMarkdown(currentText);
           ensureCopyButton(assistantEl);
           scrollToBottom();
@@ -1214,13 +1216,14 @@ async function sendMessage() {
           // Safety net: recover text from result if text_delta events were lost
           try {
             const doneData = typeof data === 'string' ? JSON.parse(data) : data;
-            if (!currentText && doneData.result_text) {
+            if (!currentText && !everRenderedText && doneData.result_text) {
               logSSE('done:text_recovery', { resultLen: doneData.result_text.length });
               deactivateToolGroup();
               if (!assistantEl) {
                 assistantEl = createAssistantMessage();
               }
               currentText = doneData.result_text;
+              everRenderedText = true;
               assistantEl.innerHTML = renderMarkdown(currentText);
               ensureCopyButton(assistantEl);
             }
@@ -1322,10 +1325,12 @@ async function sendMessage() {
           label.textContent = 'Thought process (tap to expand)';
         }
       }
-      // Safety net: if stream ended without text but tools were used, restore from server
+      // Safety net: if NO text was ever rendered but tools were used, restore from server
       // The server may have result_text saved even when text_delta events were lost
-      if (!currentText && messagesEl.querySelector('.tool-group')) {
-        logSSE('finally:text_missing_restore', { streamCompleted });
+      // Don't trigger if text was rendered before tools — currentText being empty just
+      // means the last segment was a tool call, not that text was lost
+      if (!everRenderedText && messagesEl.querySelector('.tool-group')) {
+        logSSE('finally:text_missing_restore', { streamCompleted, everRenderedText });
         await new Promise(r => setTimeout(r, 1500)); // Allow server-side persistence to flush
         await restoreMessages(streamSessionId);
       }

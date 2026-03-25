@@ -208,10 +208,12 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        // Reset streamedText on every new assistant message. The flag prevents
-        // duplicate text within a single message (text_delta vs snapshot), but must
-        // reset between messages so text in later turns isn't suppressed.
-        if (parsed.type === 'assistant') {
+        // Reset streamedText when we see a user message (tool_result), which marks
+        // the boundary between assistant turns. Do NOT reset on assistant events —
+        // with --include-partial-messages, partial assistant snapshots arrive during
+        // streaming and would clear the dedup flag, causing snapshot text to re-emit
+        // on top of already-streamed text_delta content.
+        if (parsed.type === 'user') {
           resetStreamedText(appSessionId);
         }
 
@@ -239,6 +241,15 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           });
         }
 
+        // Surface API errors (500, overloaded, rate_limit, etc.)
+        if (parsed.type === 'error' || (parsed.error && parsed.type !== 'assistant')) {
+          const errMsg = parsed.error?.message || parsed.message || JSON.stringify(parsed.error || parsed);
+          emitToStream(appSessionId, {
+            type: 'error',
+            data: `API error: ${errMsg}`,
+          });
+        }
+
         // Capture session ID from result event
         if (parsed.type === 'result' && parsed.session_id) {
           capturedSessionId = parsed.session_id;
@@ -260,7 +271,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           });
         }
       } catch {
-        // Non-JSON line, skip
+        // Non-JSON line — check if it looks like an error message from Claude Code
+        const trimmed = line.trim();
+        if (trimmed && /error|failed|overloaded|rate.?limit/i.test(trimmed)) {
+          emitToStream(appSessionId, { type: 'error', data: trimmed });
+        }
       }
     }
   });
@@ -297,7 +312,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line);
-          if (parsed.type === 'assistant') {
+          if (parsed.type === 'user') {
             resetStreamedText(appSessionId);
           }
           const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
@@ -327,7 +342,10 @@ export function runClaude(options: ClaudeRunnerOptions): void {
             });
           }
         } catch {
-          // Non-JSON line, skip
+          const trimmed = line.trim();
+          if (trimmed && /error|failed|overloaded|rate.?limit/i.test(trimmed)) {
+            emitToStream(appSessionId, { type: 'error', data: trimmed });
+          }
         }
       }
     }
