@@ -144,7 +144,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--dangerously-skip-permissions',
+    '--permission-mode', 'bypassPermissions',
   ];
 
   if (hasImages) {
@@ -208,10 +208,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId));
+        const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
         if (result) {
           const events = Array.isArray(result) ? result : [result];
           for (const event of events) {
+            if (event.type === 'text') markStreamedText(appSessionId);
             emitToStream(appSessionId, event);
           }
         }
@@ -275,6 +276,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   proc.on('close', (code) => {
     activeSessions.delete(trackingId);
     appSessionMap.delete(appSessionId);
+    resetStreamedText(appSessionId);
     if (capturedSessionId) {
       claudeToAppMap.delete(capturedSessionId);
       if (trackingId !== capturedSessionId) {
@@ -288,10 +290,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line);
-          const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId));
+          const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
           if (result) {
             const events = Array.isArray(result) ? result : [result];
             for (const event of events) {
+              if (event.type === 'text') markStreamedText(appSessionId);
               emitToStream(appSessionId, event);
             }
           }
@@ -341,6 +344,8 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
 // Track tool_use IDs per session to avoid duplicates
 const sessionToolUseIds = new Map<string, Set<string>>();
+// Track whether text has been streamed via deltas (to skip duplicate in assistant snapshot)
+const sessionStreamedText = new Map<string, boolean>();
 
 function getEmittedToolIds(appSessionId: string): Set<string> {
   let ids = sessionToolUseIds.get(appSessionId);
@@ -351,7 +356,19 @@ function getEmittedToolIds(appSessionId: string): Set<string> {
   return ids;
 }
 
-function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>): StreamEvent | StreamEvent[] | null {
+function hasStreamedText(appSessionId: string): boolean {
+  return sessionStreamedText.get(appSessionId) || false;
+}
+
+function markStreamedText(appSessionId: string): void {
+  sessionStreamedText.set(appSessionId, true);
+}
+
+function resetStreamedText(appSessionId: string): void {
+  sessionStreamedText.delete(appSessionId);
+}
+
+function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>, streamedText: boolean): StreamEvent | StreamEvent[] | null {
   // Init event
   if (parsed.type === 'system' && parsed.subtype === 'init') {
     return { type: 'init', data: JSON.stringify({ session_id: parsed.session_id }) };
@@ -361,11 +378,14 @@ function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>): StreamEv
   if (parsed.type === 'assistant' && parsed.message?.content) {
     const events: StreamEvent[] = [];
     for (const block of parsed.message.content) {
+      // Only emit text from snapshot if it wasn't already streamed via text_delta events
+      if (block.type === 'text' && block.text && !streamedText) {
+        events.push({ type: 'text', data: block.text });
+      }
       if (block.type === 'tool_use') {
         const alreadyEmitted = emittedToolUseIds.has(block.id);
         emittedToolUseIds.add(block.id);
         events.push({
-          // Use tool_use for new tools, tool_use for updates (with _update flag for chat.ts)
           type: 'tool_use',
           data: JSON.stringify({ id: block.id, name: block.name, input: block.input, _update: alreadyEmitted }),
         });

@@ -3,6 +3,8 @@ let currentSessionId = null;
 const streamingSessions = new Set(); // track which sessions are actively streaming
 const sessionInputDrafts = new Map(); // preserve input text per session
 let currentMode = 'work';
+let pendingPermissionId = null;
+let permissionPollInterval = null;
 
 // Message history (server-backed)
 async function restoreMessages(sessionId) {
@@ -1184,11 +1186,16 @@ async function sendMessage() {
           break;
 
         case 'permission_request':
+          console.log('[permission] received event, data type:', typeof data, 'data:', data);
           removeTypingIndicator();
           try {
-            const perm = JSON.parse(data);
+            const perm = typeof data === 'string' ? JSON.parse(data) : data;
+            console.log('[permission] parsed:', perm);
             showPermissionDialog(perm.id, perm.toolName, perm.toolInput);
-          } catch {}
+            console.log('[permission] dialog shown, overlay display:', document.getElementById('permission-overlay')?.style.display);
+          } catch (err) {
+            console.error('[permission] FAILED to show dialog:', err, 'data was:', data);
+          }
           break;
 
         case 'error':
@@ -1429,7 +1436,32 @@ function formatTime(iso) {
 }
 
 // Permission dialog
-let pendingPermissionId = null;
+
+// Poll for pending permission requests (fallback when SSE event doesn't arrive)
+function startPermissionPolling() {
+  if (permissionPollInterval) return;
+  permissionPollInterval = setInterval(async () => {
+    if (pendingPermissionId || !currentSessionId) return;
+    try {
+      const res = await fetch(`/api/permissions/pending/${currentSessionId}`);
+      const pending = await res.json();
+      if (pending && pending.id && !pendingPermissionId) {
+        console.log('[permission-poll] found pending request:', pending);
+        showPermissionDialog(pending.id, pending.toolName, pending.toolInput);
+      }
+    } catch {}
+  }, 2000);
+}
+
+function stopPermissionPolling() {
+  if (permissionPollInterval) {
+    clearInterval(permissionPollInterval);
+    permissionPollInterval = null;
+  }
+}
+
+// Start polling when page loads
+startPermissionPolling();
 
 function showPermissionDialog(id, toolName, toolInput) {
   pendingPermissionId = id;

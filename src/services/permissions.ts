@@ -14,20 +14,12 @@ interface PendingPermission {
   timer: ReturnType<typeof setTimeout>;
 }
 
-// Tools that are always safe (read-only operations)
-const AUTO_ALLOW_PATTERNS = [
-  'Read', 'Glob', 'Grep', 'ToolSearch', 'Skill',
-  'Edit', 'Write', 'NotebookEdit',
-  'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop',
-  'EnterPlanMode', 'ExitPlanMode',
-  'AskUserQuestion', 'Agent',
-  'WebSearch', 'WebFetch',
-];
+// All tools are auto-allowed except specific Bash commands listed below
+const AUTO_ALLOW_ALL = true;
 
 // Bash commands that require user approval via the permission dialog
 const BASH_ASK_PATTERNS = [
-  /^git\s+(reset|rebase|merge|checkout|switch|cherry-pick|revert)\b/,
-  /^rm\s/,
+  /^git\s+(add|commit|push)\b/,
 ];
 
 // Check if a Bash command needs user permission
@@ -35,24 +27,6 @@ function bashNeedsPermission(toolInput: Record<string, unknown>): boolean {
   const command = (toolInput.command as string) || '';
   return BASH_ASK_PATTERNS.some(pattern => pattern.test(command));
 }
-
-// MCP tool name prefixes that are safe to auto-allow (checked against last segment after __)
-const AUTO_ALLOW_MCP_PREFIXES = [
-  'search_', 'get_', 'list_', 'find_', 'detect_', 'analyze_',
-  'calendar_', 'email_',
-  'switch_', 'toggle_', 'restore_',
-  'link_session', 'submit_topic',
-  'track_file',
-];
-
-// MCP tool names (last segment after __) that are safe to auto-allow (exact match)
-const AUTO_ALLOW_MCP_NAMES = [
-  'append_to_accumulator', 'record_commit', 'workflow',
-  'close_session', 'vault_custodian',
-  'update_document', 'code_file', 'create_topic_page', 'create_decision',
-  'create_project_page', 'add_task', 'complete_task', 'issue',
-  'update_persistent_issue', 'archive_topic',
-];
 
 const PERMISSION_TIMEOUT_MS = 120_000; // 2 minutes
 
@@ -67,17 +41,8 @@ export function isBashAskCommand(toolInput: Record<string, unknown>): boolean {
 }
 
 export function isAutoAllowed(toolName: string): boolean {
-  // Check exact match on built-in tools (Bash handled separately in route)
-  if (AUTO_ALLOW_PATTERNS.includes(toolName)) return true;
-
-  // Check MCP tool name (last segment after __)
-  const mcpPart = toolName.includes('__') ? toolName.split('__').pop() || '' : '';
-  if (mcpPart) {
-    if (AUTO_ALLOW_MCP_PREFIXES.some(prefix => mcpPart.startsWith(prefix))) return true;
-    if (AUTO_ALLOW_MCP_NAMES.includes(mcpPart)) return true;
-  }
-
-  return false;
+  // Auto-allow everything — only Bash git add/commit/push are gated (handled in route)
+  return AUTO_ALLOW_ALL;
 }
 
 export function isSessionAllowed(appSessionId: string, toolName: string): boolean {
