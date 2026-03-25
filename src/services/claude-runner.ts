@@ -208,6 +208,13 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
+        // Reset streamedText when tool_result arrives — the next assistant message
+        // may deliver text via snapshot instead of deltas, and the flag from earlier
+        // text_delta events would incorrectly suppress it
+        if (parsed.type === 'user' && parsed.message?.content?.some((b: any) => b.type === 'tool_result')) {
+          resetStreamedText(appSessionId);
+        }
+
         const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
         if (result) {
           const events = Array.isArray(result) ? result : [result];
@@ -290,6 +297,9 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         if (!line.trim()) continue;
         try {
           const parsed = JSON.parse(line);
+          if (parsed.type === 'user' && parsed.message?.content?.some((b: any) => b.type === 'tool_result')) {
+            resetStreamedText(appSessionId);
+          }
           const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
           if (result) {
             const events = Array.isArray(result) ? result : [result];
