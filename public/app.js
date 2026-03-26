@@ -2,6 +2,7 @@
 let currentSessionId = null;
 const streamingSessions = new Set(); // track which sessions are actively streaming
 const sessionInputDrafts = new Map(); // preserve input text per session
+const pendingMessages = new Map(); // queued messages per session (sent when stream completes)
 let currentMode = 'work';
 let pendingPermissionId = null;
 let permissionPollInterval = null;
@@ -600,11 +601,13 @@ async function switchSession(id) {
   loadSessions();
   // Show correct button state for this session
   if (streamingSessions.has(id)) {
-    sendBtn.style.display = 'none';
+    sendBtn.style.display = 'flex';
     stopBtn.style.display = 'flex';
+    messageInput.placeholder = 'Type a message to queue...';
   } else {
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
+    messageInput.placeholder = 'Type a message...';
   }
   if (sidebar.classList.contains('open')) toggleSidebar();
   messageInput.focus();
@@ -1074,6 +1077,11 @@ async function attemptReconnect(sessionId, processEvent) {
 // Cancel active stream
 async function cancelStream() {
   if (!currentSessionId || !streamingSessions.has(currentSessionId)) return;
+  // Clear any queued message — user cancelled, so don't auto-send
+  if (pendingMessages.has(currentSessionId)) {
+    pendingMessages.delete(currentSessionId);
+    addInfoMessage('Queued message cancelled');
+  }
   try {
     await fetch(`/api/chat/${currentSessionId}/cancel`, { method: 'POST' });
   } catch (err) {
@@ -1082,23 +1090,46 @@ async function cancelStream() {
 }
 
 // Send message with streaming SSE parsing
-async function sendMessage() {
+// skipRender: when true, skips rendering user message (already shown from queue)
+async function sendMessage(skipRender = false) {
   const text = messageInput.value.trim();
-  if ((!text && pendingAttachments.length === 0) || !currentSessionId || streamingSessions.has(currentSessionId)) return;
+  if ((!text && pendingAttachments.length === 0) || !currentSessionId) return;
+
+  // If session is busy, queue the message for later
+  if (streamingSessions.has(currentSessionId)) {
+    const queued = {
+      text,
+      attachments: pendingAttachments.length > 0 ? [...pendingAttachments] : undefined
+    };
+    pendingMessages.set(currentSessionId, queued);
+    messageInput.value = '';
+    messageInput.style.height = 'auto';
+    clearAttachments();
+    addUserMessage(text);
+    if (queued.attachments) {
+      addInfoMessage(`${queued.attachments.length} image(s) attached`);
+    }
+    addInfoMessage('⏳ Message queued — will send when current response completes');
+    scrollToBottom();
+    return;
+  }
 
   const streamSessionId = currentSessionId;
   streamingSessions.add(streamSessionId);
-  sendBtn.style.display = 'none';
+  sendBtn.style.display = 'flex';
   stopBtn.style.display = 'flex';
+  messageInput.placeholder = 'Type a message to queue...';
   messageInput.value = '';
   messageInput.style.height = 'auto';
 
   // Capture attachments before clearing UI
   const messageAttachments = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined;
 
-  addUserMessage(text);
-  if (messageAttachments) {
-    addInfoMessage(`${messageAttachments.length} image(s) attached`);
+  if (!skipRender) {
+    addUserMessage(text);
+    if (messageAttachments) {
+      addInfoMessage(`${messageAttachments.length} image(s) attached`);
+    }
   }
   clearAttachments();
   addTypingIndicator();
@@ -1317,6 +1348,7 @@ async function sendMessage() {
     if (currentSessionId === streamSessionId) {
       sendBtn.style.display = 'flex';
       stopBtn.style.display = 'none';
+      messageInput.placeholder = 'Type a message...';
       removeTypingIndicator();
       deactivateToolGroup();
       if (thinkingEl) {
@@ -1342,6 +1374,19 @@ async function sendMessage() {
       messageInput.focus();
     }
     loadSessions();
+    // Drain queued message if one was added while streaming
+    const queued = pendingMessages.get(streamSessionId);
+    if (queued) {
+      pendingMessages.delete(streamSessionId);
+      // Small delay so the user sees the response before next message fires
+      await new Promise(r => setTimeout(r, 500));
+      // Populate input and send — skipRender since user message was shown at queue time
+      messageInput.value = queued.text;
+      if (queued.attachments) {
+        pendingAttachments.push(...queued.attachments);
+      }
+      sendMessage(true);
+    }
   }
 }
 
