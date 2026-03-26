@@ -11,7 +11,7 @@ import {
 } from '../services/permissions';
 
 const router = Router();
-const pollSeen = new Set<string>();
+const pollCount = new Map<string, number>();
 
 // Called by the PreToolUse hook script — held open until user responds
 router.post('/request', async (req: Request, res: Response) => {
@@ -30,16 +30,17 @@ router.post('/request', async (req: Request, res: Response) => {
     return;
   }
 
-  // Auto-allow safe tools
-  if (isAutoAllowed(tool_name)) {
+  // Bash: check for git add/commit/push BEFORE generic auto-allow
+  if (tool_name === 'Bash') {
+    if (!isBashAskCommand(tool_input || {})) {
+      console.log(`[permissions] auto-allow bash: ${(tool_input?.command as string || '').substring(0, 80)}`);
+      res.json({ decision: 'allow' });
+      return;
+    }
+    // Falls through to vault-dir check, session-allow, or permission dialog
+  } else if (isAutoAllowed(tool_name)) {
+    // Auto-allow all non-Bash tools
     console.log(`[permissions] auto-allow: ${tool_name}`);
-    res.json({ decision: 'allow' });
-    return;
-  }
-
-  // Bash: auto-allow unless it's a git add/commit/push
-  if (tool_name === 'Bash' && !isBashAskCommand(tool_input || {})) {
-    console.log(`[permissions] auto-allow bash: ${(tool_input?.command as string || '').substring(0, 80)}`);
     res.json({ decision: 'allow' });
     return;
   }
@@ -90,18 +91,19 @@ router.post('/request', async (req: Request, res: Response) => {
 router.get('/pending/:sessionId', (req: Request, res: Response) => {
   const sessionId = req.params.sessionId as string;
   const pending = getPendingForSession(sessionId);
+  const count = (pollCount.get(sessionId) || 0) + 1;
+  pollCount.set(sessionId, count);
   if (pending) {
-    console.log(`[permissions-poll] HIT session=${sessionId.slice(0, 8)} tool=${pending.toolName}`);
+    console.log(`[permissions-poll] HIT session=${sessionId.slice(0, 8)} tool=${pending.toolName} poll#${count}`);
     res.json({
       id: pending.id,
       toolName: pending.toolName,
       toolInput: pending.toolInput,
     });
   } else {
-    // Log first poll per session to confirm polling is active (avoid spam)
-    if (!pollSeen.has(sessionId)) {
-      console.log(`[permissions-poll] active for session=${sessionId.slice(0, 8)}`);
-      pollSeen.add(sessionId);
+    // Log first poll and every 30th (~1/min) to confirm polling is active
+    if (count === 1 || count % 30 === 0) {
+      console.log(`[permissions-poll] active session=${sessionId.slice(0, 8)} poll#${count}`);
     }
     res.json(null);
   }

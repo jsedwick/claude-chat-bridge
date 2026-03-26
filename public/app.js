@@ -1419,7 +1419,7 @@ markedRenderer.link = function({ href, text }) {
   return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
 };
 
-marked.setDefaults({
+marked.use({
   renderer: markedRenderer,
   breaks: true,
   gfm: true,
@@ -1490,16 +1490,23 @@ function formatTime(iso) {
 // Poll for pending permission requests (fallback when SSE event doesn't arrive)
 function startPermissionPolling() {
   if (permissionPollInterval) return;
+  console.log('[permission-poll] started');
   permissionPollInterval = setInterval(async () => {
     if (pendingPermissionId || !currentSessionId) return;
     try {
       const res = await fetch(`/api/permissions/pending/${currentSessionId}`);
+      if (!res.ok) {
+        console.warn('[permission-poll] HTTP error:', res.status);
+        return;
+      }
       const pending = await res.json();
       if (pending && pending.id && !pendingPermissionId) {
         console.log('[permission-poll] found pending request:', pending);
         showPermissionDialog(pending.id, pending.toolName, pending.toolInput);
       }
-    } catch {}
+    } catch (err) {
+      console.error('[permission-poll] fetch error:', err);
+    }
   }, 2000);
 }
 
