@@ -28,6 +28,11 @@ async function restoreMessages(sessionId) {
         } catch {
           addToolIndicator(msg.content, 'restored-' + Math.random());
         }
+      } else if (msg.role === 'tool_result') {
+        try {
+          const result = JSON.parse(msg.content);
+          addToolOutput(result.tool_use_id, result.content);
+        } catch {}
       } else if (msg.role === 'usage') {
         addUsageInfo(msg.content);
       }
@@ -848,6 +853,49 @@ function renderToolInput(toolName, input) {
   return '';
 }
 
+function renderToolOutput(content) {
+  if (!content) return '';
+  // content can be a string or array of content blocks
+  let text = '';
+  if (typeof content === 'string') {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map(block => (typeof block === 'string' ? block : block.text || ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (!text) return '';
+  // Truncate very large outputs
+  const maxLen = 5000;
+  const truncated = text.length > maxLen;
+  const display = truncated ? text.slice(0, maxLen) : text;
+  return `<pre><code>${escapeHtml(display)}</code></pre>${truncated ? '<div class="tool-meta">… output truncated</div>' : ''}`;
+}
+
+function addToolOutput(toolUseId, content) {
+  const item = document.getElementById(`tool-${toolUseId}`);
+  if (!item) return;
+
+  const outputHtml = renderToolOutput(content);
+  if (!outputHtml) return;
+
+  // Ensure chevron exists for expandability
+  const header = item.querySelector('.tool-item-header');
+  if (header && !header.querySelector('.tool-detail-chevron')) {
+    header.insertAdjacentHTML('beforeend', '<span class="tool-detail-chevron">&#9654;</span>');
+  }
+
+  // Add or replace output section
+  let outputEl = item.querySelector('.tool-item-output');
+  if (!outputEl) {
+    outputEl = document.createElement('div');
+    outputEl.className = 'tool-item-output';
+    item.appendChild(outputEl);
+  }
+  outputEl.innerHTML = '<div class="tool-output-label">Output</div>' + outputHtml;
+}
+
 function addThinkingIndicator() {
   const el = document.createElement('div');
   el.className = 'thinking-indicator';
@@ -1215,7 +1263,10 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'tool_result':
-          // Results are saved server-side but not displayed (too verbose)
+          try {
+            const result = JSON.parse(data);
+            addToolOutput(result.tool_use_id, result.content);
+          } catch {}
           break;
 
         case 'permission_request':

@@ -914,6 +914,45 @@ pre.streaming {
   font-family: var(--font-mono);
 }
 
+.tool-item-output {
+  display: none;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.tool-item.tool-detail-open .tool-item-output {
+  display: block;
+}
+
+.tool-item-output pre {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-item-output code {
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.tool-output-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
 .tool-diff {
   margin: 0;
   font-size: 12px;
