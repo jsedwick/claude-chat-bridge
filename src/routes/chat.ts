@@ -100,6 +100,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
       // Accumulate assistant text
       if (event.type === 'text') {
         assistantText += event.data;
+        console.log(`[debug:${sessionId.slice(0,8)}] TEXT_RECV len=${event.data.length} total=${assistantText.length}`);
       }
       // Save tool result for restore
       if (event.type === 'tool_result') {

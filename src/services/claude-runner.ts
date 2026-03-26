@@ -221,8 +221,17 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         if (result) {
           const events = Array.isArray(result) ? result : [result];
           for (const event of events) {
-            if (event.type === 'text') markStreamedText(appSessionId);
+            if (event.type === 'text') {
+              console.log(`[debug:${appSessionId.slice(0,8)}] TEXT_EMIT len=${(event.data as string).length} streamed=${hasStreamedText(appSessionId)}`);
+              markStreamedText(appSessionId);
+            }
             emitToStream(appSessionId, event);
+          }
+        } else if (parsed.type === 'assistant' || parsed.type === 'stream_event') {
+          // Log when assistant/stream events produce no output (potential text loss)
+          const hasText = parsed.type === 'assistant' && parsed.message?.content?.some((b: any) => b.type === 'text' && b.text);
+          if (hasText) {
+            console.log(`[debug:${appSessionId.slice(0,8)}] TEXT_SKIPPED type=${parsed.type} streamedText=${hasStreamedText(appSessionId)}`);
           }
         }
 
