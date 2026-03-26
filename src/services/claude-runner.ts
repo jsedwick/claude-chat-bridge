@@ -13,6 +13,7 @@ interface ActiveStream {
   buffer: StreamEvent[];
   listeners: Set<(event: StreamEvent) => void>;
   done: boolean;
+  cleanupTimer?: ReturnType<typeof setTimeout>;
 }
 const activeStreams = new Map<string, ActiveStream>();
 const STREAM_BUFFER_TTL = 60_000; // Keep buffer 60s after stream ends
@@ -22,6 +23,13 @@ function getOrCreateStream(appSessionId: string): ActiveStream {
   if (!stream) {
     stream = { buffer: [], listeners: new Set(), done: false };
     activeStreams.set(appSessionId, stream);
+  } else if (stream.done) {
+    // Reusing a stream from a previous message — cancel the pending cleanup
+    // and reset for the new process. Without this, the old timeout would delete
+    // the stream from the map while the new process is still emitting events.
+    if (stream.cleanupTimer) clearTimeout(stream.cleanupTimer);
+    stream.done = false;
+    stream.buffer = [];
   }
   return stream;
 }
@@ -39,8 +47,8 @@ function closeStream(appSessionId: string): void {
   const stream = activeStreams.get(appSessionId);
   if (stream) {
     stream.done = true;
-    // Clean up after TTL
-    setTimeout(() => activeStreams.delete(appSessionId), STREAM_BUFFER_TTL);
+    // Clean up after TTL — store handle so getOrCreateStream can cancel if reused
+    stream.cleanupTimer = setTimeout(() => activeStreams.delete(appSessionId), STREAM_BUFFER_TTL);
   }
 }
 
