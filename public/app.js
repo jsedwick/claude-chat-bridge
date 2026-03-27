@@ -124,68 +124,104 @@ function updateModeTabsUI(mode) {
   });
 }
 
-// Load available working directories
-let availableDirs = [];
+// Directory browser state
 let currentWorkingDir = '';
 const dirPicker = document.getElementById('dir-picker');
 
-async function loadDirs() {
+// Shared directory browser renderer
+async function renderDirBrowser(container, startPath, onSelect) {
+  container.innerHTML = '<div class="dir-browser-loading">Loading...</div>';
+  container.style.display = 'block';
+
   try {
-    const res = await fetch('/api/sessions/dirs/available');
-    availableDirs = await res.json();
-  } catch {}
+    const res = await fetch(`/api/sessions/dirs/browse?path=${encodeURIComponent(startPath)}`);
+    const data = await res.json();
+
+    container.innerHTML = '';
+
+    // Breadcrumb / current path header
+    const header = document.createElement('div');
+    header.className = 'dir-browser-header';
+
+    if (data.parent) {
+      const backBtn = document.createElement('button');
+      backBtn.className = 'dir-browser-back';
+      backBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+      backBtn.title = 'Go up';
+      backBtn.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, data.parent, onSelect); };
+      header.appendChild(backBtn);
+    }
+
+    const pathLabel = document.createElement('span');
+    pathLabel.className = 'dir-browser-path';
+    pathLabel.textContent = data.path;
+    pathLabel.title = data.path;
+    header.appendChild(pathLabel);
+
+    container.appendChild(header);
+
+    // Select current directory button
+    const selectBtn = document.createElement('button');
+    selectBtn.className = 'dir-browser-select';
+    selectBtn.textContent = 'Select this directory';
+    selectBtn.onclick = (e) => { e.stopPropagation(); onSelect(data.path); };
+    container.appendChild(selectBtn);
+
+    // Child directories
+    if (data.children.length > 0) {
+      const list = document.createElement('div');
+      list.className = 'dir-browser-list';
+      for (const child of data.children) {
+        const item = document.createElement('button');
+        item.className = 'dir-picker-item';
+        item.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + child.name + '</span>';
+        item.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, child.path, onSelect); };
+        list.appendChild(item);
+      }
+      container.appendChild(list);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'dir-browser-empty';
+      empty.textContent = 'No subdirectories';
+      container.appendChild(empty);
+    }
+  } catch (err) {
+    container.innerHTML = '<div class="dir-browser-empty">Failed to load directory</div>';
+  }
 }
 
 function toggleSidebarDirPicker() {
   const isOpen = sidebarDirPicker.style.display !== 'none';
   if (isOpen) { sidebarDirPicker.style.display = 'none'; return; }
-  sidebarDirPicker.innerHTML = '';
-  for (const d of availableDirs) {
-    const btn = document.createElement('button');
-    btn.className = 'dir-picker-item' + (d.path === selectedNewChatDir ? ' active' : '');
-    btn.textContent = d.label;
-    btn.onclick = () => selectSidebarDir(d.path);
-    sidebarDirPicker.appendChild(btn);
-  }
-  sidebarDirPicker.style.display = 'block';
-}
-
-function selectSidebarDir(dirPath) {
-  sidebarDirPicker.style.display = 'none';
-  selectedNewChatDir = dirPath;
-  sidebarDirBtn.classList.add('selected');
-  sidebarDirBtn.title = availableDirs.find(d => d.path === dirPath)?.label || dirPath;
-  newChatBtn.disabled = false;
+  const startPath = selectedNewChatDir || '/Users';
+  renderDirBrowser(sidebarDirPicker, startPath, (dirPath) => {
+    sidebarDirPicker.style.display = 'none';
+    selectedNewChatDir = dirPath;
+    sidebarDirBtn.classList.add('selected');
+    sidebarDirBtn.title = dirPath;
+    newChatBtn.disabled = false;
+  });
 }
 
 function toggleDirPicker() {
   if (!currentSessionId) return;
   const isOpen = dirPicker.style.display !== 'none';
   if (isOpen) { dirPicker.style.display = 'none'; return; }
-  dirPicker.innerHTML = '';
-  for (const d of availableDirs) {
-    const btn = document.createElement('button');
-    btn.className = 'dir-picker-item' + (d.path === currentWorkingDir ? ' active' : '');
-    btn.textContent = d.label;
-    btn.onclick = () => selectDir(d.path);
-    dirPicker.appendChild(btn);
-  }
-  dirPicker.style.display = 'block';
-}
-
-async function selectDir(dirPath) {
-  dirPicker.style.display = 'none';
-  if (!currentSessionId || dirPath === currentWorkingDir) return;
-  try {
-    await fetch(`/api/sessions/${currentSessionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir: dirPath }),
-    });
-    currentWorkingDir = dirPath;
-  } catch (err) {
-    console.error('Failed to update working directory:', err);
-  }
+  const startPath = currentWorkingDir || '/Users';
+  renderDirBrowser(dirPicker, startPath, async (dirPath) => {
+    dirPicker.style.display = 'none';
+    if (dirPath === currentWorkingDir) return;
+    try {
+      await fetch(`/api/sessions/${currentSessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workingDir: dirPath }),
+      });
+      currentWorkingDir = dirPath;
+    } catch (err) {
+      console.error('Failed to update working directory:', err);
+    }
+  });
 }
 
 // Close dir pickers on outside click
@@ -212,7 +248,6 @@ let activeSessionIds = new Set();
   } catch {}
   currentMode = 'work';
   updateModeTabsUI('work');
-  loadDirs();
   loadSessions();
   startActiveSessionPolling();
 })();
@@ -1611,4 +1646,356 @@ async function respondPermission(decision, allowAll) {
 
   pendingPermissionId = null;
   addTypingIndicator();
+}
+
+// ============================================================
+// Settings View
+// ============================================================
+
+let currentView = 'sessions';
+let settingsData = null;
+let activeSettingsSection = 'vault-setup';
+
+function toggleViewMenu() {
+  const menu = document.getElementById('sidebar-view-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+// Close view menu on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.sidebar-view-switcher')) {
+    document.getElementById('sidebar-view-menu').style.display = 'none';
+  }
+});
+
+function switchView(view) {
+  if (view === currentView) {
+    document.getElementById('sidebar-view-menu').style.display = 'none';
+    return;
+  }
+  currentView = view;
+  document.getElementById('sidebar-view-menu').style.display = 'none';
+  document.getElementById('sidebar-view-label').textContent = view === 'sessions' ? 'Sessions' : 'Settings';
+
+  // Update dropdown active state
+  document.querySelectorAll('.sidebar-view-option').forEach(opt => {
+    opt.classList.toggle('active', opt.dataset.view === view);
+  });
+
+  const sessionsView = document.getElementById('sessions-view');
+  const settingsView = document.getElementById('settings-view');
+  const sessionsToolbar = document.getElementById('sessions-toolbar');
+  const chatMain = document.querySelector('.chat-main');
+  const settingsPanel = document.getElementById('settings-panel');
+
+  if (view === 'settings') {
+    sessionsView.style.display = 'none';
+    sessionsToolbar.style.display = 'none';
+    settingsView.style.display = '';
+    chatMain.style.display = 'none';
+    settingsPanel.style.display = 'flex';
+    loadSettings();
+  } else {
+    sessionsView.style.display = '';
+    sessionsToolbar.style.display = '';
+    settingsView.style.display = 'none';
+    chatMain.style.display = '';
+    settingsPanel.style.display = 'none';
+  }
+}
+
+function showSettingsSection(section) {
+  activeSettingsSection = section;
+  document.querySelectorAll('.settings-nav-item').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.section === section);
+  });
+  renderSettingsContent();
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    settingsData = await res.json();
+  } catch {
+    settingsData = { primaryVaults: [], secondaryVaults: [], security: { accessControl: { allowedPaths: [] } } };
+  }
+  renderSettingsContent();
+}
+
+async function saveSettings() {
+  try {
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settingsData),
+    });
+  } catch (err) {
+    console.error('Failed to save settings:', err);
+  }
+}
+
+function renderSettingsContent() {
+  const container = document.getElementById('settings-content');
+  if (!settingsData) {
+    container.innerHTML = '<div class="settings-loading">Loading...</div>';
+    return;
+  }
+
+  // Show config path setup if the file wasn't found
+  if (!settingsData._configFound) {
+    renderConfigPathSetup(container);
+    return;
+  }
+
+  if (activeSettingsSection === 'vault-setup') {
+    renderVaultSettings(container);
+  } else if (activeSettingsSection === 'allowed-paths') {
+    renderAllowedPaths(container);
+  }
+}
+
+function renderConfigPathSetup(container) {
+  const currentPath = settingsData._configPath || '';
+  container.innerHTML = `
+    <div class="settings-first-run">
+      <h2 class="settings-title">MCP Server Configuration</h2>
+      <p class="settings-section-desc">
+        The <code>.obsidian-mcp.json</code> config file was not found at the expected location.
+        Browse to the directory where your obsidian-mcp-server is installed and select the file.
+      </p>
+      <div class="settings-section">
+        <div class="settings-item" style="opacity: 0.6">
+          <div class="settings-item-info">
+            <span class="settings-item-name">Current path</span>
+            <span class="settings-item-meta">${escapeHtml(currentPath)}</span>
+          </div>
+        </div>
+        <div class="settings-add-form" style="display:block; margin-top: 12px;">
+          <div class="settings-form-field">
+            <label>Path to .obsidian-mcp.json</label>
+            <div class="settings-path-input">
+              <input type="text" id="mcp-config-path-input" placeholder="/path/to/obsidian-mcp-server/.obsidian-mcp.json" value="${escapeHtml(currentPath)}">
+              <button class="settings-browse-btn" onclick="browseForPath('mcp-config-path-input')">Browse</button>
+            </div>
+            <div id="mcp-config-path-input-browser" class="settings-path-browser" style="display:none"></div>
+          </div>
+          <div class="settings-form-actions">
+            <button class="settings-form-save" onclick="saveConfigPath()">Save &amp; Load</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveConfigPath() {
+  const input = document.getElementById('mcp-config-path-input');
+  let newPath = input.value.trim();
+  if (!newPath) return;
+  // If user browsed to a directory, append the filename
+  if (!newPath.endsWith('.obsidian-mcp.json')) {
+    newPath = newPath.replace(/\/$/, '') + '/.obsidian-mcp.json';
+    input.value = newPath;
+  }
+  try {
+    const res = await fetch('/api/settings/config-path', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: newPath }),
+    });
+    const result = await res.json();
+    if (result.exists) {
+      await loadSettings();
+    } else {
+      renderConfigPathSetup(document.getElementById('settings-content'));
+      // Show inline error
+      const field = document.querySelector('.settings-form-field');
+      if (field && !field.querySelector('.settings-field-error')) {
+        const err = document.createElement('div');
+        err.className = 'settings-field-error';
+        err.textContent = 'File not found at this path. Check the location and try again.';
+        field.appendChild(err);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to save config path:', err);
+  }
+}
+
+function renderVaultSettings(container) {
+  let html = '<h2 class="settings-title">Vault Setup</h2>';
+
+  // Primary Vaults
+  html += '<div class="settings-section">';
+  html += '<h3 class="settings-section-title">Primary Vaults</h3>';
+  html += '<p class="settings-section-desc">Main vaults used for AI session storage per mode.</p>';
+  (settingsData.primaryVaults || []).forEach((v, i) => {
+    html += `<div class="settings-item">
+      <div class="settings-item-info">
+        <span class="settings-item-name">${escapeHtml(v.name)}</span>
+        <span class="settings-item-meta">${escapeHtml(v.mode)} &middot; ${escapeHtml(v.path)}</span>
+      </div>
+      <button class="settings-item-remove" onclick="removeVault('primaryVaults', ${i})" title="Remove">&times;</button>
+    </div>`;
+  });
+  html += `<button class="settings-add-btn" onclick="showAddVaultForm('primaryVaults')">+ Add Primary Vault</button>`;
+  html += '<div id="add-form-primaryVaults" class="settings-add-form" style="display:none"></div>';
+  html += '</div>';
+
+  // Secondary Vaults
+  html += '<div class="settings-section">';
+  html += '<h3 class="settings-section-title">Secondary Vaults</h3>';
+  html += '<p class="settings-section-desc">Read-only reference vaults (curated notes, docs).</p>';
+  (settingsData.secondaryVaults || []).forEach((v, i) => {
+    html += `<div class="settings-item">
+      <div class="settings-item-info">
+        <span class="settings-item-name">${escapeHtml(v.name)}</span>
+        <span class="settings-item-meta">${escapeHtml(v.mode)} &middot; ${escapeHtml(v.authority || 'curated')} &middot; ${escapeHtml(v.path)}</span>
+      </div>
+      <button class="settings-item-remove" onclick="removeVault('secondaryVaults', ${i})" title="Remove">&times;</button>
+    </div>`;
+  });
+  html += `<button class="settings-add-btn" onclick="showAddVaultForm('secondaryVaults')">+ Add Secondary Vault</button>`;
+  html += '<div id="add-form-secondaryVaults" class="settings-add-form" style="display:none"></div>';
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+function renderAllowedPaths(container) {
+  const paths = settingsData.security?.accessControl?.allowedPaths || [];
+  let html = '<h2 class="settings-title">Allowed Paths</h2>';
+  html += '<p class="settings-section-desc">Directories the MCP server is permitted to access.</p>';
+  html += '<div class="settings-section">';
+  paths.forEach((p, i) => {
+    html += `<div class="settings-item">
+      <div class="settings-item-info">
+        <span class="settings-item-name">${escapeHtml(p)}</span>
+      </div>
+      <button class="settings-item-remove" onclick="removeAllowedPath(${i})" title="Remove">&times;</button>
+    </div>`;
+  });
+  html += `<button class="settings-add-btn" onclick="showAddPathForm()">+ Add Path</button>`;
+  html += '<div id="add-form-allowed-path" class="settings-add-form" style="display:none"></div>';
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+function showAddVaultForm(type) {
+  const formEl = document.getElementById(`add-form-${type}`);
+  if (formEl.style.display !== 'none') { formEl.style.display = 'none'; return; }
+  const isSecondary = type === 'secondaryVaults';
+  formEl.innerHTML = `
+    <div class="settings-form-field">
+      <label>Name</label>
+      <input type="text" id="vault-name-${type}" placeholder="My Vault">
+    </div>
+    <div class="settings-form-field">
+      <label>Path</label>
+      <div class="settings-path-input">
+        <input type="text" id="vault-path-${type}" placeholder="/path/to/vault">
+        <button class="settings-browse-btn" onclick="browseForPath('vault-path-${type}')">Browse</button>
+      </div>
+      <div id="vault-path-browser-${type}" class="settings-path-browser" style="display:none"></div>
+    </div>
+    <div class="settings-form-field">
+      <label>Mode</label>
+      <select id="vault-mode-${type}">
+        <option value="work">Work</option>
+        <option value="personal">Personal</option>
+      </select>
+    </div>
+    ${isSecondary ? `<div class="settings-form-field">
+      <label>Authority</label>
+      <select id="vault-authority-${type}">
+        <option value="curated">Curated</option>
+        <option value="managed">Managed</option>
+      </select>
+    </div>` : ''}
+    <div class="settings-form-actions">
+      <button class="settings-form-cancel" onclick="document.getElementById('add-form-${type}').style.display='none'">Cancel</button>
+      <button class="settings-form-save" onclick="addVault('${type}')">Add</button>
+    </div>
+  `;
+  formEl.style.display = 'block';
+}
+
+async function addVault(type) {
+  const name = document.getElementById(`vault-name-${type}`).value.trim();
+  const path = document.getElementById(`vault-path-${type}`).value.trim();
+  const mode = document.getElementById(`vault-mode-${type}`).value;
+  if (!name || !path) return;
+
+  const vault = { path, name, mode };
+  if (type === 'secondaryVaults') {
+    vault.authority = document.getElementById(`vault-authority-${type}`).value;
+  }
+  if (!settingsData[type]) settingsData[type] = [];
+  settingsData[type].push(vault);
+  await saveSettings();
+  renderSettingsContent();
+}
+
+async function removeVault(type, index) {
+  settingsData[type].splice(index, 1);
+  await saveSettings();
+  renderSettingsContent();
+}
+
+function showAddPathForm() {
+  const formEl = document.getElementById('add-form-allowed-path');
+  if (formEl.style.display !== 'none') { formEl.style.display = 'none'; return; }
+  formEl.innerHTML = `
+    <div class="settings-form-field">
+      <label>Path</label>
+      <div class="settings-path-input">
+        <input type="text" id="new-allowed-path" placeholder="/path/to/directory">
+        <button class="settings-browse-btn" onclick="browseForPath('new-allowed-path')">Browse</button>
+      </div>
+      <div id="new-allowed-path-browser" class="settings-path-browser" style="display:none"></div>
+    </div>
+    <div class="settings-form-actions">
+      <button class="settings-form-cancel" onclick="document.getElementById('add-form-allowed-path').style.display='none'">Cancel</button>
+      <button class="settings-form-save" onclick="addAllowedPath()">Add</button>
+    </div>
+  `;
+  formEl.style.display = 'block';
+}
+
+async function addAllowedPath() {
+  const path = document.getElementById('new-allowed-path').value.trim();
+  if (!path) return;
+  if (!settingsData.security) settingsData.security = { accessControl: { allowedPaths: [] } };
+  if (!settingsData.security.accessControl) settingsData.security.accessControl = { allowedPaths: [] };
+  if (!settingsData.security.accessControl.allowedPaths) settingsData.security.accessControl.allowedPaths = [];
+  settingsData.security.accessControl.allowedPaths.push(path);
+  await saveSettings();
+  renderSettingsContent();
+}
+
+async function removeAllowedPath(index) {
+  settingsData.security.accessControl.allowedPaths.splice(index, 1);
+  await saveSettings();
+  renderSettingsContent();
+}
+
+function browseForPath(inputId) {
+  const input = document.getElementById(inputId);
+  const browserId = inputId + '-browser';
+  let browserEl = document.getElementById(browserId);
+  if (!browserEl) {
+    // Create browser container next to the input
+    browserEl = document.createElement('div');
+    browserEl.id = browserId;
+    browserEl.className = 'settings-path-browser';
+    input.closest('.settings-form-field').appendChild(browserEl);
+  }
+  const isOpen = browserEl.style.display !== 'none';
+  if (isOpen) { browserEl.style.display = 'none'; return; }
+  const startPath = input.value || '/Users';
+  renderDirBrowser(browserEl, startPath, (dirPath) => {
+    browserEl.style.display = 'none';
+    input.value = dirPath;
+  });
 }

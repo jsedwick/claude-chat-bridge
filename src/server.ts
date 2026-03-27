@@ -9,6 +9,7 @@ import chatRoutes from './routes/chat';
 import sessionRoutes from './routes/sessions';
 import permissionRoutes from './routes/permissions';
 import vaultRoutes from './routes/vault';
+import settingsRoutes from './routes/settings';
 import { startReaper, shutdownAll } from './services/session-reaper';
 
 const app = express();
@@ -31,6 +32,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/vault', vaultRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

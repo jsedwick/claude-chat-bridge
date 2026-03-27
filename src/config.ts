@@ -1,6 +1,24 @@
 import path from 'path';
+import fs from 'fs';
 
 export type Mode = 'work' | 'personal';
+
+// Bridge-level config file (stores mcpConfigPath override)
+const bridgeConfigPath = path.join(__dirname, '..', 'bridge-config.json');
+
+function loadBridgeConfig(): Record<string, string> {
+  try {
+    return JSON.parse(fs.readFileSync(bridgeConfigPath, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveBridgeConfig(data: Record<string, string>): void {
+  fs.writeFileSync(bridgeConfigPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+}
+
+const bridgeOverrides = loadBridgeConfig();
 
 export const config = {
   port: parseInt(process.env.CHAT_BRIDGE_PORT || '3456', 10),
@@ -14,6 +32,10 @@ export const config = {
   autoArchiveAfterMs: 7 * 24 * 60 * 60 * 1000, // 7 days
   autoDeleteAfterMs: 30 * 24 * 60 * 60 * 1000, // 30 days
   defaultMode: 'work' as Mode,
+  // Path to .obsidian-mcp.json — resolved from: env var > bridge-config.json > hardcoded default
+  mcpConfigPath: process.env.CHAT_BRIDGE_MCP_CONFIG
+    || bridgeOverrides.mcpConfigPath
+    || '/Users/jsedwick/Projects/obsidian-mcp-server/.obsidian-mcp.json',
   // Directories to scan for project subdirectories
   projectScanDirs: ['/Users/jsedwick/Projects'],
   // Obsidian vault paths per mode
@@ -22,6 +44,17 @@ export const config = {
     personal: '/Users/jsedwick/Documents/Obsidian/AI-Home',
   } as Record<Mode, string>,
 };
+
+export function getMcpConfigPath(): string {
+  return config.mcpConfigPath;
+}
+
+export function setMcpConfigPath(newPath: string): void {
+  config.mcpConfigPath = newPath;
+  const overrides = loadBridgeConfig();
+  overrides.mcpConfigPath = newPath;
+  saveBridgeConfig(overrides);
+}
 
 // Global mutable mode state
 let currentMode: Mode = config.defaultMode;

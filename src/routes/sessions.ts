@@ -20,15 +20,16 @@ router.get('/', (req: Request, res: Response) => {
 
 router.post('/', (req: Request, res: Response) => {
   const { name, workingDir } = req.body || {};
-  // Validate workingDir — must be home, a scan dir, or a direct child of a scan dir
+  // Validate workingDir — must be an existing directory
   if (workingDir) {
-    const isHome = workingDir === config.workingDir;
-    const isScanDir = config.projectScanDirs.includes(workingDir);
-    const isChildOfScanDir = config.projectScanDirs.some(d =>
-      workingDir.startsWith(d + '/') && !workingDir.substring(d.length + 1).includes('/')
-    );
-    if (!isHome && !isScanDir && !isChildOfScanDir) {
-      res.status(400).json({ error: 'Invalid working directory' });
+    try {
+      const stat = fs.statSync(path.resolve(workingDir));
+      if (!stat.isDirectory()) {
+        res.status(400).json({ error: 'Not a directory' });
+        return;
+      }
+    } catch {
+      res.status(400).json({ error: 'Directory not found' });
       return;
     }
   }
@@ -60,6 +61,45 @@ router.get('/dirs/available', (_req: Request, res: Response) => {
   const [home, ...projects] = dirs;
   projects.sort((a, b) => a.label.localeCompare(b.label));
   res.json([home, ...projects]);
+});
+
+// Browse directories for the directory picker
+router.get('/dirs/browse', (req: Request, res: Response) => {
+  const dirPath = (req.query.path as string) || config.workingDir;
+  const resolved = path.resolve(dirPath);
+
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) {
+      res.status(400).json({ error: 'Not a directory' });
+      return;
+    }
+  } catch {
+    res.status(404).json({ error: 'Directory not found' });
+    return;
+  }
+
+  const children: Array<{ name: string; path: string }> = [];
+  try {
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        children.push({
+          name: entry.name,
+          path: path.join(resolved, entry.name),
+        });
+      }
+    }
+  } catch {
+    // Permission denied or other read error — return empty children
+  }
+
+  children.sort((a, b) => a.name.localeCompare(b.name));
+  res.json({
+    path: resolved,
+    parent: path.dirname(resolved) !== resolved ? path.dirname(resolved) : null,
+    children,
+  });
 });
 
 // Active sessions endpoint (must be before /:id to avoid param capture)
@@ -121,13 +161,14 @@ router.patch('/:id', (req: Request, res: Response) => {
   if (name && typeof name === 'string') updates.name = name.trim();
   if (workingDir !== undefined) {
     if (workingDir) {
-      const isHome = workingDir === config.workingDir;
-      const isScanDir = config.projectScanDirs.includes(workingDir);
-      const isChildOfScanDir = config.projectScanDirs.some((d: string) =>
-        workingDir.startsWith(d + '/') && !workingDir.substring(d.length + 1).includes('/')
-      );
-      if (!isHome && !isScanDir && !isChildOfScanDir) {
-        res.status(400).json({ error: 'Invalid working directory' });
+      try {
+        const stat = fs.statSync(path.resolve(workingDir));
+        if (!stat.isDirectory()) {
+          res.status(400).json({ error: 'Not a directory' });
+          return;
+        }
+      } catch {
+        res.status(400).json({ error: 'Directory not found' });
         return;
       }
     }

@@ -14,8 +14,19 @@
   <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-header">
-      <h2>Sessions</h2>
-      <div class="sidebar-new-chat">
+      <div class="sidebar-view-switcher">
+        <button class="sidebar-view-toggle" onclick="toggleViewMenu()">
+          <span id="sidebar-view-label">Sessions</span>
+          <svg class="sidebar-view-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div id="sidebar-view-menu" class="sidebar-view-menu" style="display:none">
+          <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions</button>
+          <button class="sidebar-view-option" data-view="settings" onclick="switchView('settings')">Settings</button>
+        </div>
+      </div>
+      <div id="sessions-toolbar" class="sidebar-new-chat">
         <div class="sidebar-dir-wrapper">
           <button class="btn-sidebar-dir" onclick="toggleSidebarDirPicker()" aria-label="Select working directory">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -27,20 +38,28 @@
         <button id="new-chat-btn" class="btn-new-chat" disabled onclick="createNewSession()">+ New Chat</button>
       </div>
     </div>
-    <div class="mode-tabs">
-      <button class="mode-tab active" data-mode="work" onclick="setMode('work')">Work</button>
-      <button class="mode-tab" data-mode="personal" onclick="setMode('personal')">Personal</button>
+    <!-- Sessions view -->
+    <div id="sessions-view">
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="work" onclick="setMode('work')">Work</button>
+        <button class="mode-tab" data-mode="personal" onclick="setMode('personal')">Personal</button>
+      </div>
+      <div id="session-list" class="session-list"></div>
+      <div class="archive-section">
+        <button class="archive-toggle" onclick="toggleArchiveSection()">
+          <svg class="archive-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+          <span>Archived</span>
+          <span id="archive-count" class="archive-count">0</span>
+        </button>
+        <div id="archive-list" class="archive-list" style="display: none;"></div>
+      </div>
     </div>
-    <div id="session-list" class="session-list"></div>
-    <div class="archive-section">
-      <button class="archive-toggle" onclick="toggleArchiveSection()">
-        <svg class="archive-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
-        <span>Archived</span>
-        <span id="archive-count" class="archive-count">0</span>
-      </button>
-      <div id="archive-list" class="archive-list" style="display: none;"></div>
+    <!-- Settings view (sidebar nav) -->
+    <div id="settings-view" class="settings-nav" style="display:none">
+      <button class="settings-nav-item active" data-section="vault-setup" onclick="showSettingsSection('vault-setup')">Vault Setup</button>
+      <button class="settings-nav-item" data-section="allowed-paths" onclick="showSettingsSection('allowed-paths')">Allowed Paths</button>
     </div>
   </aside>
 
@@ -104,6 +123,15 @@
       </div>
     </div>
   </main>
+
+  <!-- Settings Panel (replaces chat content when in settings view) -->
+  <div id="settings-panel" class="settings-panel" style="display:none">
+    <header class="chat-header">
+      <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+      <h1 class="chat-title" style="cursor:default">Settings</h1>
+    </header>
+    <div id="settings-content" class="settings-content"></div>
+  </div>
 
   <!-- Permission Request Dialog -->
   <div id="permission-overlay" class="permission-overlay" style="display:none">
