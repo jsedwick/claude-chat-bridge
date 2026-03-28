@@ -1628,10 +1628,15 @@ async function respondPermission(decision, allowAll) {
   const overlay = document.getElementById('permission-overlay');
   overlay.style.display = 'none';
 
-  if (!pendingPermissionId) return;
+  if (!pendingPermissionId) {
+    console.warn('[permission] respondPermission called but pendingPermissionId is null');
+    return;
+  }
+
+  console.log(`[permission] responding: decision=${decision} allowAll=${!!allowAll} requestId=${pendingPermissionId}`);
 
   try {
-    await fetch('/api/permissions/respond', {
+    const res = await fetch('/api/permissions/respond', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1640,8 +1645,13 @@ async function respondPermission(decision, allowAll) {
         allowAll: !!allowAll,
       }),
     });
+    const body = await res.json();
+    console.log(`[permission] respond status=${res.status}`, body);
+    if (!res.ok) {
+      console.error(`[permission] respond FAILED: ${res.status}`, body);
+    }
   } catch (err) {
-    console.error('Failed to respond to permission:', err);
+    console.error('[permission] respond fetch error:', err);
   }
 
   pendingPermissionId = null;

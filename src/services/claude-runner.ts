@@ -152,7 +152,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--permission-mode', 'bypassPermissions',
+    '--dangerously-skip-permissions',
   ];
 
   if (hasImages) {

@@ -123,10 +123,13 @@ router.post('/respond', (req: Request, res: Response) => {
     return;
   }
 
+  console.log(`[permissions] /respond: requestId=${requestId} decision=${decision} allowAll=${allowAll}`);
   const resolved = resolvePermission(requestId, decision, allowAll === true);
+  console.log(`[permissions] /respond resolved=${resolved}`);
   if (resolved) {
     res.json({ status: 'ok' });
   } else {
+    console.warn(`[permissions] /respond FAILED: no pending permission for ${requestId}`);
     res.status(404).json({ error: 'No pending permission with that ID' });
   }
 });

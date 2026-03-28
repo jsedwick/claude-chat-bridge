@@ -29,6 +29,10 @@ response=$(curl -sk -X POST https://localhost:3456/api/permissions/request \
 
 decision=$(echo "$response" | jq -r '.decision // "deny"')
 
+# Log to temp file for debugging
+command_preview=$(echo "$tool_input" | jq -r '.command // "(no command)"' | head -c 100)
+echo "[hook $(date +%H:%M:%S)] bridge=$CHAT_BRIDGE_SESSION tool=$tool_name cmd=$command_preview decision=$decision" >> /tmp/permission-hook.log
+
 if [ "$decision" = "allow" ]; then
   exit 0
 else
