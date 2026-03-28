@@ -159,6 +159,13 @@ html, body {
   background: var(--accent-hover);
 }
 
+#sessions-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .session-list {
   flex: 1;
   overflow-y: auto;
