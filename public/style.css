@@ -2077,6 +2077,22 @@ pre.streaming {
   display: none;
 }
 
+/* Drag and drop */
+.kb-tree-item.kb-dragging {
+  opacity: 0.4;
+}
+
+.kb-tree-item.kb-drop-target {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-radius: 6px;
+}
+
+.kb-tree-item.kb-drop-target .kb-tree-chevron,
+.kb-tree-item.kb-drop-target .kb-tree-icon {
+  color: var(--bg-primary);
+}
+
 /* KB Main Panel */
 .kb-panel {
   display: flex;

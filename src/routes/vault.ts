@@ -185,6 +185,47 @@ router.put('/kb/file', (req: Request, res: Response) => {
   }
 });
 
+// Move/rename a file or directory within the vault
+router.post('/kb/move', (req: Request, res: Response) => {
+  const { source, destination } = req.body;
+  if (!source || !destination) {
+    res.status(400).json({ error: 'Source and destination required' });
+    return;
+  }
+
+  const resolvedSrc = validateKbPath(source);
+  const resolvedDest = validateKbPath(destination);
+  if (!resolvedSrc || !resolvedDest) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (!fs.existsSync(resolvedSrc)) {
+    res.status(404).json({ error: 'Source does not exist' });
+    return;
+  }
+
+  if (fs.existsSync(resolvedDest)) {
+    res.status(409).json({ error: 'Destination already exists' });
+    return;
+  }
+
+  // Ensure destination parent directory exists
+  const destDir = path.dirname(resolvedDest);
+  if (!fs.existsSync(destDir)) {
+    res.status(400).json({ error: 'Destination directory does not exist' });
+    return;
+  }
+
+  try {
+    fs.renameSync(resolvedSrc, resolvedDest);
+    wikiLinkCache = null;
+    res.json({ success: true, path: resolvedDest });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Wiki-link filename index cache
 let wikiLinkCache: Map<string, string> | null = null;
 

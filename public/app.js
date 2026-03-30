@@ -2211,6 +2211,58 @@ async function loadKbTree(dirPath) {
   }
 }
 
+async function kbMoveFile(sourcePath, destDirPath) {
+  const fileName = sourcePath.split('/').pop();
+  const destination = destDirPath + '/' + fileName;
+  try {
+    const res = await fetch('/api/vault/kb/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: sourcePath, destination }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Move failed: ' + data.error);
+      return false;
+    }
+    // Invalidate caches for source parent and destination
+    const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
+    kbTreeCache.delete(sourceDir);
+    kbTreeCache.delete(destDirPath);
+    // If the moved file was currently open, update its path
+    if (kbCurrentFile && kbCurrentFile.path === sourcePath) {
+      kbCurrentFile.path = data.path;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to move file:', err);
+    alert('Move failed: ' + err.message);
+    return false;
+  }
+}
+
+async function reloadKbSubtree(dirPath) {
+  // Fetch fresh data for this directory
+  kbTreeCache.delete(dirPath);
+  const data = await loadKbTree(dirPath);
+  if (!data) return;
+
+  // Find the existing tree item for this directory and rebuild its children
+  const dirItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(dirPath)}"]`);
+  if (!dirItem) return;
+  const childrenContainer = dirItem.parentElement.querySelector('.kb-tree-children');
+  if (!childrenContainer) return;
+
+  // Determine depth from indentation
+  const indent = dirItem.querySelector('.kb-tree-indent');
+  const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+
+  childrenContainer.innerHTML = '';
+  for (const child of data.entries) {
+    childrenContainer.appendChild(createKbTreeNode(child, parentDepth + 1));
+  }
+}
+
 function createKbTreeNode(entry, depth) {
   const wrapper = document.createElement('div');
 
@@ -2218,6 +2270,59 @@ function createKbTreeNode(entry, depth) {
   item.className = 'kb-tree-item' + (entry.type === 'file' ? ' kb-tree-file' : '');
   item.dataset.path = entry.path;
   item.dataset.type = entry.type;
+
+  // Drag-and-drop: make non-root items draggable (root vaults are drop-only)
+  const isRootVault = depth === 0 && entry.type === 'directory';
+  item.draggable = !isRootVault;
+  item.addEventListener('dragstart', (e) => {
+    if (isRootVault) { e.preventDefault(); return; }
+    e.dataTransfer.setData('text/plain', entry.path);
+    e.dataTransfer.effectAllowed = 'move';
+    item.classList.add('kb-dragging');
+    // Prevent parent folder click from firing
+    e.stopPropagation();
+  });
+  item.addEventListener('dragend', () => {
+    item.classList.remove('kb-dragging');
+    document.querySelectorAll('.kb-drop-target').forEach(el => el.classList.remove('kb-drop-target'));
+  });
+
+  // Drop target: directories accept drops
+  if (entry.type === 'directory') {
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      item.classList.add('kb-drop-target');
+    });
+    item.addEventListener('dragleave', (e) => {
+      // Only remove highlight when leaving the item itself, not its children
+      if (!item.contains(e.relatedTarget)) {
+        item.classList.remove('kb-drop-target');
+      }
+    });
+    item.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      item.classList.remove('kb-drop-target');
+      const sourcePath = e.dataTransfer.getData('text/plain');
+      if (!sourcePath || sourcePath === entry.path) return;
+      // Don't drop a folder into itself
+      if (entry.path.startsWith(sourcePath + '/')) return;
+      // Don't move if source is already in this directory
+      const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
+      if (sourceDir === entry.path) return;
+
+      const fileName = sourcePath.split('/').pop();
+      if (!confirm(`Move "${fileName}" to "${entry.name}"?`)) return;
+
+      const success = await kbMoveFile(sourcePath, entry.path);
+      if (success) {
+        // Reload the affected tree branches
+        await reloadKbSubtree(sourceDir);
+        await reloadKbSubtree(entry.path);
+      }
+    });
+  }
 
   // Indent
   if (depth > 0) {
