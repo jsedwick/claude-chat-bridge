@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getAppSessionByClaudeId, emitToStream } from '../services/claude-runner';
 import { getSession } from '../services/session-store';
-import { config } from '../config';
+import { getObsidianRoot } from '../config';
 import {
   isAutoAllowed,
   isBashAskCommand,
@@ -47,7 +47,7 @@ router.post('/request', async (req: Request, res: Response) => {
   }
 
   // Auto-allow git operations inside vault directories (no confirmation needed)
-  const VAULT_DIRS = [config.obsidianRoot + '/'];
+  const VAULT_DIRS = [getObsidianRoot() + '/'];
   const session = getSession(appSessionId);
   if (session?.workingDir && VAULT_DIRS.some(v => session.workingDir!.startsWith(v))) {
     console.log(`[permissions] auto-allow (vault dir): ${tool_name} in ${session.workingDir}`);

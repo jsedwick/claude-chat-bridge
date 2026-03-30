@@ -45,21 +45,41 @@ export const config = {
   // Path to .obsidian-mcp.json — resolved from: env var > bridge-config.json > default
   mcpConfigPath: resolve('CHAT_BRIDGE_MCP_CONFIG', 'mcpConfigPath',
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json')),
-  // Directories to scan for project subdirectories
-  projectScanDirs: (process.env.CHAT_BRIDGE_PROJECT_SCAN_DIRS?.split(':')
-    || bridgeOverrides.projectScanDirs
-    || [path.join(home, 'Projects')]) as string[],
-  // Obsidian vault paths per mode
-  vaultPaths: (bridgeOverrides.vaultPaths || {
-    work: path.join(home, 'Documents', 'Obsidian', 'AI-Work'),
-    personal: path.join(home, 'Documents', 'Obsidian', 'AI-Home'),
-  }) as Record<Mode, string>,
-  // Obsidian root and all vault names (for KB browser)
-  obsidianRoot: resolve('CHAT_BRIDGE_OBSIDIAN_ROOT', 'obsidianRoot',
-    path.join(home, 'Documents', 'Obsidian')),
-  obsidianVaults: (bridgeOverrides.obsidianVaults
-    || ['AI-Work', 'AI-Home', 'Work', 'Home']) as string[],
 };
+
+// Derive vault configuration from MCP config (Vault Setup)
+function readMcpVaults(): Array<{ name: string; path: string; mode: string }> {
+  try {
+    const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
+    const data = JSON.parse(raw);
+    return [...(data.primaryVaults || []), ...(data.secondaryVaults || [])];
+  } catch {
+    return [];
+  }
+}
+
+export function getObsidianRoot(): string {
+  const vaults = readMcpVaults();
+  if (vaults.length === 0) return path.join(home, 'Documents', 'Obsidian');
+  // Common parent directory of all vault paths
+  return path.dirname(vaults[0].path);
+}
+
+export function getObsidianVaults(): string[] {
+  const vaults = readMcpVaults();
+  if (vaults.length === 0) return [];
+  return vaults.map(v => v.name);
+}
+
+export function getVaultPath(mode: Mode): string {
+  try {
+    const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
+    const data = JSON.parse(raw);
+    const primary = (data.primaryVaults || []).find((v: any) => v.mode === mode);
+    if (primary) return primary.path;
+  } catch {}
+  return path.join(home, 'Documents', 'Obsidian', mode === 'work' ? 'AI-Work' : 'AI-Home');
+}
 
 export function getMcpConfigPath(): string {
   return config.mcpConfigPath;
@@ -83,10 +103,6 @@ export function getBridgePaths(): Record<string, any> {
     workingDir: config.workingDir,
     claudePath: config.claudePath,
     mcpConfigPath: config.mcpConfigPath,
-    projectScanDirs: config.projectScanDirs,
-    obsidianRoot: config.obsidianRoot,
-    obsidianVaults: config.obsidianVaults,
-    vaultPaths: config.vaultPaths,
   };
 }
 

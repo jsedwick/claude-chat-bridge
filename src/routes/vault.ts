@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { getMode, config } from '../config';
+import { getMode, getObsidianRoot, getObsidianVaults, getVaultPath } from '../config';
 
 const router = Router();
 
 // List available workflows for the current mode's vault
 router.get('/workflows', (_req: Request, res: Response) => {
-  const vaultPath = config.vaultPaths[getMode()];
+  const vaultPath = getVaultPath(getMode());
   const workflowsDir = path.join(vaultPath, 'workflows');
 
   try {
@@ -38,7 +38,7 @@ router.get('/workflows', (_req: Request, res: Response) => {
 
 // List active persistent issues for the current mode's vault
 router.get('/issues', (_req: Request, res: Response) => {
-  const vaultPath = config.vaultPaths[getMode()];
+  const vaultPath = getVaultPath(getMode());
   const issuesDir = path.join(vaultPath, 'persistent-issues');
 
   try {
@@ -74,7 +74,8 @@ router.get('/issues', (_req: Request, res: Response) => {
 
 function validateKbPath(filePath: string): string | null {
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(config.obsidianRoot + path.sep) && resolved !== config.obsidianRoot) {
+  const root = getObsidianRoot();
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
     return null;
   }
   return resolved;
@@ -82,7 +83,9 @@ function validateKbPath(filePath: string): string | null {
 
 // List directory contents for KB tree
 router.get('/kb/tree', (req: Request, res: Response) => {
-  const reqPath = (req.query.path as string) || config.obsidianRoot;
+  const root = getObsidianRoot();
+  const vaultNames = getObsidianVaults();
+  const reqPath = (req.query.path as string) || root;
   const resolved = validateKbPath(reqPath);
   if (!resolved) {
     res.status(400).json({ error: 'Invalid path' });
@@ -99,12 +102,12 @@ router.get('/kb/tree', (req: Request, res: Response) => {
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
 
     // At root level, only show configured vaults
-    const isRoot = resolved === config.obsidianRoot;
+    const isRoot = resolved === root;
 
     const items = entries
       .filter(e => {
         if (e.name.startsWith('.')) return false;
-        if (isRoot) return e.isDirectory() && config.obsidianVaults.includes(e.name);
+        if (isRoot) return e.isDirectory() && vaultNames.includes(e.name);
         if (e.isFile()) return e.name.endsWith('.md');
         return e.isDirectory();
       })
@@ -118,7 +121,7 @@ router.get('/kb/tree', (req: Request, res: Response) => {
         return a.name.localeCompare(b.name);
       });
 
-    const parent = resolved === config.obsidianRoot ? null : path.dirname(resolved);
+    const parent = resolved === root ? null : path.dirname(resolved);
     res.json({
       path: resolved,
       name: path.basename(resolved),
@@ -251,8 +254,9 @@ function buildWikiLinkIndex(): Map<string, string> {
     } catch {}
   }
 
-  for (const vault of config.obsidianVaults) {
-    scanDir(path.join(config.obsidianRoot, vault));
+  const root = getObsidianRoot();
+  for (const vault of getObsidianVaults()) {
+    scanDir(path.join(root, vault));
   }
   return index;
 }

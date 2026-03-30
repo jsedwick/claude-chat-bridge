@@ -57,32 +57,6 @@ router.post('/', (req: Request, res: Response) => {
   res.status(201).json(session);
 });
 
-// Available working directories (dynamically scanned)
-router.get('/dirs/available', (_req: Request, res: Response) => {
-  const dirs: Array<{ path: string; label: string }> = [
-    { path: config.workingDir, label: 'Home (default)' },
-  ];
-
-  for (const scanDir of config.projectScanDirs) {
-    try {
-      const entries = fs.readdirSync(scanDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          dirs.push({
-            path: path.join(scanDir, entry.name),
-            label: entry.name,
-          });
-        }
-      }
-    } catch {}
-  }
-
-  // Sort projects alphabetically (after Home)
-  const [home, ...projects] = dirs;
-  projects.sort((a, b) => a.label.localeCompare(b.label));
-  res.json([home, ...projects]);
-});
-
 // Allowed root directories for the directory picker
 router.get('/dirs/roots', (_req: Request, res: Response) => {
   const allowedPaths = getAllowedPaths();

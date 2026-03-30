@@ -81,7 +81,7 @@ router.put('/bridge-paths', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Invalid data' });
     return;
   }
-  const allowedKeys = ['workingDir', 'claudePath', 'mcpConfigPath', 'projectScanDirs', 'obsidianRoot', 'obsidianVaults', 'vaultPaths'];
+  const allowedKeys = ['workingDir', 'claudePath', 'mcpConfigPath'];
   for (const [key, value] of Object.entries(updates)) {
     if (!allowedKeys.includes(key)) continue;
     setBridgeConfigValue(key, value);

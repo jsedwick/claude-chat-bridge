@@ -1635,6 +1635,30 @@ function linkifyVaultPathsInHtml(html) {
     const short = match.split('/').slice(-3).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
   });
+  // Match vault-internal relative paths (e.g. "sessions/2026-03/file.md", "topics/file.md")
+  // These lack a vault name prefix — resolve using first configured vault
+  html = html.replace(/(?<![/"'\w])((?:sessions|topics|projects|decisions)\/[^<"'\n]*?\.md)/g, (match) => {
+    const vaultPrefix = VAULT_NAMES.length ? `${VAULT_NAMES[0]}/` : '';
+    const resolved = resolveVaultPath(vaultPrefix + match);
+    const short = match.split('/').slice(-2).join('/');
+    return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
+  });
+  // Match labeled slug references from session close output (e.g. "Topics Updated slug-name")
+  // Handles comma-separated slugs and wraps each one as a link
+  html = html.replace(/(Topics (?:Updated|Created)|Projects Linked|Decisions (?:Made|Recorded))\s+([\w][\w ,-]*[\w-])/g, (match, label, slugsPart) => {
+    const dirMap = { 'Topics Updated': 'topics', 'Topics Created': 'topics', 'Projects Linked': 'projects', 'Decisions Made': 'decisions', 'Decisions Recorded': 'decisions' };
+    const dir = dirMap[label];
+    if (!dir || !VAULT_NAMES.length) return match;
+    const slugs = slugsPart.split(/,\s*/);
+    const linked = slugs.map(slug => {
+      slug = slug.trim();
+      if (!slug) return '';
+      const filePath = `${VAULT_NAMES[0]}/${dir}/${slug}.md`;
+      const resolved = resolveVaultPath(filePath);
+      return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${slug}</span>`;
+    }).join(', ');
+    return `${label} ${linked}`;
+  });
   return html;
 }
 
@@ -1974,44 +1998,22 @@ async function renderPathsSettings(container) {
     { key: 'workingDir', label: 'Working Directory', desc: 'Default working directory for new sessions' },
     { key: 'claudePath', label: 'Claude CLI Path', desc: 'Path to the Claude CLI binary' },
     { key: 'mcpConfigPath', label: 'MCP Config Path', desc: 'Path to .obsidian-mcp.json configuration file' },
-    { key: 'obsidianRoot', label: 'Obsidian Root', desc: 'Root directory containing Obsidian vaults' },
-    { key: 'obsidianVaults', label: 'Vault Names', desc: 'Comma-separated list of vault folder names', isArray: true },
-    { key: 'projectScanDirs', label: 'Project Scan Dirs', desc: 'Comma-separated directories to scan for projects', isArray: true },
   ];
   let html = '<h2 class="settings-title">Paths</h2>';
   html += '<p class="settings-section-desc">Configure file system paths for the bridge. Changes take effect on next server restart.</p>';
   html += '<div class="settings-section">';
   for (const f of fields) {
-    const val = f.isArray ? (bridgePathsData[f.key] || []).join(', ') : (bridgePathsData[f.key] || '');
+    const val = bridgePathsData[f.key] || '';
     html += `<div class="settings-form-field">
       <label>${f.label}</label>
       <div class="settings-section-desc" style="margin-bottom:4px">${f.desc}</div>
       <div class="settings-path-input">
         <input type="text" id="bridge-path-${f.key}" value="${escapeHtml(val)}">
-        ${!f.isArray ? `<button class="settings-browse-btn" onclick="browseForPath('bridge-path-${f.key}')">Browse</button>` : ''}
+        <button class="settings-browse-btn" onclick="browseForPath('bridge-path-${f.key}')">Browse</button>
       </div>
       <div id="bridge-path-${f.key}-browser" class="settings-path-browser" style="display:none"></div>
     </div>`;
   }
-  // Vault paths (work/personal)
-  html += `<div class="settings-form-field">
-    <label>Work Vault Path</label>
-    <div class="settings-section-desc" style="margin-bottom:4px">Obsidian vault directory for work mode</div>
-    <div class="settings-path-input">
-      <input type="text" id="bridge-path-vaultPaths-work" value="${escapeHtml(bridgePathsData.vaultPaths?.work || '')}">
-      <button class="settings-browse-btn" onclick="browseForPath('bridge-path-vaultPaths-work')">Browse</button>
-    </div>
-    <div id="bridge-path-vaultPaths-work-browser" class="settings-path-browser" style="display:none"></div>
-  </div>`;
-  html += `<div class="settings-form-field">
-    <label>Personal Vault Path</label>
-    <div class="settings-section-desc" style="margin-bottom:4px">Obsidian vault directory for personal mode</div>
-    <div class="settings-path-input">
-      <input type="text" id="bridge-path-vaultPaths-personal" value="${escapeHtml(bridgePathsData.vaultPaths?.personal || '')}">
-      <button class="settings-browse-btn" onclick="browseForPath('bridge-path-vaultPaths-personal')">Browse</button>
-    </div>
-    <div id="bridge-path-vaultPaths-personal-browser" class="settings-path-browser" style="display:none"></div>
-  </div>`;
   html += `<div class="settings-form-actions">
     <button class="settings-form-save" onclick="saveBridgePaths()">Save</button>
   </div>`;
@@ -2021,24 +2023,10 @@ async function renderPathsSettings(container) {
 
 async function saveBridgePaths() {
   const updates = {};
-  const stringFields = ['workingDir', 'claudePath', 'mcpConfigPath', 'obsidianRoot'];
-  const arrayFields = ['obsidianVaults', 'projectScanDirs'];
+  const stringFields = ['workingDir', 'claudePath', 'mcpConfigPath'];
   for (const key of stringFields) {
     const el = document.getElementById(`bridge-path-${key}`);
     if (el) updates[key] = el.value.trim();
-  }
-  for (const key of arrayFields) {
-    const el = document.getElementById(`bridge-path-${key}`);
-    if (el) updates[key] = el.value.split(',').map(s => s.trim()).filter(Boolean);
-  }
-  // Vault paths
-  const workVault = document.getElementById('bridge-path-vaultPaths-work')?.value.trim();
-  const personalVault = document.getElementById('bridge-path-vaultPaths-personal')?.value.trim();
-  if (workVault || personalVault) {
-    updates.vaultPaths = {
-      work: workVault || '',
-      personal: personalVault || '',
-    };
   }
   try {
     const res = await fetch('/api/settings/bridge-paths', {
@@ -2325,17 +2313,19 @@ function escapeRegex(str) {
 
 async function loadBridgePaths() {
   try {
-    const res = await fetch('/api/settings/bridge-paths');
+    // Derive vault info from MCP config (Vault Setup)
+    const res = await fetch('/api/settings');
     const data = await res.json();
-    OBSIDIAN_ROOT = data.obsidianRoot || '';
-    VAULT_NAMES = data.obsidianVaults || [];
+    const allVaults = [...(data.primaryVaults || []), ...(data.secondaryVaults || [])];
+    VAULT_NAMES = allVaults.map(v => v.name);
+    OBSIDIAN_ROOT = allVaults.length ? allVaults[0].path.replace(/\/[^/]+$/, '') : '';
     if (VAULT_NAMES.length && OBSIDIAN_ROOT) {
       const namesPattern = VAULT_NAMES.map(escapeRegex).join('|');
       VAULT_PATH_RE = new RegExp(escapeRegex(OBSIDIAN_ROOT) + '/(' + namesPattern + ')/');
       VAULT_NAMES_RE = new RegExp(`^(?:${namesPattern})\\/`);
     }
   } catch (err) {
-    console.error('Failed to load bridge paths:', err);
+    console.error('Failed to load vault config:', err);
   }
 }
 
@@ -2376,6 +2366,29 @@ function linkifyVaultPaths(escapedText) {
     const resolved = resolveVaultPath(realPath);
     const short = realPath.split('/').slice(-3).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
+  });
+  // Match vault-internal relative paths (e.g. "sessions/2026-03/file.md", "topics/file.md")
+  escapedText = escapedText.replace(/(?<![\/\w])((?:sessions|topics|projects|decisions)\/[^&lt;\n]*?\.md)/g, (match) => {
+    const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    const vaultPrefix = VAULT_NAMES.length ? `${VAULT_NAMES[0]}/` : '';
+    const resolved = resolveVaultPath(vaultPrefix + realPath);
+    const short = realPath.split('/').slice(-2).join('/');
+    return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
+  });
+  // Match labeled slug references (e.g. "Topics Updated slug-name")
+  escapedText = escapedText.replace(/(Topics (?:Updated|Created)|Projects Linked|Decisions (?:Made|Recorded))\s+([\w][\w ,-]*[\w-])/g, (match, label, slugsPart) => {
+    const dirMap = { 'Topics Updated': 'topics', 'Topics Created': 'topics', 'Projects Linked': 'projects', 'Decisions Made': 'decisions', 'Decisions Recorded': 'decisions' };
+    const dir = dirMap[label];
+    if (!dir || !VAULT_NAMES.length) return match;
+    const slugs = slugsPart.split(/,\s*/);
+    const linked = slugs.map(slug => {
+      slug = slug.trim();
+      if (!slug) return '';
+      const filePath = `${VAULT_NAMES[0]}/${dir}/${slug}.md`;
+      const resolved = resolveVaultPath(filePath);
+      return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(slug)}</span>`;
+    }).join(', ');
+    return `${label} ${linked}`;
   });
   return escapedText;
 }
