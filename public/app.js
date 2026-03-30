@@ -7,6 +7,7 @@ let currentMode = 'work';
 let pendingPermissionId = null;
 let permissionPollInterval = null;
 const permissionQueue = []; // queue for parallel permission requests
+let versionData = null; // cached version check data
 
 // Message history (server-backed)
 async function restoreMessages(sessionId) {
@@ -321,7 +322,65 @@ let activeSessionIds = new Set();
   await loadBridgePaths();
   loadSessions();
   startActiveSessionPolling();
+  checkVersionOnStartup();
 })();
+
+// Check for CLI version change on page load (non-blocking)
+async function checkVersionOnStartup() {
+  try {
+    const res = await fetch('/api/settings/version');
+    const data = await res.json();
+    versionData = data;
+    if (data.updateAvailable || data.versionChanged) {
+      showVersionBanner(data);
+    }
+  } catch {}
+}
+
+function showVersionBanner(data) {
+  // Don't show if already dismissed this session
+  if (document.getElementById('version-banner')) return;
+
+  const messages = document.getElementById('messages');
+  const banner = document.createElement('div');
+  banner.id = 'version-banner';
+  banner.className = 'version-banner';
+
+  let text = '';
+  if (data.versionChanged && data.updateAvailable) {
+    text = `Claude Code CLI updated to <strong>${data.currentVersion}</strong> — a newer version <strong>${data.latestVersion}</strong> is also available.`;
+  } else if (data.updateAvailable) {
+    text = `Claude Code CLI update available: <strong>${data.currentVersion}</strong> → <strong>${data.latestVersion}</strong>`;
+  } else if (data.versionChanged) {
+    text = `Claude Code CLI updated to <strong>${data.currentVersion}</strong> (previously ${data.lastSeenVersion}).`;
+  }
+
+  banner.innerHTML = `
+    <span class="version-banner-text">${text}</span>
+    <span class="version-banner-actions">
+      ${data.updateAvailable ? `<button class="version-banner-btn" onclick="window.open('https://github.com/anthropics/claude-code/releases', '_blank')">Release Notes</button>` : ''}
+      <button class="version-banner-btn" onclick="showSettingsSection('updates'); switchView('settings')">View Details</button>
+      <button class="version-banner-dismiss" onclick="dismissVersionBanner()" aria-label="Dismiss">&times;</button>
+    </span>
+  `;
+
+  messages.parentNode.insertBefore(banner, messages);
+}
+
+async function dismissVersionBanner() {
+  const banner = document.getElementById('version-banner');
+  if (banner) banner.remove();
+  // Acknowledge current version so it doesn't show again next load
+  if (versionData?.currentVersion) {
+    try {
+      await fetch('/api/settings/version/acknowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: versionData.currentVersion }),
+      });
+    } catch {}
+  }
+}
 
 // Poll for active (working) sessions to show pulse indicator
 function startActiveSessionPolling() {
@@ -955,6 +1014,41 @@ function renderToolInput(toolName, input) {
   // search_vault — show query
   if (name.includes('search_vault') && input.query) {
     return `<div class="tool-meta">Query: ${escapeHtml(input.query)}</div>`;
+  }
+
+  // Write — show file path + content
+  if (name === 'write' && input.content) {
+    const fileLabel = input.file_path
+      ? (isVaultPath(input.file_path) ? renderVaultFileLabel(input.file_path) : `<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`)
+      : '';
+    const lang = (input.file_path || '').split('.').pop() || '';
+    return `${fileLabel}<pre><code class="language-${lang}">${escapeHtml(input.content)}</code></pre>`;
+  }
+
+  // Edit — show file path + diff
+  if (name === 'edit' && input.old_string) {
+    const fileLabel = input.file_path
+      ? (isVaultPath(input.file_path) ? renderVaultFileLabel(input.file_path) : `<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`)
+      : '';
+    const diffLines = [];
+    const file = input.file_path ? input.file_path.split('/').slice(-2).join('/') : '';
+    if (file) diffLines.push(`@@ ${file} @@`);
+    for (const line of (input.old_string || '').split('\n')) {
+      diffLines.push(`-${line}`);
+    }
+    for (const line of (input.new_string || '').split('\n')) {
+      diffLines.push(`+${line}`);
+    }
+    return `${fileLabel}<pre class="tool-diff">${renderDiffBlock(diffLines.join('\n'))}</pre>`;
+  }
+
+  // Read — show file path being read
+  if (name === 'read' && input.file_path) {
+    const fileLabel = isVaultPath(input.file_path) ? renderVaultFileLabel(input.file_path) : `<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`;
+    const meta = [];
+    if (input.offset) meta.push(`offset: ${input.offset}`);
+    if (input.limit) meta.push(`limit: ${input.limit}`);
+    return fileLabel + (meta.length ? `<div class="tool-meta">${escapeHtml(meta.join(', '))}</div>` : '');
   }
 
   // Generic fallback for tools with small input
@@ -1926,6 +2020,12 @@ function renderSettingsContent() {
     return;
   }
 
+  // Updates section is independent of MCP config
+  if (activeSettingsSection === 'updates') {
+    renderUpdatesSettings(container);
+    return;
+  }
+
   // Show config path setup if the file wasn't found (for MCP-dependent sections)
   if (!settingsData._configFound) {
     renderConfigPathSetup(container);
@@ -1978,6 +2078,90 @@ function setTheme(theme) {
   document.querySelectorAll('.settings-theme-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.theme === theme);
   });
+}
+
+// Updates settings — version check
+async function renderUpdatesSettings(container) {
+  container.innerHTML = `
+    <h2 class="settings-title">Updates</h2>
+    <div class="settings-section">
+      <div class="settings-section-title">Claude Code CLI Version</div>
+      <div class="settings-section-desc">Check if a newer version of the Claude Code CLI is available.</div>
+      <div class="version-status">
+        <div class="version-loading">Checking version...</div>
+      </div>
+    </div>
+  `;
+
+  try {
+    const res = await fetch('/api/settings/version');
+    versionData = await res.json();
+  } catch {
+    container.querySelector('.version-status').innerHTML =
+      '<div class="version-error">Failed to check version.</div>';
+    return;
+  }
+
+  const { currentVersion, latestVersion, updateAvailable } = versionData;
+  const statusEl = container.querySelector('.version-status');
+
+  let statusBadge = '';
+  if (updateAvailable === true) {
+    statusBadge = '<span class="version-badge version-badge-update">Update available</span>';
+  } else if (updateAvailable === false) {
+    statusBadge = '<span class="version-badge version-badge-current">Up to date</span>';
+  }
+
+  statusEl.innerHTML = `
+    <div class="version-info">
+      <div class="version-row">
+        <span class="version-label">Installed</span>
+        <span class="version-value">${currentVersion || 'Unknown'}</span>
+      </div>
+      <div class="version-row">
+        <span class="version-label">Latest</span>
+        <span class="version-value">${latestVersion || 'Unknown'}</span>
+      </div>
+      <div class="version-row">
+        <span class="version-label">Status</span>
+        <span class="version-value">${statusBadge || 'Unable to determine'}</span>
+      </div>
+    </div>
+    <div class="version-actions">
+      <button class="settings-theme-btn" onclick="checkVersionUpdate()">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+        Refresh
+      </button>
+      ${updateAvailable ? `<button class="settings-theme-btn" onclick="window.open('https://github.com/anthropics/claude-code/releases', '_blank')">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+        Release Notes
+      </button>` : ''}
+    </div>
+  `;
+
+  // Acknowledge current version as seen (dismisses startup banner)
+  if (currentVersion) {
+    try {
+      await fetch('/api/settings/version/acknowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: currentVersion }),
+      });
+    } catch {}
+  }
+}
+
+async function checkVersionUpdate() {
+  versionData = null;
+  const container = document.getElementById('settings-content');
+  renderUpdatesSettings(container);
 }
 
 // Bridge paths settings — cached from /api/settings/bridge-paths
