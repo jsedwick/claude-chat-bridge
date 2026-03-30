@@ -130,12 +130,59 @@ let currentWorkingDir = '';
 const dirPicker = document.getElementById('dir-picker');
 
 // Shared directory browser renderer
-async function renderDirBrowser(container, startPath, onSelect) {
+async function renderDirRoots(container, onSelect) {
   container.innerHTML = '<div class="dir-browser-loading">Loading...</div>';
   container.style.display = 'block';
 
   try {
-    const res = await fetch(`/api/sessions/dirs/browse?path=${encodeURIComponent(startPath)}`);
+    const res = await fetch('/api/sessions/dirs/roots');
+    const roots = await res.json();
+
+    container.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'dir-browser-header';
+    const pathLabel = document.createElement('span');
+    pathLabel.className = 'dir-browser-path';
+    pathLabel.textContent = 'Allowed Directories';
+    header.appendChild(pathLabel);
+    container.appendChild(header);
+
+    if (roots.length > 0) {
+      const list = document.createElement('div');
+      list.className = 'dir-browser-list';
+      for (const root of roots) {
+        const item = document.createElement('button');
+        item.className = 'dir-picker-item';
+        item.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + root.name + '</span>';
+        item.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, root.path, onSelect); };
+        list.appendChild(item);
+      }
+      container.appendChild(list);
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'dir-browser-empty';
+      empty.textContent = 'No allowed paths configured';
+      container.appendChild(empty);
+    }
+  } catch (err) {
+    container.innerHTML = '<div class="dir-browser-empty">Failed to load allowed directories</div>';
+  }
+}
+
+async function renderDirBrowser(container, startPath, onSelect, opts = {}) {
+  container.innerHTML = '<div class="dir-browser-loading">Loading...</div>';
+  container.style.display = 'block';
+  const unrestricted = opts.unrestricted || false;
+
+  try {
+    let url = `/api/sessions/dirs/browse?path=${encodeURIComponent(startPath)}`;
+    if (unrestricted) url += '&unrestricted=1';
+    const res = await fetch(url);
+    if (res.status === 403) {
+      // Path is outside allowed directories — show roots instead
+      return renderDirRoots(container, onSelect);
+    }
     const data = await res.json();
 
     container.innerHTML = '';
@@ -149,7 +196,15 @@ async function renderDirBrowser(container, startPath, onSelect) {
       backBtn.className = 'dir-browser-back';
       backBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
       backBtn.title = 'Go up';
-      backBtn.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, data.parent, onSelect); };
+      backBtn.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, data.parent, onSelect, opts); };
+      header.appendChild(backBtn);
+    } else if (!unrestricted) {
+      // At the top of an allowed path — add back button to return to roots
+      const backBtn = document.createElement('button');
+      backBtn.className = 'dir-browser-back';
+      backBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+      backBtn.title = 'Back to allowed directories';
+      backBtn.onclick = (e) => { e.stopPropagation(); renderDirRoots(container, onSelect); };
       header.appendChild(backBtn);
     }
 
@@ -176,7 +231,7 @@ async function renderDirBrowser(container, startPath, onSelect) {
         const item = document.createElement('button');
         item.className = 'dir-picker-item';
         item.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + child.name + '</span>';
-        item.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, child.path, onSelect); };
+        item.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, child.path, onSelect, opts); };
         list.appendChild(item);
       }
       container.appendChild(list);
@@ -194,22 +249,25 @@ async function renderDirBrowser(container, startPath, onSelect) {
 function toggleSidebarDirPicker() {
   const isOpen = sidebarDirPicker.style.display !== 'none';
   if (isOpen) { sidebarDirPicker.style.display = 'none'; return; }
-  const startPath = selectedNewChatDir || '/Users';
-  renderDirBrowser(sidebarDirPicker, startPath, (dirPath) => {
+  const onSelect = (dirPath) => {
     sidebarDirPicker.style.display = 'none';
     selectedNewChatDir = dirPath;
     sidebarDirBtn.classList.add('selected');
     sidebarDirBtn.title = dirPath;
     newChatBtn.disabled = false;
-  });
+  };
+  if (selectedNewChatDir) {
+    renderDirBrowser(sidebarDirPicker, selectedNewChatDir, onSelect);
+  } else {
+    renderDirRoots(sidebarDirPicker, onSelect);
+  }
 }
 
 function toggleDirPicker() {
   if (!currentSessionId) return;
   const isOpen = dirPicker.style.display !== 'none';
   if (isOpen) { dirPicker.style.display = 'none'; return; }
-  const startPath = currentWorkingDir || '/Users';
-  renderDirBrowser(dirPicker, startPath, async (dirPath) => {
+  const onSelect = async (dirPath) => {
     dirPicker.style.display = 'none';
     if (dirPath === currentWorkingDir) return;
     try {
@@ -222,7 +280,12 @@ function toggleDirPicker() {
     } catch (err) {
       console.error('Failed to update working directory:', err);
     }
-  });
+  };
+  if (currentWorkingDir) {
+    renderDirBrowser(dirPicker, currentWorkingDir, onSelect);
+  } else {
+    renderDirRoots(dirPicker, onSelect);
+  }
 }
 
 // Close dir pickers on outside click
@@ -255,6 +318,7 @@ let activeSessionIds = new Set();
   } catch {}
   currentMode = 'work';
   updateModeTabsUI('work');
+  await loadBridgePaths();
   loadSessions();
   startActiveSessionPolling();
 })();
@@ -1826,15 +1890,25 @@ function renderSettingsContent() {
     return;
   }
 
-  // Show config path setup if the file wasn't found
+  // Paths section uses bridge-config, not MCP config — always accessible
+  if (activeSettingsSection === 'paths') {
+    renderPathsSettings(container);
+    return;
+  }
+
+  // Appearance is also independent of MCP config
+  if (activeSettingsSection === 'appearance') {
+    renderAppearanceSettings(container);
+    return;
+  }
+
+  // Show config path setup if the file wasn't found (for MCP-dependent sections)
   if (!settingsData._configFound) {
     renderConfigPathSetup(container);
     return;
   }
 
-  if (activeSettingsSection === 'appearance') {
-    renderAppearanceSettings(container);
-  } else if (activeSettingsSection === 'vault-setup') {
+  if (activeSettingsSection === 'vault-setup') {
     renderVaultSettings(container);
   } else if (activeSettingsSection === 'allowed-paths') {
     renderAllowedPaths(container);
@@ -1880,6 +1954,105 @@ function setTheme(theme) {
   document.querySelectorAll('.settings-theme-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.theme === theme);
   });
+}
+
+// Bridge paths settings — cached from /api/settings/bridge-paths
+let bridgePathsData = null;
+
+async function renderPathsSettings(container) {
+  if (!bridgePathsData) {
+    container.innerHTML = '<div class="settings-loading">Loading...</div>';
+    try {
+      const res = await fetch('/api/settings/bridge-paths');
+      bridgePathsData = await res.json();
+    } catch {
+      container.innerHTML = '<div class="settings-section-desc">Failed to load bridge paths.</div>';
+      return;
+    }
+  }
+  const fields = [
+    { key: 'workingDir', label: 'Working Directory', desc: 'Default working directory for new sessions' },
+    { key: 'claudePath', label: 'Claude CLI Path', desc: 'Path to the Claude CLI binary' },
+    { key: 'mcpConfigPath', label: 'MCP Config Path', desc: 'Path to .obsidian-mcp.json configuration file' },
+    { key: 'obsidianRoot', label: 'Obsidian Root', desc: 'Root directory containing Obsidian vaults' },
+    { key: 'obsidianVaults', label: 'Vault Names', desc: 'Comma-separated list of vault folder names', isArray: true },
+    { key: 'projectScanDirs', label: 'Project Scan Dirs', desc: 'Comma-separated directories to scan for projects', isArray: true },
+  ];
+  let html = '<h2 class="settings-title">Paths</h2>';
+  html += '<p class="settings-section-desc">Configure file system paths for the bridge. Changes take effect on next server restart.</p>';
+  html += '<div class="settings-section">';
+  for (const f of fields) {
+    const val = f.isArray ? (bridgePathsData[f.key] || []).join(', ') : (bridgePathsData[f.key] || '');
+    html += `<div class="settings-form-field">
+      <label>${f.label}</label>
+      <div class="settings-section-desc" style="margin-bottom:4px">${f.desc}</div>
+      <div class="settings-path-input">
+        <input type="text" id="bridge-path-${f.key}" value="${escapeHtml(val)}">
+        ${!f.isArray ? `<button class="settings-browse-btn" onclick="browseForPath('bridge-path-${f.key}')">Browse</button>` : ''}
+      </div>
+      <div id="bridge-path-${f.key}-browser" class="settings-path-browser" style="display:none"></div>
+    </div>`;
+  }
+  // Vault paths (work/personal)
+  html += `<div class="settings-form-field">
+    <label>Work Vault Path</label>
+    <div class="settings-section-desc" style="margin-bottom:4px">Obsidian vault directory for work mode</div>
+    <div class="settings-path-input">
+      <input type="text" id="bridge-path-vaultPaths-work" value="${escapeHtml(bridgePathsData.vaultPaths?.work || '')}">
+      <button class="settings-browse-btn" onclick="browseForPath('bridge-path-vaultPaths-work')">Browse</button>
+    </div>
+    <div id="bridge-path-vaultPaths-work-browser" class="settings-path-browser" style="display:none"></div>
+  </div>`;
+  html += `<div class="settings-form-field">
+    <label>Personal Vault Path</label>
+    <div class="settings-section-desc" style="margin-bottom:4px">Obsidian vault directory for personal mode</div>
+    <div class="settings-path-input">
+      <input type="text" id="bridge-path-vaultPaths-personal" value="${escapeHtml(bridgePathsData.vaultPaths?.personal || '')}">
+      <button class="settings-browse-btn" onclick="browseForPath('bridge-path-vaultPaths-personal')">Browse</button>
+    </div>
+    <div id="bridge-path-vaultPaths-personal-browser" class="settings-path-browser" style="display:none"></div>
+  </div>`;
+  html += `<div class="settings-form-actions">
+    <button class="settings-form-save" onclick="saveBridgePaths()">Save</button>
+  </div>`;
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+async function saveBridgePaths() {
+  const updates = {};
+  const stringFields = ['workingDir', 'claudePath', 'mcpConfigPath', 'obsidianRoot'];
+  const arrayFields = ['obsidianVaults', 'projectScanDirs'];
+  for (const key of stringFields) {
+    const el = document.getElementById(`bridge-path-${key}`);
+    if (el) updates[key] = el.value.trim();
+  }
+  for (const key of arrayFields) {
+    const el = document.getElementById(`bridge-path-${key}`);
+    if (el) updates[key] = el.value.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  // Vault paths
+  const workVault = document.getElementById('bridge-path-vaultPaths-work')?.value.trim();
+  const personalVault = document.getElementById('bridge-path-vaultPaths-personal')?.value.trim();
+  if (workVault || personalVault) {
+    updates.vaultPaths = {
+      work: workVault || '',
+      personal: personalVault || '',
+    };
+  }
+  try {
+    const res = await fetch('/api/settings/bridge-paths', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    bridgePathsData = await res.json();
+    // Refresh frontend vault config
+    await loadBridgePaths();
+    renderSettingsContent();
+  } catch (err) {
+    console.error('Failed to save bridge paths:', err);
+  }
 }
 
 function renderConfigPathSetup(container) {
@@ -2121,11 +2294,12 @@ function browseForPath(inputId) {
   }
   const isOpen = browserEl.style.display !== 'none';
   if (isOpen) { browserEl.style.display = 'none'; return; }
-  const startPath = input.value || '/Users';
-  renderDirBrowser(browserEl, startPath, (dirPath) => {
+  const onSelect = (dirPath) => {
     browserEl.style.display = 'none';
     input.value = dirPath;
-  });
+  };
+  const startPath = input.value || '/Users';
+  renderDirBrowser(browserEl, startPath, onSelect, { unrestricted: true });
 }
 
 // ============================================================
@@ -2139,13 +2313,32 @@ let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
 
-// Vault path detection and linking
-const OBSIDIAN_ROOT = '/Users/jsedwick/Documents/Obsidian';
-const VAULT_NAMES = ['AI-Work', 'AI-Home', 'Work', 'Home'];
-const VAULT_PATH_RE = /\/Documents\/Obsidian\/(AI-Work|AI-Home|Work|Home)\//;
-const VAULT_NAMES_RE = new RegExp(`^(?:${VAULT_NAMES.join('|')})\\/`);
+// Vault path detection and linking (fetched from server config)
+let OBSIDIAN_ROOT = '';
+let VAULT_NAMES = [];
+let VAULT_PATH_RE = null;
+let VAULT_NAMES_RE = null;
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function loadBridgePaths() {
+  try {
+    const res = await fetch('/api/settings/bridge-paths');
+    const data = await res.json();
+    OBSIDIAN_ROOT = data.obsidianRoot || '';
+    VAULT_NAMES = data.obsidianVaults || [];
+    const namesPattern = VAULT_NAMES.map(escapeRegex).join('|');
+    VAULT_PATH_RE = new RegExp(escapeRegex(OBSIDIAN_ROOT) + '/(' + namesPattern + ')/');
+    VAULT_NAMES_RE = new RegExp(`^(?:${namesPattern})\\/`);
+  } catch (err) {
+    console.error('Failed to load bridge paths:', err);
+  }
+}
 
 function isVaultPath(filePath) {
+  if (!VAULT_PATH_RE || !VAULT_NAMES_RE) return false;
   return VAULT_PATH_RE.test(filePath) || VAULT_NAMES_RE.test(filePath);
 }
 
@@ -2153,7 +2346,7 @@ function resolveVaultPath(filePath) {
   // If already absolute, return as-is
   if (filePath.startsWith('/')) return filePath;
   // If relative vault path (e.g. "Work/Meeting Notes/..."), prepend root
-  if (VAULT_NAMES_RE.test(filePath)) return `${OBSIDIAN_ROOT}/${filePath}`;
+  if (VAULT_NAMES_RE && VAULT_NAMES_RE.test(filePath)) return `${OBSIDIAN_ROOT}/${filePath}`;
   return filePath;
 }
 

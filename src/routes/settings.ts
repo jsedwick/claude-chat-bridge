@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
-import { config, getMcpConfigPath, setMcpConfigPath } from '../config';
+import { config, getMcpConfigPath, setMcpConfigPath, getBridgePaths, setBridgeConfigValue } from '../config';
 
 const router = Router();
 
@@ -67,6 +67,27 @@ router.put('/config-path', (req: Request, res: Response) => {
   const exists = fs.existsSync(newPath);
   setMcpConfigPath(newPath);
   res.json({ path: newPath, exists });
+});
+
+// GET /api/settings/bridge-paths — get all bridge-configurable paths
+router.get('/bridge-paths', (_req: Request, res: Response) => {
+  res.json(getBridgePaths());
+});
+
+// PUT /api/settings/bridge-paths — update one or more bridge-config paths
+router.put('/bridge-paths', (req: Request, res: Response) => {
+  const updates = req.body;
+  if (!updates || typeof updates !== 'object') {
+    res.status(400).json({ error: 'Invalid data' });
+    return;
+  }
+  const allowedKeys = ['workingDir', 'claudePath', 'mcpConfigPath', 'projectScanDirs', 'obsidianRoot', 'obsidianVaults', 'vaultPaths'];
+  for (const [key, value] of Object.entries(updates)) {
+    if (!allowedKeys.includes(key)) continue;
+    setBridgeConfigValue(key, value);
+    (config as any)[key] = value;
+  }
+  res.json(getBridgePaths());
 });
 
 export default router;

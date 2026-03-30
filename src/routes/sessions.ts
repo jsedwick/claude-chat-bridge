@@ -2,11 +2,31 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession } from '../services/session-store';
-import { getMode, setMode, Mode, config } from '../config';
+import { getMode, setMode, Mode, config, getMcpConfigPath } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
 
 const router = Router();
+
+// Read allowed paths from MCP settings config
+function getAllowedPaths(): string[] {
+  try {
+    const raw = fs.readFileSync(getMcpConfigPath(), 'utf-8');
+    const data = JSON.parse(raw);
+    return data?.security?.accessControl?.allowedPaths || [];
+  } catch {
+    return [];
+  }
+}
+
+// Check if a path is within any of the allowed paths
+function isWithinAllowedPaths(targetPath: string, allowedPaths: string[]): boolean {
+  const resolved = path.resolve(targetPath);
+  return allowedPaths.some(ap => {
+    const resolvedAp = path.resolve(ap);
+    return resolved === resolvedAp || resolved.startsWith(resolvedAp + path.sep);
+  });
+}
 
 router.get('/', (req: Request, res: Response) => {
   const mode = req.query.mode as string | undefined;
@@ -63,10 +83,31 @@ router.get('/dirs/available', (_req: Request, res: Response) => {
   res.json([home, ...projects]);
 });
 
-// Browse directories for the directory picker
+// Allowed root directories for the directory picker
+router.get('/dirs/roots', (_req: Request, res: Response) => {
+  const allowedPaths = getAllowedPaths();
+  const roots = allowedPaths.map(p => ({
+    name: path.basename(p),
+    path: path.resolve(p),
+  }));
+  roots.sort((a, b) => a.name.localeCompare(b.name));
+  res.json(roots);
+});
+
+// Browse directories for the directory picker (restricted to allowed paths)
 router.get('/dirs/browse', (req: Request, res: Response) => {
   const dirPath = (req.query.path as string) || config.workingDir;
   const resolved = path.resolve(dirPath);
+  const unrestricted = req.query.unrestricted === '1';
+
+  // Enforce allowed paths restriction (unless unrestricted mode for settings)
+  const allowedPaths = getAllowedPaths();
+  const enforce = !unrestricted && allowedPaths.length > 0;
+
+  if (enforce && !isWithinAllowedPaths(resolved, allowedPaths)) {
+    res.status(403).json({ error: 'Directory is outside allowed paths' });
+    return;
+  }
 
   try {
     const stat = fs.statSync(resolved);
@@ -84,10 +125,13 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory() && !entry.name.startsWith('.')) {
-        children.push({
-          name: entry.name,
-          path: path.join(resolved, entry.name),
-        });
+        const childPath = path.join(resolved, entry.name);
+        if (!enforce || isWithinAllowedPaths(childPath, allowedPaths)) {
+          children.push({
+            name: entry.name,
+            path: childPath,
+          });
+        }
       }
     }
   } catch {
@@ -95,9 +139,15 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
   }
 
   children.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Only allow navigating up if the parent is still within allowed paths
+  const parentDir = path.dirname(resolved);
+  const hasParent = parentDir !== resolved &&
+    (!enforce || isWithinAllowedPaths(parentDir, allowedPaths));
+
   res.json({
     path: resolved,
-    parent: path.dirname(resolved) !== resolved ? path.dirname(resolved) : null,
+    parent: hasParent ? parentDir : null,
     children,
   });
 });
