@@ -2329,9 +2329,11 @@ async function loadBridgePaths() {
     const data = await res.json();
     OBSIDIAN_ROOT = data.obsidianRoot || '';
     VAULT_NAMES = data.obsidianVaults || [];
-    const namesPattern = VAULT_NAMES.map(escapeRegex).join('|');
-    VAULT_PATH_RE = new RegExp(escapeRegex(OBSIDIAN_ROOT) + '/(' + namesPattern + ')/');
-    VAULT_NAMES_RE = new RegExp(`^(?:${namesPattern})\\/`);
+    if (VAULT_NAMES.length && OBSIDIAN_ROOT) {
+      const namesPattern = VAULT_NAMES.map(escapeRegex).join('|');
+      VAULT_PATH_RE = new RegExp(escapeRegex(OBSIDIAN_ROOT) + '/(' + namesPattern + ')/');
+      VAULT_NAMES_RE = new RegExp(`^(?:${namesPattern})\\/`);
+    }
   } catch (err) {
     console.error('Failed to load bridge paths:', err);
   }
