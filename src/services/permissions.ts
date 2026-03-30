@@ -20,6 +20,7 @@ const AUTO_ALLOW_ALL = true;
 // Bash commands that require user approval via the permission dialog
 const BASH_ASK_PATTERNS = [
   /^git\s+(add|commit|push)\b/,
+  /\brm\s/,
 ];
 
 // Check if a Bash command needs user permission
