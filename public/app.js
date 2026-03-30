@@ -237,6 +237,12 @@ document.addEventListener('click', (e) => {
 // Track which sessions are actively working (polled from backend)
 let activeSessionIds = new Set();
 
+// Apply saved theme before first paint
+(function() {
+  const saved = localStorage.getItem('chat-bridge-theme');
+  if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+})();
+
 // Initialize — always start in work mode on page load
 (async () => {
   try {
@@ -1664,7 +1670,7 @@ async function respondPermission(decision, allowAll) {
 
 let currentView = 'sessions';
 let settingsData = null;
-let activeSettingsSection = 'vault-setup';
+let activeSettingsSection = 'appearance';
 
 function toggleViewMenu() {
   const menu = document.getElementById('sidebar-view-menu');
@@ -1757,11 +1763,54 @@ function renderSettingsContent() {
     return;
   }
 
-  if (activeSettingsSection === 'vault-setup') {
+  if (activeSettingsSection === 'appearance') {
+    renderAppearanceSettings(container);
+  } else if (activeSettingsSection === 'vault-setup') {
     renderVaultSettings(container);
   } else if (activeSettingsSection === 'allowed-paths') {
     renderAllowedPaths(container);
   }
+}
+
+function renderAppearanceSettings(container) {
+  const currentTheme = localStorage.getItem('chat-bridge-theme') || 'dark';
+  container.innerHTML = `
+    <h2 class="settings-title">Appearance</h2>
+    <div class="settings-section">
+      <div class="settings-section-title">Theme</div>
+      <div class="settings-section-desc">Choose between dark and light mode for the interface.</div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${currentTheme === 'dark' ? 'active' : ''}" data-theme="dark" onclick="setTheme('dark')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          Dark
+        </button>
+        <button class="settings-theme-btn ${currentTheme === 'light' ? 'active' : ''}" data-theme="light" onclick="setTheme('light')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          Light
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('chat-bridge-theme', theme);
+  document.querySelectorAll('.settings-theme-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.theme === theme);
+  });
 }
 
 function renderConfigPathSetup(container) {
