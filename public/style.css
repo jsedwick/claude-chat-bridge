@@ -2239,7 +2239,7 @@ pre.streaming {
   text-decoration-style: solid;
 }
 
-/* KB Editor */
+/* KB Editor (raw textarea fallback) */
 .kb-editor {
   width: 100%;
   min-height: calc(100vh - 100px);
@@ -2260,6 +2260,69 @@ pre.streaming {
   border-color: var(--accent);
 }
 
+/* EasyMDE overrides */
+.kb-content .EasyMDEContainer {
+  border: none;
+}
+
+.kb-content .EasyMDEContainer .CodeMirror {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 8px;
+}
+
+.kb-content .EasyMDEContainer .CodeMirror-cursor {
+  border-left-color: var(--text-primary);
+}
+
+.kb-content .EasyMDEContainer .CodeMirror-selected {
+  background: var(--accent);
+  opacity: 0.3;
+}
+
+.kb-content .editor-toolbar {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  opacity: 1;
+}
+
+.kb-content .editor-toolbar button {
+  color: var(--text-secondary) !important;
+  border: none;
+}
+
+.kb-content .editor-toolbar button:hover {
+  background: var(--border);
+  color: var(--text-primary) !important;
+}
+
+.kb-content .editor-toolbar button.active {
+  background: var(--border);
+  color: var(--accent) !important;
+}
+
+.kb-content .editor-toolbar i.separator {
+  border-left-color: var(--border);
+  border-right-color: transparent;
+}
+
+.kb-content .EasyMDEContainer .editor-preview {
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.kb-content .EasyMDEContainer .editor-preview-side {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border-left: 1px solid var(--border);
+}
+
 /* Task checkbox rendering */
 .kb-rendered input[type="checkbox"] {
   margin-right: 6px;
@@ -2277,5 +2340,14 @@ pre.streaming {
     border-radius: 0;
     border-left: none;
     border-right: none;
+  }
+
+  .kb-content .EasyMDEContainer .CodeMirror {
+    font-size: 16px;
+    border-radius: 0;
+  }
+
+  .kb-content .editor-toolbar {
+    border-radius: 0;
   }
 }

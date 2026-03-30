@@ -2134,6 +2134,7 @@ function browseForPath(inputId) {
 
 let kbCurrentFile = null;     // { path, name, content }
 let kbIsEditing = false;
+let kbEasyMDE = null;         // EasyMDE instance
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
@@ -2349,6 +2350,12 @@ async function loadKbFile(filePath) {
     kbCurrentFile = data;
     kbIsEditing = false;
 
+    // Clean up EasyMDE if switching files while editing
+    if (kbEasyMDE) {
+      kbEasyMDE.toTextArea();
+      kbEasyMDE = null;
+    }
+
     document.getElementById('kb-title').textContent = data.name;
     document.getElementById('kb-welcome').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
@@ -2434,12 +2441,38 @@ function toggleKbEdit() {
   document.getElementById('kb-save-btn').style.display = '';
   document.getElementById('kb-cancel-btn').style.display = '';
 
-  // Focus editor
-  document.getElementById('kb-editor').focus();
+  // Initialize EasyMDE on the textarea
+  if (kbEasyMDE) {
+    kbEasyMDE.toTextArea();
+    kbEasyMDE = null;
+  }
+  kbEasyMDE = new EasyMDE({
+    element: document.getElementById('kb-editor'),
+    initialValue: kbCurrentFile.content,
+    spellChecker: false,
+    autofocus: true,
+    status: false,
+    toolbar: [
+      'bold', 'italic', 'heading', '|',
+      'unordered-list', 'ordered-list', 'checklist', '|',
+      'link', 'image', 'code', 'quote', '|',
+      'preview', 'side-by-side', '|',
+      'guide'
+    ],
+    minHeight: 'calc(100vh - 160px)',
+    sideBySideFullscreen: false,
+    previewImagesInEditor: false,
+  });
 }
 
 function cancelKbEdit() {
   kbIsEditing = false;
+
+  // Destroy EasyMDE instance
+  if (kbEasyMDE) {
+    kbEasyMDE.toTextArea();
+    kbEasyMDE = null;
+  }
 
   document.getElementById('kb-rendered').style.display = '';
   document.getElementById('kb-editor').style.display = 'none';
@@ -2449,7 +2482,7 @@ function cancelKbEdit() {
 }
 
 async function saveKbFile() {
-  const content = document.getElementById('kb-editor').value;
+  const content = kbEasyMDE ? kbEasyMDE.value() : document.getElementById('kb-editor').value;
   try {
     const res = await fetch('/api/vault/kb/file', {
       method: 'PUT',
