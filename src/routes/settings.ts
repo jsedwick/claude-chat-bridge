@@ -6,6 +6,12 @@ import { config, getMcpConfigPath, setMcpConfigPath, getBridgePaths, setBridgeCo
 
 const execFileAsync = promisify(execFile);
 
+// Extract semver from CLI output like "2.1.87 (Claude Code)" → "2.1.87"
+function extractVersion(raw: string): string {
+  const match = raw.match(/(\d+\.\d+\.\d+)/);
+  return match ? match[1] : raw.trim();
+}
+
 const router = Router();
 
 // GET /api/settings — read .obsidian-mcp.json + config path status
@@ -105,12 +111,12 @@ router.get('/version', async (_req: Request, res: Response) => {
   // Get installed version
   try {
     const { stdout } = await execFileAsync(claudePath, ['--version'], { timeout: 10000 });
-    currentVersion = stdout.trim();
+    currentVersion = extractVersion(stdout);
   } catch {
     // CLI not found or errored — try bare 'claude' in case it's on PATH
     try {
       const { stdout } = await execFileAsync('claude', ['--version'], { timeout: 10000 });
-      currentVersion = stdout.trim();
+      currentVersion = extractVersion(stdout);
     } catch {
       // Can't determine current version
     }
@@ -119,7 +125,7 @@ router.get('/version', async (_req: Request, res: Response) => {
   // Get latest published version from npm
   try {
     const { stdout } = await execFileAsync('npm', ['info', '@anthropic-ai/claude-code', 'version'], { timeout: 15000 });
-    latestVersion = stdout.trim();
+    latestVersion = extractVersion(stdout);
   } catch {
     // npm not available or network error
   }
