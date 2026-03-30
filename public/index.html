@@ -23,6 +23,7 @@
         </button>
         <div id="sidebar-view-menu" class="sidebar-view-menu" style="display:none">
           <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions</button>
+          <button class="sidebar-view-option" data-view="kb" onclick="switchView('kb')">Knowledge Base</button>
           <button class="sidebar-view-option" data-view="settings" onclick="switchView('settings')">Settings</button>
         </div>
       </div>
@@ -55,6 +56,10 @@
         </button>
         <div id="archive-list" class="archive-list" style="display: none;"></div>
       </div>
+    </div>
+    <!-- KB Browser view (sidebar file tree) -->
+    <div id="kb-view" class="kb-sidebar" style="display:none">
+      <div id="kb-tree" class="kb-tree"></div>
     </div>
     <!-- Settings view (sidebar nav) -->
     <div id="settings-view" class="settings-nav" style="display:none">
@@ -132,6 +137,42 @@
       <h1 class="chat-title" style="cursor:default">Settings</h1>
     </header>
     <div id="settings-content" class="settings-content"></div>
+  </div>
+
+  <!-- KB Browser Panel (replaces chat content when in KB view) -->
+  <div id="kb-panel" class="kb-panel" style="display:none">
+    <header class="chat-header">
+      <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+      <h1 id="kb-title" class="chat-title" style="cursor:default">Knowledge Base</h1>
+      <div class="kb-header-actions">
+        <button id="kb-edit-btn" class="kb-action-btn" style="display:none" onclick="toggleKbEdit()" aria-label="Edit">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <button id="kb-save-btn" class="kb-action-btn kb-save-btn" style="display:none" onclick="saveKbFile()" aria-label="Save">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
+        <button id="kb-cancel-btn" class="kb-action-btn" style="display:none" onclick="cancelKbEdit()" aria-label="Cancel">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div id="kb-content" class="kb-content">
+      <div id="kb-welcome" class="welcome-message">
+        <h2>Knowledge Base</h2>
+        <p>Browse and edit your Obsidian vault files.</p>
+        <p class="welcome-hint">Select a file from the sidebar to get started.</p>
+      </div>
+      <div id="kb-rendered" class="kb-rendered" style="display:none"></div>
+      <textarea id="kb-editor" class="kb-editor" style="display:none"></textarea>
+    </div>
   </div>
 
   <!-- Permission Request Dialog -->

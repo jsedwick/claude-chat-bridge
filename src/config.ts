@@ -43,6 +43,9 @@ export const config = {
     work: '/Users/jsedwick/Documents/Obsidian/AI-Work',
     personal: '/Users/jsedwick/Documents/Obsidian/AI-Home',
   } as Record<Mode, string>,
+  // Obsidian root and all vault names (for KB browser)
+  obsidianRoot: '/Users/jsedwick/Documents/Obsidian',
+  obsidianVaults: ['AI-Work', 'AI-Home', 'Work', 'Home'],
 };
 
 export function getMcpConfigPath(): string {

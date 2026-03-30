@@ -6,6 +6,7 @@ const pendingMessages = new Map(); // queued messages per session (sent when str
 let currentMode = 'work';
 let pendingPermissionId = null;
 let permissionPollInterval = null;
+const permissionQueue = []; // queue for parallel permission requests
 
 // Message history (server-backed)
 async function restoreMessages(sessionId) {
@@ -1613,6 +1614,13 @@ function stopPermissionPolling() {
 startPermissionPolling();
 
 function showPermissionDialog(id, toolName, toolInput) {
+  // If a dialog is already showing, queue this request
+  if (pendingPermissionId) {
+    console.log('[permission] queuing request (dialog already open):', id);
+    permissionQueue.push({ id, toolName, toolInput });
+    return;
+  }
+
   pendingPermissionId = id;
   document.getElementById('permission-tool-name').textContent = toolName;
 
@@ -1661,6 +1669,21 @@ async function respondPermission(decision, allowAll) {
   }
 
   pendingPermissionId = null;
+
+  // Handle queued permission requests
+  if (allowAll && permissionQueue.length > 0) {
+    // "Allow All" auto-responds to all queued requests (backend cascade handles them,
+    // but clear the queue so we don't show stale dialogs)
+    console.log(`[permission] allowAll: clearing ${permissionQueue.length} queued request(s)`);
+    permissionQueue.length = 0;
+  } else if (permissionQueue.length > 0) {
+    // Show the next queued permission dialog
+    const next = permissionQueue.shift();
+    console.log('[permission] showing next queued request:', next.id);
+    showPermissionDialog(next.id, next.toolName, next.toolInput);
+    return; // don't add typing indicator — still waiting for permission
+  }
+
   addTypingIndicator();
 }
 
@@ -1689,9 +1712,18 @@ function switchView(view) {
     document.getElementById('sidebar-view-menu').style.display = 'none';
     return;
   }
+  // Guard against navigating away from KB with unsaved edits
+  if (currentView === 'kb' && kbIsEditing) {
+    if (!confirm('You have unsaved changes. Discard them?')) {
+      document.getElementById('sidebar-view-menu').style.display = 'none';
+      return;
+    }
+    kbIsEditing = false;
+  }
   currentView = view;
   document.getElementById('sidebar-view-menu').style.display = 'none';
-  document.getElementById('sidebar-view-label').textContent = view === 'sessions' ? 'Sessions' : 'Settings';
+  const labels = { sessions: 'Sessions', kb: 'Knowledge Base', settings: 'Settings' };
+  document.getElementById('sidebar-view-label').textContent = labels[view] || view;
 
   // Update dropdown active state
   document.querySelectorAll('.sidebar-view-option').forEach(opt => {
@@ -1700,23 +1732,33 @@ function switchView(view) {
 
   const sessionsView = document.getElementById('sessions-view');
   const settingsView = document.getElementById('settings-view');
+  const kbView = document.getElementById('kb-view');
   const sessionsToolbar = document.getElementById('sessions-toolbar');
   const chatMain = document.querySelector('.chat-main');
   const settingsPanel = document.getElementById('settings-panel');
+  const kbPanel = document.getElementById('kb-panel');
+
+  // Hide everything first
+  sessionsView.style.display = 'none';
+  sessionsToolbar.style.display = 'none';
+  settingsView.style.display = 'none';
+  kbView.style.display = 'none';
+  chatMain.style.display = 'none';
+  settingsPanel.style.display = 'none';
+  kbPanel.style.display = 'none';
 
   if (view === 'settings') {
-    sessionsView.style.display = 'none';
-    sessionsToolbar.style.display = 'none';
     settingsView.style.display = '';
-    chatMain.style.display = 'none';
     settingsPanel.style.display = 'flex';
     loadSettings();
+  } else if (view === 'kb') {
+    kbView.style.display = '';
+    kbPanel.style.display = 'flex';
+    if (!kbTreeLoaded) loadKbTree();
   } else {
     sessionsView.style.display = '';
     sessionsToolbar.style.display = '';
-    settingsView.style.display = 'none';
     chatMain.style.display = '';
-    settingsPanel.style.display = 'none';
   }
 }
 
@@ -2057,4 +2099,301 @@ function browseForPath(inputId) {
     browserEl.style.display = 'none';
     input.value = dirPath;
   });
+}
+
+// ============================================================
+// KB Browser
+// ============================================================
+
+let kbCurrentFile = null;     // { path, name, content }
+let kbIsEditing = false;
+let kbTreeLoaded = false;
+const kbExpandedDirs = new Set();
+const kbTreeCache = new Map(); // path -> entries
+
+async function loadKbTree(dirPath) {
+  const url = dirPath
+    ? `/api/vault/kb/tree?path=${encodeURIComponent(dirPath)}`
+    : '/api/vault/kb/tree';
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) return null;
+    kbTreeCache.set(data.path, data.entries);
+
+    if (!dirPath) {
+      // Root load
+      kbTreeLoaded = true;
+      const treeEl = document.getElementById('kb-tree');
+      treeEl.innerHTML = '';
+      for (const entry of data.entries) {
+        treeEl.appendChild(createKbTreeNode(entry, 0));
+      }
+    }
+    return data;
+  } catch (err) {
+    console.error('Failed to load KB tree:', err);
+    return null;
+  }
+}
+
+function createKbTreeNode(entry, depth) {
+  const wrapper = document.createElement('div');
+
+  const item = document.createElement('div');
+  item.className = 'kb-tree-item' + (entry.type === 'file' ? ' kb-tree-file' : '');
+  item.dataset.path = entry.path;
+  item.dataset.type = entry.type;
+
+  // Indent
+  if (depth > 0) {
+    const indent = document.createElement('span');
+    indent.className = 'kb-tree-indent';
+    indent.style.width = (depth * 16) + 'px';
+    item.appendChild(indent);
+  }
+
+  if (entry.type === 'directory') {
+    // Chevron
+    const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chevron.setAttribute('class', 'kb-tree-chevron');
+    chevron.setAttribute('viewBox', '0 0 24 24');
+    chevron.setAttribute('width', '14');
+    chevron.setAttribute('height', '14');
+    chevron.setAttribute('fill', 'none');
+    chevron.setAttribute('stroke', 'currentColor');
+    chevron.setAttribute('stroke-width', '2');
+    chevron.setAttribute('stroke-linecap', 'round');
+    chevron.setAttribute('stroke-linejoin', 'round');
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', '9 18 15 12 9 6');
+    chevron.appendChild(polyline);
+    item.appendChild(chevron);
+
+    // Folder icon
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('class', 'kb-tree-icon');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('width', '16');
+    icon.setAttribute('height', '16');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.setAttribute('stroke-width', '2');
+    icon.setAttribute('stroke-linecap', 'round');
+    icon.setAttribute('stroke-linejoin', 'round');
+    const folderPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    folderPath.setAttribute('d', 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z');
+    icon.appendChild(folderPath);
+    item.appendChild(icon);
+
+    // Children container
+    const children = document.createElement('div');
+    children.className = 'kb-tree-children collapsed';
+
+    item.addEventListener('click', async () => {
+      const isExpanded = kbExpandedDirs.has(entry.path);
+      if (isExpanded) {
+        kbExpandedDirs.delete(entry.path);
+        chevron.classList.remove('expanded');
+        children.classList.add('collapsed');
+      } else {
+        kbExpandedDirs.add(entry.path);
+        chevron.classList.add('expanded');
+        children.classList.remove('collapsed');
+
+        // Lazy load children if not cached
+        if (!kbTreeCache.has(entry.path)) {
+          const data = await loadKbTree(entry.path);
+          if (data) {
+            children.innerHTML = '';
+            for (const child of data.entries) {
+              children.appendChild(createKbTreeNode(child, depth + 1));
+            }
+          }
+        } else if (children.children.length === 0) {
+          const entries = kbTreeCache.get(entry.path);
+          for (const child of entries) {
+            children.appendChild(createKbTreeNode(child, depth + 1));
+          }
+        }
+      }
+    });
+
+    // Name
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'kb-tree-name';
+    nameSpan.textContent = entry.name;
+    item.appendChild(nameSpan);
+
+    wrapper.appendChild(item);
+    wrapper.appendChild(children);
+  } else {
+    // File icon
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('class', 'kb-tree-icon');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('width', '16');
+    icon.setAttribute('height', '16');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.setAttribute('stroke-width', '2');
+    icon.setAttribute('stroke-linecap', 'round');
+    icon.setAttribute('stroke-linejoin', 'round');
+    const filePath1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    filePath1.setAttribute('d', 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z');
+    const filePath2 = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    filePath2.setAttribute('points', '14 2 14 8 20 8');
+    icon.appendChild(filePath1);
+    icon.appendChild(filePath2);
+    item.appendChild(icon);
+
+    // Name
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'kb-tree-name';
+    nameSpan.textContent = entry.name;
+    item.appendChild(nameSpan);
+
+    item.addEventListener('click', () => {
+      if (kbIsEditing) {
+        if (!confirm('You have unsaved changes. Discard them?')) return;
+        kbIsEditing = false;
+      }
+      loadKbFile(entry.path);
+    });
+
+    wrapper.appendChild(item);
+  }
+
+  return wrapper;
+}
+
+async function loadKbFile(filePath) {
+  try {
+    const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
+    const data = await res.json();
+    if (data.error) return;
+
+    kbCurrentFile = data;
+    kbIsEditing = false;
+
+    document.getElementById('kb-title').textContent = data.name;
+    document.getElementById('kb-welcome').style.display = 'none';
+    document.getElementById('kb-rendered').style.display = '';
+    document.getElementById('kb-edit-btn').style.display = '';
+    document.getElementById('kb-editor').style.display = 'none';
+    document.getElementById('kb-save-btn').style.display = 'none';
+    document.getElementById('kb-cancel-btn').style.display = 'none';
+
+    // Render markdown
+    document.getElementById('kb-rendered').innerHTML = renderKbMarkdown(data.content);
+
+    // Highlight active file in tree
+    document.querySelectorAll('.kb-tree-item.active').forEach(el => el.classList.remove('active'));
+    const activeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(filePath)}"]`);
+    if (activeItem) activeItem.classList.add('active');
+
+    // Close sidebar on mobile
+    if (sidebar.classList.contains('open')) toggleSidebar();
+
+    // Scroll to top
+    document.getElementById('kb-content').scrollTop = 0;
+  } catch (err) {
+    console.error('Failed to load KB file:', err);
+  }
+}
+
+function renderKbMarkdown(text) {
+  // Extract and render frontmatter separately
+  let body = text;
+  let frontmatterHtml = '';
+  const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (fmMatch) {
+    frontmatterHtml = `<div class="kb-frontmatter">${escapeHtml(fmMatch[1])}</div>`;
+    body = text.slice(fmMatch[0].length);
+  }
+
+  // Pre-process wiki-links into HTML spans before marked parsing
+  const withLinks = body.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
+    const parts = inner.split('|');
+    const target = parts[0].trim();
+    const display = (parts[1] || parts[0]).trim();
+    const escaped = target.replace(/"/g, '&quot;');
+    return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)">${escapeHtml(display)}</span>`;
+  });
+
+  // Parse with marked (reuse existing marked instance)
+  const rendered = marked.parse(withLinks);
+  return frontmatterHtml + rendered;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function navigateWikiLink(el) {
+  const target = el.dataset.target;
+  const contextPath = kbCurrentFile?.path || '';
+  try {
+    const res = await fetch(`/api/vault/kb/resolve-link?name=${encodeURIComponent(target)}&context=${encodeURIComponent(contextPath)}`);
+    const data = await res.json();
+    if (data.path) {
+      loadKbFile(data.path);
+    } else {
+      // Brief visual feedback for broken link
+      el.style.color = 'var(--error)';
+      setTimeout(() => { el.style.color = ''; }, 1500);
+    }
+  } catch (err) {
+    console.error('Failed to resolve wiki-link:', err);
+  }
+}
+
+function toggleKbEdit() {
+  if (!kbCurrentFile) return;
+  kbIsEditing = true;
+
+  document.getElementById('kb-rendered').style.display = 'none';
+  document.getElementById('kb-editor').style.display = 'block';
+  document.getElementById('kb-editor').value = kbCurrentFile.content;
+  document.getElementById('kb-edit-btn').style.display = 'none';
+  document.getElementById('kb-save-btn').style.display = '';
+  document.getElementById('kb-cancel-btn').style.display = '';
+
+  // Focus editor
+  document.getElementById('kb-editor').focus();
+}
+
+function cancelKbEdit() {
+  kbIsEditing = false;
+
+  document.getElementById('kb-rendered').style.display = '';
+  document.getElementById('kb-editor').style.display = 'none';
+  document.getElementById('kb-edit-btn').style.display = '';
+  document.getElementById('kb-save-btn').style.display = 'none';
+  document.getElementById('kb-cancel-btn').style.display = 'none';
+}
+
+async function saveKbFile() {
+  const content = document.getElementById('kb-editor').value;
+  try {
+    const res = await fetch('/api/vault/kb/file', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: kbCurrentFile.path, content }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      kbCurrentFile.content = content;
+      cancelKbEdit();
+      // Re-render with updated content
+      document.getElementById('kb-rendered').innerHTML = renderKbMarkdown(content);
+    } else {
+      alert('Save failed: ' + (data.error || 'Unknown error'));
+    }
+  } catch (err) {
+    console.error('Failed to save KB file:', err);
+    alert('Save failed: ' + err.message);
+  }
 }

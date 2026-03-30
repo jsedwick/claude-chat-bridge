@@ -70,4 +70,187 @@ router.get('/issues', (_req: Request, res: Response) => {
   }
 });
 
+// --- KB Browser endpoints ---
+
+function validateKbPath(filePath: string): string | null {
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(config.obsidianRoot + path.sep) && resolved !== config.obsidianRoot) {
+    return null;
+  }
+  return resolved;
+}
+
+// List directory contents for KB tree
+router.get('/kb/tree', (req: Request, res: Response) => {
+  const reqPath = (req.query.path as string) || config.obsidianRoot;
+  const resolved = validateKbPath(reqPath);
+  if (!resolved) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) {
+      res.status(400).json({ error: 'Not a directory' });
+      return;
+    }
+
+    const entries = fs.readdirSync(resolved, { withFileTypes: true });
+
+    // At root level, only show configured vaults
+    const isRoot = resolved === config.obsidianRoot;
+
+    const items = entries
+      .filter(e => {
+        if (e.name.startsWith('.')) return false;
+        if (isRoot) return e.isDirectory() && config.obsidianVaults.includes(e.name);
+        if (e.isFile()) return e.name.endsWith('.md');
+        return e.isDirectory();
+      })
+      .map(e => ({
+        name: e.isFile() ? e.name.replace(/\.md$/, '') : e.name,
+        path: path.join(resolved, e.name),
+        type: e.isDirectory() ? 'directory' as const : 'file' as const,
+      }))
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    const parent = resolved === config.obsidianRoot ? null : path.dirname(resolved);
+    res.json({
+      path: resolved,
+      name: path.basename(resolved),
+      parent,
+      entries: items,
+    });
+  } catch {
+    res.status(404).json({ error: 'Directory not found' });
+  }
+});
+
+// Read a markdown file
+router.get('/kb/file', (req: Request, res: Response) => {
+  const filePath = req.query.path as string;
+  if (!filePath) {
+    res.status(400).json({ error: 'Path required' });
+    return;
+  }
+
+  const resolved = validateKbPath(filePath);
+  if (!resolved || !resolved.endsWith('.md')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  try {
+    const content = fs.readFileSync(resolved, 'utf-8');
+    res.json({
+      path: resolved,
+      name: path.basename(resolved, '.md'),
+      content,
+    });
+  } catch {
+    res.status(404).json({ error: 'File not found' });
+  }
+});
+
+// Write to an existing markdown file
+router.put('/kb/file', (req: Request, res: Response) => {
+  const { path: filePath, content } = req.body;
+  if (!filePath || typeof content !== 'string') {
+    res.status(400).json({ error: 'Path and content required' });
+    return;
+  }
+
+  const resolved = validateKbPath(filePath);
+  if (!resolved || !resolved.endsWith('.md')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (!fs.existsSync(resolved)) {
+    res.status(404).json({ error: 'File does not exist' });
+    return;
+  }
+
+  try {
+    fs.writeFileSync(resolved, content, 'utf-8');
+    // Clear wiki-link cache since file changed
+    wikiLinkCache = null;
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Wiki-link filename index cache
+let wikiLinkCache: Map<string, string> | null = null;
+
+function buildWikiLinkIndex(): Map<string, string> {
+  const index = new Map<string, string>();
+
+  function scanDir(dir: string) {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const fullPath = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          scanDir(fullPath);
+        } else if (e.name.endsWith('.md')) {
+          const name = e.name.replace(/\.md$/, '').toLowerCase();
+          // First match wins — later duplicates don't overwrite
+          if (!index.has(name)) {
+            index.set(name, fullPath);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  for (const vault of config.obsidianVaults) {
+    scanDir(path.join(config.obsidianRoot, vault));
+  }
+  return index;
+}
+
+// Resolve a wiki-link to a file path
+router.get('/kb/resolve-link', (req: Request, res: Response) => {
+  const name = (req.query.name as string || '').trim();
+  const context = (req.query.context as string) || '';
+
+  if (!name) {
+    res.status(400).json({ error: 'Name required' });
+    return;
+  }
+
+  const target = name.toLowerCase();
+
+  // 1. Check same directory as context file
+  if (context) {
+    const contextDir = path.dirname(context);
+    const sameDirPath = path.join(contextDir, name + '.md');
+    const resolved = validateKbPath(sameDirPath);
+    if (resolved && fs.existsSync(resolved)) {
+      res.json({ path: resolved, name: path.basename(resolved, '.md') });
+      return;
+    }
+  }
+
+  // 2. Search all vaults via cached index
+  if (!wikiLinkCache) {
+    wikiLinkCache = buildWikiLinkIndex();
+  }
+
+  const found = wikiLinkCache.get(target);
+  if (found && fs.existsSync(found)) {
+    res.json({ path: found, name: path.basename(found, '.md') });
+    return;
+  }
+
+  res.status(404).json({ error: 'Not found' });
+});
+
 export default router;
