@@ -491,7 +491,7 @@ function renderSessionItem(s, isArchived) {
     <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''}"
          onclick="switchSession('${s.id}')">
       ${actions}
-      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${s.closedAt ? '<span class="session-closed-badge" title="Session closed">&#10003;</span>' : ''}${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${s.closedAt ? '<span class="session-closed-badge" title="Session closed">&#10003;</span>' : s.usedCodeFile ? '<span class="session-code-badge" title="Code changes made">&lt;/&gt;</span>' : ''}${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} msgs</span>

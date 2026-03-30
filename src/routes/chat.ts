@@ -84,6 +84,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           if (toolData.name?.endsWith('__close_session')) {
             updateSession(sessionId, { closedAt: new Date().toISOString() });
           }
+          // Detect code_file MCP tool call — mark session as having code activity
+          if (toolData.name?.endsWith('__code_file')) {
+            updateSession(sessionId, { usedCodeFile: true });
+          }
         } catch {}
         // Save accumulated text segment before tool call (preserves interleaving)
         if (assistantText) {
