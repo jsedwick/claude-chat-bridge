@@ -216,6 +216,15 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
+        // Log raw events for Bash tool use debugging
+        if (parsed.type === 'user' && parsed.message?.content?.some((b: any) => b.type === 'tool_result')) {
+          for (const b of parsed.message.content) {
+            if (b.type === 'tool_result') {
+              const preview = typeof b.content === 'string' ? b.content.substring(0, 300) : JSON.stringify(b.content)?.substring(0, 300);
+              console.log(`[debug:${appSessionId.slice(0,8)}] RAW_TOOL_RESULT id=${b.tool_use_id?.slice(0,8)} is_error=${b.is_error} preview=${preview}`);
+            }
+          }
+        }
         // Reset streamedText when we see a user message (tool_result), which marks
         // the boundary between assistant turns. Do NOT reset on assistant events —
         // with --include-partial-messages, partial assistant snapshots arrive during
@@ -232,6 +241,13 @@ export function runClaude(options: ClaudeRunnerOptions): void {
             if (event.type === 'text') {
               console.log(`[debug:${appSessionId.slice(0,8)}] TEXT_EMIT len=${(event.data as string).length} streamed=${hasStreamedText(appSessionId)}`);
               markStreamedText(appSessionId);
+            } else if (event.type === 'tool_use') {
+              const toolData = JSON.parse(event.data as string);
+              console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_USE name=${toolData.name} id=${toolData.id?.slice(0,8)}`);
+            } else if (event.type === 'tool_result') {
+              const resultData = JSON.parse(event.data as string);
+              const preview = typeof resultData.content === 'string' ? resultData.content.substring(0, 200) : JSON.stringify(resultData.content)?.substring(0, 200);
+              console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_RESULT id=${resultData.tool_use_id?.slice(0,8)} preview=${preview}`);
             }
             emitToStream(appSessionId, event);
           }
@@ -337,6 +353,14 @@ export function runClaude(options: ClaudeRunnerOptions): void {
             const events = Array.isArray(result) ? result : [result];
             for (const event of events) {
               if (event.type === 'text') markStreamedText(appSessionId);
+              else if (event.type === 'tool_use') {
+                const toolData = JSON.parse(event.data as string);
+                console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_USE name=${toolData.name} id=${toolData.id?.slice(0,8)}`);
+              } else if (event.type === 'tool_result') {
+                const resultData = JSON.parse(event.data as string);
+                const preview = typeof resultData.content === 'string' ? resultData.content.substring(0, 200) : JSON.stringify(resultData.content)?.substring(0, 200);
+                console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_RESULT id=${resultData.tool_use_id?.slice(0,8)} preview=${preview}`);
+              }
               emitToStream(appSessionId, event);
             }
           }

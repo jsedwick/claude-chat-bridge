@@ -42,7 +42,7 @@ export function isBashAskCommand(toolInput: Record<string, unknown>): boolean {
 }
 
 export function isAutoAllowed(toolName: string): boolean {
-  // Auto-allow everything — only Bash git add/commit/push are gated (handled in route)
+  // Auto-allow everything — specific Bash commands are gated via BASH_ASK_PATTERNS (handled in route)
   return AUTO_ALLOW_ALL;
 }
 
@@ -93,9 +93,19 @@ export function resolvePermission(requestId: string, decision: 'allow' | 'deny',
   clearTimeout(pending.timer);
   pendingPermissions.delete(requestId);
 
-  // If allowAll, remember this tool for the session
+  // If allowAll, remember this tool for the session and auto-resolve other pending requests
   if (allowAll && decision === 'allow') {
     addSessionAllow(pending.request.appSessionId, pending.request.toolName);
+
+    // Auto-resolve all other pending permission requests for the same session
+    for (const [id, other] of pendingPermissions) {
+      if (other.request.appSessionId === pending.request.appSessionId) {
+        clearTimeout(other.timer);
+        pendingPermissions.delete(id);
+        other.resolve('allow');
+        console.log(`[permissions] auto-resolved pending request ${id} (allowAll cascade)`);
+      }
+    }
   }
 
   pending.resolve(decision);

@@ -34,6 +34,8 @@ command_preview=$(echo "$tool_input" | jq -r '.command // "(no command)"' | head
 echo "[hook $(date +%H:%M:%S)] bridge=$CHAT_BRIDGE_SESSION tool=$tool_name cmd=$command_preview decision=$decision" >> /tmp/permission-hook.log
 
 if [ "$decision" = "allow" ]; then
+  # Explicit allow output — required to override permissions.ask entries in settings.json
+  echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"decision\":{\"behavior\":\"allow\"}}}"
   exit 0
 else
   # Output deny decision in hook format

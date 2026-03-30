@@ -848,8 +848,11 @@ function renderToolInput(toolName, input) {
 
   // code_file edits — show diff
   if (name.includes('code_file') && input.operation === 'edit' && input.old_string) {
-    const file = input.file_path ? input.file_path.split('/').slice(-2).join('/') : '';
+    const fileLabel = input.file_path
+      ? (isVaultPath(input.file_path) ? renderVaultFileLabel(input.file_path) : `<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`)
+      : '';
     const diffLines = [];
+    const file = input.file_path ? input.file_path.split('/').slice(-2).join('/') : '';
     if (file) diffLines.push(`@@ ${file} @@`);
     for (const line of (input.old_string || '').split('\n')) {
       diffLines.push(`-${line}`);
@@ -857,20 +860,24 @@ function renderToolInput(toolName, input) {
     for (const line of (input.content || '').split('\n')) {
       diffLines.push(`+${line}`);
     }
-    return `<pre class="tool-diff">${renderDiffBlock(diffLines.join('\n'))}</pre>`;
+    return `${fileLabel}<pre class="tool-diff">${renderDiffBlock(diffLines.join('\n'))}</pre>`;
   }
 
   // code_file write — show content
   if (name.includes('code_file') && input.operation === 'write' && input.content) {
-    const file = input.file_path ? input.file_path.split('/').slice(-2).join('/') : '';
+    const fileLabel = input.file_path
+      ? (isVaultPath(input.file_path) ? renderVaultFileLabel(input.file_path) : `<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`)
+      : '';
     const lang = (input.file_path || '').split('.').pop() || '';
-    return `<div class="tool-file-label">${escapeHtml(file)}</div><pre><code class="language-${lang}">${escapeHtml(input.content)}</code></pre>`;
+    return `${fileLabel}<pre><code class="language-${lang}">${escapeHtml(input.content)}</code></pre>`;
   }
 
   // update_document — show content/strategy
   if (name.includes('update_document')) {
     const parts = [];
-    if (input.file_path) parts.push(`<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`);
+    if (input.file_path) {
+      parts.push(isVaultPath(input.file_path) ? renderVaultFileLabel(input.file_path) : `<div class="tool-file-label">${escapeHtml(input.file_path.split('/').slice(-2).join('/'))}</div>`);
+    }
     if (input.strategy) parts.push(`<div class="tool-meta">Strategy: ${escapeHtml(input.strategy)}</div>`);
     if (input.content) parts.push(`<pre><code>${escapeHtml(input.content)}</code></pre>`);
     return parts.join('');
@@ -912,7 +919,9 @@ function renderToolOutput(content) {
   const maxLen = 5000;
   const truncated = text.length > maxLen;
   const display = truncated ? text.slice(0, maxLen) : text;
-  return `<pre><code>${escapeHtml(display)}</code></pre>${truncated ? '<div class="tool-meta">… output truncated</div>' : ''}`;
+  const escaped = escapeHtml(display);
+  const linked = linkifyVaultPaths(escaped);
+  return `<pre><code>${linked}</code></pre>${truncated ? '<div class="tool-meta">… output truncated</div>' : ''}`;
 }
 
 function addToolOutput(toolUseId, content) {
@@ -1544,7 +1553,13 @@ function renderMarkdown(text) {
     return html;
   }
 
-  return marked.parse(text);
+  let html = marked.parse(text);
+  // Linkify vault file paths in rendered markdown output
+  html = html.replace(/(\/[^<\s"']+\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^<\s"':)]+\.md)/g, (match) => {
+    const short = match.split('/').slice(-3).join('/');
+    return `<span class="tool-file-link" onclick="navigateToKbFile('${match.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
+  });
+  return html;
 }
 
 // Copy code block
@@ -2110,6 +2125,33 @@ let kbIsEditing = false;
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
+
+// Vault path detection regex — matches paths inside the Obsidian root
+const VAULT_PATH_RE = /\/Documents\/Obsidian\/(AI-Work|AI-Home|Work|Home)\//;
+
+function isVaultPath(filePath) {
+  return VAULT_PATH_RE.test(filePath);
+}
+
+function navigateToKbFile(filePath) {
+  switchView('kb');
+  loadKbFile(filePath);
+}
+
+function renderVaultFileLabel(filePath) {
+  const shortPath = filePath.split('/').slice(-2).join('/');
+  return `<div class="tool-file-label tool-file-link" onclick="navigateToKbFile('${filePath.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(shortPath)}</div>`;
+}
+
+function linkifyVaultPaths(escapedText) {
+  // Match absolute vault file paths in already-escaped tool output
+  return escapedText.replace(/(\/[^\s&lt;*]+\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^\s&lt;*:)]+\.md)/g, (match) => {
+    // Unescape HTML entities back to real path for onclick
+    const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    const short = realPath.split('/').slice(-3).join('/');
+    return `<span class="tool-file-link" onclick="navigateToKbFile('${realPath.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
+  });
+}
 
 async function loadKbTree(dirPath) {
   const url = dirPath

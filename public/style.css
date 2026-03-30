@@ -1084,6 +1084,25 @@ pre.streaming {
   font-family: var(--font-mono);
 }
 
+.tool-file-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.tool-file-link:hover {
+  color: var(--accent-hover, #7bb8ff);
+  text-decoration-style: solid;
+}
+
+/* Inline vault links in assistant markdown */
+.message-assistant .tool-file-link {
+  font-size: inherit;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
 .tool-meta {
   font-size: 11px;
   color: var(--text-secondary);
