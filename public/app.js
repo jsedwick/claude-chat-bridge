@@ -1550,14 +1550,26 @@ function renderMarkdown(text) {
       after = after.replace(/<\/div>\s*$/, '');
       html = before + after;
     }
-    return html;
+    return linkifyVaultPathsInHtml(html);
   }
 
   let html = marked.parse(text);
-  // Linkify vault file paths in rendered markdown output
-  html = html.replace(/(\/[^<\s"']+\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^<\s"':)]+\.md)/g, (match) => {
+  return linkifyVaultPathsInHtml(html);
+}
+
+function linkifyVaultPathsInHtml(html) {
+  // Match absolute vault paths (allow spaces/commas in filenames, non-greedy to .md)
+  html = html.replace(/(\/[^<"']*?\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^<"']*?\.md)/g, (match) => {
     const short = match.split('/').slice(-3).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${match.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
+  });
+  // Match relative vault paths (e.g. "Work/Meeting Notes/file.md", "AI-Work/topics/file.md")
+  // Allow spaces/commas in paths, non-greedy match to .md
+  // Lookbehind excludes paths inside href/onclick attributes (preceded by / " ')
+  html = html.replace(/(?<![/"'])(?<!\w)((?:AI-Work|AI-Home|Work|Home)\/[^<"'\n]*?\.md)/g, (match) => {
+    const resolved = resolveVaultPath(match);
+    const short = match.split('/').slice(-3).join('/');
+    return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
   });
   return html;
 }
@@ -2126,31 +2138,50 @@ let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
 
-// Vault path detection regex — matches paths inside the Obsidian root
+// Vault path detection and linking
+const OBSIDIAN_ROOT = '/Users/jsedwick/Documents/Obsidian';
+const VAULT_NAMES = ['AI-Work', 'AI-Home', 'Work', 'Home'];
 const VAULT_PATH_RE = /\/Documents\/Obsidian\/(AI-Work|AI-Home|Work|Home)\//;
+const VAULT_NAMES_RE = new RegExp(`^(?:${VAULT_NAMES.join('|')})\\/`);
 
 function isVaultPath(filePath) {
-  return VAULT_PATH_RE.test(filePath);
+  return VAULT_PATH_RE.test(filePath) || VAULT_NAMES_RE.test(filePath);
+}
+
+function resolveVaultPath(filePath) {
+  // If already absolute, return as-is
+  if (filePath.startsWith('/')) return filePath;
+  // If relative vault path (e.g. "Work/Meeting Notes/..."), prepend root
+  if (VAULT_NAMES_RE.test(filePath)) return `${OBSIDIAN_ROOT}/${filePath}`;
+  return filePath;
 }
 
 function navigateToKbFile(filePath) {
   switchView('kb');
-  loadKbFile(filePath);
+  loadKbFile(resolveVaultPath(filePath));
 }
 
 function renderVaultFileLabel(filePath) {
   const shortPath = filePath.split('/').slice(-2).join('/');
-  return `<div class="tool-file-label tool-file-link" onclick="navigateToKbFile('${filePath.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(shortPath)}</div>`;
+  const resolved = resolveVaultPath(filePath);
+  return `<div class="tool-file-label tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(shortPath)}</div>`;
 }
 
 function linkifyVaultPaths(escapedText) {
-  // Match absolute vault file paths in already-escaped tool output
-  return escapedText.replace(/(\/[^\s&lt;*]+\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^\s&lt;*:)]+\.md)/g, (match) => {
-    // Unescape HTML entities back to real path for onclick
+  // Match absolute vault file paths in already-escaped tool output (allow spaces/commas)
+  escapedText = escapedText.replace(/(\/[^&lt;\n]*?\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^&lt;\n]*?\.md)/g, (match) => {
     const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
     const short = realPath.split('/').slice(-3).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${realPath.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
   });
+  // Match relative vault paths (e.g. "Work/Meeting Notes/file.md")
+  escapedText = escapedText.replace(/(?<![\/\w])((?:AI-Work|AI-Home|Work|Home)\/[^&lt;\n]*?\.md)/g, (match) => {
+    const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    const resolved = resolveVaultPath(realPath);
+    const short = realPath.split('/').slice(-3).join('/');
+    return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
+  });
+  return escapedText;
 }
 
 async function loadKbTree(dirPath) {
