@@ -680,7 +680,46 @@ html, body {
   margin-bottom: 8px;
 }
 
-.welcome-sessions {
+.welcome-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.welcome-tab {
+  padding: 8px 20px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.welcome-tab:hover {
+  color: var(--text-secondary);
+}
+
+.welcome-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.welcome-tab-content {
+  display: none;
+}
+
+.welcome-tab-content.active {
+  display: block;
+}
+
+.welcome-sessions,
+.welcome-topics {
   text-align: left;
   max-width: 400px;
   margin: 0 auto;
@@ -2431,6 +2470,13 @@ pre.streaming {
 .kb-action-btn:hover {
   background: var(--bg-secondary);
   color: var(--text-primary);
+}
+
+.kb-continue-session-wrapper {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 0 4px 0;
+  margin-bottom: 12px;
 }
 
 .kb-continue-session-btn {

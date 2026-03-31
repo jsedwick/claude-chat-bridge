@@ -95,10 +95,12 @@
 
     <div id="messages" class="messages">
       <div id="welcome" class="welcome-message">
-        <h2>Claude Chat Bridge</h2>
-        <p>Chat with Claude + your Obsidian vault from any device.</p>
-        <p class="welcome-hint">Select a directory and start a new chat from the sidebar, or continue a recent session below.</p>
-        <div id="welcome-sessions" class="welcome-sessions"></div>
+        <div class="welcome-tabs">
+          <button class="welcome-tab active" data-tab="sessions" onclick="switchWelcomeTab('sessions')">Sessions</button>
+          <button class="welcome-tab" data-tab="topics" onclick="switchWelcomeTab('topics')">Topics</button>
+        </div>
+        <div id="welcome-sessions" class="welcome-sessions welcome-tab-content active"></div>
+        <div id="welcome-topics" class="welcome-topics welcome-tab-content" style="display:none"></div>
       </div>
     </div>
 
@@ -151,12 +153,6 @@
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
       <h1 id="kb-title" class="chat-title" style="cursor:default">Knowledge Base</h1>
       <div class="kb-header-actions">
-        <button id="kb-continue-session-btn" class="kb-continue-session-btn" style="display:none" onclick="continueFromSession()" aria-label="Continue Session">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          <span>Continue Session</span>
-        </button>
         <button id="kb-edit-btn" class="kb-action-btn" style="display:none" onclick="toggleKbEdit()" aria-label="Edit">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -178,9 +174,28 @@
     </header>
     <div id="kb-content" class="kb-content">
       <div id="kb-welcome" class="welcome-message">
-        <h2>Knowledge Base</h2>
-        <p>Browse and edit your Obsidian vault files.</p>
-        <p class="welcome-hint">Select a file from the sidebar to get started.</p>
+        <div class="welcome-tabs">
+          <button class="welcome-tab active" data-tab="kb-sessions" onclick="switchKbWelcomeTab('sessions')">Sessions</button>
+          <button class="welcome-tab" data-tab="kb-topics" onclick="switchKbWelcomeTab('topics')">Topics</button>
+        </div>
+        <div id="kb-welcome-sessions" class="welcome-sessions welcome-tab-content active"></div>
+        <div id="kb-welcome-topics" class="welcome-topics welcome-tab-content" style="display:none"></div>
+      </div>
+      <div id="kb-continue-session-wrapper" class="kb-continue-session-wrapper" style="display:none">
+        <button id="kb-continue-session-btn" class="kb-continue-session-btn" onclick="continueFromSession()" aria-label="Continue Session">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          <span>Continue Session</span>
+        </button>
+      </div>
+      <div id="kb-start-from-topic-wrapper" class="kb-continue-session-wrapper" style="display:none">
+        <button id="kb-start-from-topic-btn" class="kb-continue-session-btn" onclick="startFromTopic()" aria-label="Start Session from Topic">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          <span>Start Session from Topic</span>
+        </button>
       </div>
       <div id="kb-rendered" class="kb-rendered" style="display:none"></div>
       <textarea id="kb-editor" class="kb-editor" style="display:none"></textarea>

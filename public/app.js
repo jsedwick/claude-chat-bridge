@@ -113,8 +113,9 @@ async function setMode(mode) {
       } catch {}
     }
 
-    // Reload sidebar with filtered sessions
+    // Reload sidebar and welcome screen with filtered sessions
     loadSessions();
+    loadWelcomeSessions();
   } catch (err) {
     console.error('Failed to switch mode:', err);
   }
@@ -744,18 +745,45 @@ document.addEventListener('click', (e) => {
 buildActionMenu();
 loadWelcomeSessions();
 
+function switchWelcomeTab(tab) {
+  const welcome = document.getElementById('welcome');
+  welcome.querySelectorAll('.welcome-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('welcome-sessions').style.display = tab === 'sessions' ? '' : 'none';
+  document.getElementById('welcome-sessions').classList.toggle('active', tab === 'sessions');
+  document.getElementById('welcome-topics').style.display = tab === 'topics' ? '' : 'none';
+  document.getElementById('welcome-topics').classList.toggle('active', tab === 'topics');
+  if (tab === 'topics' && !document.getElementById('welcome-topics').dataset.loaded) {
+    loadWelcomeTopics();
+  }
+}
+
+function switchKbWelcomeTab(tab) {
+  const kbWelcome = document.getElementById('kb-welcome');
+  kbWelcome.querySelectorAll('.welcome-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'kb-' + tab));
+  document.getElementById('kb-welcome-sessions').style.display = tab === 'sessions' ? '' : 'none';
+  document.getElementById('kb-welcome-sessions').classList.toggle('active', tab === 'sessions');
+  document.getElementById('kb-welcome-topics').style.display = tab === 'topics' ? '' : 'none';
+  document.getElementById('kb-welcome-topics').classList.toggle('active', tab === 'topics');
+  if (tab === 'topics' && !document.getElementById('kb-welcome-topics').dataset.loaded) {
+    loadWelcomeTopics();
+  }
+}
+
 async function loadWelcomeSessions() {
-  const container = document.getElementById('welcome-sessions');
-  if (!container) return;
+  const containers = [
+    document.getElementById('welcome-sessions'),
+    document.getElementById('kb-welcome-sessions'),
+  ].filter(Boolean);
+  if (containers.length === 0) return;
   try {
     const res = await fetch(`/api/vault/sessions?currentDir=${encodeURIComponent(currentWorkingDir)}`);
     const data = await res.json();
     const groups = data && data.groups;
     if (!groups || groups.length === 0) {
-      container.innerHTML = '';
+      containers.forEach(c => c.innerHTML = '');
       return;
     }
-    container.innerHTML = `<h3 class="welcome-sessions-title">Recent Sessions</h3>` +
+    const html = `<h3 class="welcome-sessions-title">Recent Sessions</h3>` +
       groups.map(group => {
         const header = `<div class="welcome-group-header">${escapeHtml(group.dirLabel)}${group.current ? ' <span class="welcome-group-current">(current)</span>' : ''}</div>`;
         const items = group.sessions.map(s => {
@@ -766,8 +794,36 @@ async function loadWelcomeSessions() {
         }).join('');
         return header + items;
       }).join('');
+    containers.forEach(c => c.innerHTML = html);
   } catch {
-    container.innerHTML = '';
+    containers.forEach(c => c.innerHTML = '');
+  }
+}
+
+async function loadWelcomeTopics() {
+  const containers = [
+    document.getElementById('welcome-topics'),
+    document.getElementById('kb-welcome-topics'),
+  ].filter(Boolean);
+  if (containers.length === 0) return;
+  try {
+    const res = await fetch('/api/vault/topics');
+    const data = await res.json();
+    const topics = data && data.topics;
+    if (!topics || topics.length === 0) {
+      containers.forEach(c => { c.innerHTML = '<p class="welcome-hint">No topics found.</p>'; });
+      return;
+    }
+    const html = `<h3 class="welcome-sessions-title">Recent Topics</h3>` +
+      topics.map(t => {
+        return `<button class="welcome-session-item" onclick="openSessionInKb('${t.vaultPath.replace(/'/g, "\\'")}')">
+          <span class="welcome-session-name">${escapeHtml(t.name.replace(/-/g, ' '))}</span>
+          <span class="welcome-session-date">${t.modified}</span>
+        </button>`;
+      }).join('');
+    containers.forEach(c => { c.innerHTML = html; c.dataset.loaded = '1'; });
+  } catch {
+    containers.forEach(c => { c.innerHTML = ''; });
   }
 }
 
@@ -3073,6 +3129,57 @@ function parseSessionMeta(content) {
   };
 }
 
+function parseTopicMeta(content) {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return null;
+  const fm = fmMatch[1];
+
+  if (!/category:\s*topic/.test(fm)) return null;
+
+  const titleMatch = fm.match(/title:\s*["']?([^"'\n]+)["']?/);
+  const topicName = titleMatch ? titleMatch[1].trim() : null;
+
+  return { topicName };
+}
+
+async function startFromTopic() {
+  const btn = document.getElementById('kb-start-from-topic-btn');
+  const topicName = btn.dataset.topicName;
+  const topicPath = btn.dataset.topicPath;
+
+  try {
+    // Create a new session using the last selected working directory (or none)
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingDir: selectedNewChatDir || currentWorkingDir }),
+    });
+    const session = await res.json();
+
+    // Switch to chat view
+    currentSessionId = session.id;
+    chatTitle.textContent = session.name;
+    currentWorkingDir = session.workingDir || '';
+    welcomeEl.style.display = 'none';
+    inputArea.style.display = 'block';
+    document.querySelector('.dir-picker-wrapper').style.display = '';
+    clearMessages();
+    loadSessions();
+    switchView('sessions');
+
+    // Auto-send /work or /personal based on current mode
+    const modeCommand = currentMode === 'personal' ? '/personal' : '/work';
+    messageInput.value = modeCommand;
+    await sendMessage();
+
+    // Ask Claude to load the topic context
+    messageInput.value = `I want to work on the topic: "${topicName}". Please use get_topic_context to load the full context for this topic, then summarize what's documented and ask what I'd like to do.`;
+    sendMessage();
+  } catch (err) {
+    console.error('Failed to start session from topic:', err);
+  }
+}
+
 async function continueFromSession() {
   const btn = document.getElementById('kb-continue-session-btn');
   const workingDir = btn.dataset.workingDir;
@@ -3142,14 +3249,27 @@ async function loadKbFile(filePath) {
 
     // Detect session files and show/hide Continue Session button
     const continueBtn = document.getElementById('kb-continue-session-btn');
+    const continueWrapper = document.getElementById('kb-continue-session-wrapper');
     const sessionMeta = parseSessionMeta(data.content);
     if (sessionMeta) {
-      continueBtn.style.display = '';
+      continueWrapper.style.display = '';
       continueBtn.dataset.workingDir = sessionMeta.workingDir || '';
       continueBtn.dataset.sessionId = sessionMeta.sessionId || '';
       continueBtn.dataset.sessionName = sessionMeta.sessionName || data.name;
     } else {
-      continueBtn.style.display = 'none';
+      continueWrapper.style.display = 'none';
+    }
+
+    // Detect topic files and show/hide Start Session from Topic button
+    const topicBtn = document.getElementById('kb-start-from-topic-btn');
+    const topicWrapper = document.getElementById('kb-start-from-topic-wrapper');
+    const topicMeta = parseTopicMeta(data.content);
+    if (topicMeta) {
+      topicWrapper.style.display = '';
+      topicBtn.dataset.topicName = topicMeta.topicName || data.name;
+      topicBtn.dataset.topicPath = data.path;
+    } else {
+      topicWrapper.style.display = 'none';
     }
 
     // Render markdown

@@ -136,10 +136,11 @@ router.get('/sessions', (req: Request, res: Response) => {
   const vaultPath = getVaultPath(getMode());
   const sessions = scanVaultSessions(vaultPath);
 
-  // Group by workingDir
+  // Group by workingDir (skip sessions without one)
   const groups = new Map<string, VaultSession[]>();
   for (const s of sessions) {
     const dir = s.workingDir;
+    if (!dir) continue;
     if (!groups.has(dir)) groups.set(dir, []);
     groups.get(dir)!.push(s);
   }
@@ -163,7 +164,7 @@ router.get('/sessions', (req: Request, res: Response) => {
 
   const result = topDirs.map(dir => ({
     dir,
-    dirLabel: dir ? path.basename(dir) : 'General',
+    dirLabel: path.basename(dir),
     current: dir === currentDir,
     sessions: groups.get(dir)!.map(s => ({
       sessionId: s.sessionId,
@@ -174,6 +175,64 @@ router.get('/sessions', (req: Request, res: Response) => {
   }));
 
   res.json({ groups: result });
+});
+
+// List recent topics from vault
+interface VaultTopic {
+  name: string;
+  filePath: string;
+  modified: number;
+  category: string;
+}
+
+function scanVaultTopics(vaultPath: string): VaultTopic[] {
+  const topicsDir = path.join(vaultPath, 'topics');
+  const results: VaultTopic[] = [];
+
+  try {
+    const files = fs.readdirSync(topicsDir)
+      .filter(f => f.endsWith('.md'));
+
+    for (const file of files) {
+      try {
+        const filePath = path.join(topicsDir, file);
+        const stat = fs.statSync(filePath);
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        let category = 'topic';
+        if (fmMatch) {
+          const catMatch = fmMatch[1].match(/category:\s*["']?([^"'\n]+)["']?/);
+          if (catMatch) category = catMatch[1].trim();
+        }
+        results.push({
+          name: file.replace(/\.md$/, ''),
+          filePath,
+          modified: stat.mtimeMs,
+          category,
+        });
+      } catch {}
+    }
+  } catch {}
+
+  return results;
+}
+
+router.get('/topics', (_req: Request, res: Response) => {
+  const vaultPath = getVaultPath(getMode());
+  const topics = scanVaultTopics(vaultPath);
+
+  // Sort by most recently modified, take top 50
+  topics.sort((a, b) => b.modified - a.modified);
+  const top = topics.slice(0, 50);
+
+  res.json({
+    topics: top.map(t => ({
+      name: t.name,
+      vaultPath: t.filePath,
+      category: t.category,
+      modified: new Date(t.modified).toISOString().split('T')[0],
+    })),
+  });
 });
 
 // --- KB Browser endpoints ---
