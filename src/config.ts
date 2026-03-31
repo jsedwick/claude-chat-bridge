@@ -77,7 +77,7 @@ export function getObsidianRoot(): string {
 export function getObsidianVaults(): string[] {
   const vaults = readMcpVaults();
   if (vaults.length === 0) return [];
-  return vaults.map(v => v.name);
+  return vaults.map(v => path.basename(v.path));
 }
 
 export function getVaultPath(mode: Mode): string {
