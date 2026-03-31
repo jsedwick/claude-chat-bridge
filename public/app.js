@@ -426,10 +426,9 @@ const ACTION_MENU_ITEMS = [
   { label: 'Voice Dictation', icon: 'mic', action: 'voice', desktopOnly: true },
   { divider: true },
   { label: 'Workflow', icon: 'play', command: '/workflow', flyout: 'workflows' },
-  { label: 'Close Session', icon: 'check-circle', command: '/close' },
-  { label: 'Close (No Git)', icon: 'x-circle', command: '/close-no-git' },
+  { label: 'Close Session', icon: 'check-circle', command: '/close', flyout: 'close' },
   { divider: true },
-  { label: 'Sessions', icon: 'list', command: '/sessions', flyout: 'sessions' },
+  { label: 'Tasks', icon: 'check-square', command: '/tasks', flyout: 'tasks' },
   { label: 'Issue', icon: 'alert-triangle', command: '/issue', flyout: 'issues' },
 ];
 
@@ -438,19 +437,16 @@ const ACTION_ICONS = {
   play: '<polygon points="5 3 19 12 5 21 5 3"/>',
   'check-circle': '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
   'x-circle': '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
-  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  'check-square': '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
   folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   'alert-triangle': '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
 };
 
 async function fetchFlyoutData(type) {
+  if (type === 'tasks' || type === 'close') return null; // Static flyouts, no API needed
   try {
-    let url = `/api/vault/${type}`;
-    if (type === 'sessions') {
-      url += `?currentDir=${encodeURIComponent(currentWorkingDir)}`;
-    }
-    const res = await fetch(url);
+    const res = await fetch(`/api/vault/${type}`);
     if (!res.ok) return [];
     return await res.json();
   } catch { return []; }
@@ -505,26 +501,22 @@ async function showFlyout(wrapperEl, type) {
   const flyoutMenu = wrapperEl.querySelector('.flyout-menu');
   const command = wrapperEl.dataset.command;
 
-  // Grouped rendering for sessions
-  if (type === 'sessions') {
-    const groups = data && data.groups;
-    if (!groups || groups.length === 0) {
-      flyoutMenu.innerHTML = '<div class="flyout-empty">No sessions</div>';
-    } else {
-      flyoutMenu.innerHTML = groups.map(group => {
-        const header = `<div class="flyout-group-header">${escapeHtml(group.dirLabel)}${group.current ? ' <span class="flyout-group-current">(current)</span>' : ''}</div>`;
-        const items = group.sessions.map(s => {
-          const onclick = s.vaultPath
-            ? `switchView('kb'); loadKbFile('${s.vaultPath.replace(/'/g, "\\'")}'); closeActionMenu();`
-            : `closeActionMenu();`;
-          return `<button class="flyout-item" onclick="${onclick}">
-            <span class="flyout-item-label">${escapeHtml(s.name)}</span>
-            <span class="flyout-item-desc">${s.date}</span>
-          </button>`;
-        }).join('');
-        return header + items;
-      }).join('');
-    }
+  // Static flyout for close — "No Git" option
+  if (type === 'close') {
+    flyoutMenu.innerHTML = `<button class="flyout-item" onclick="fireCommand('/close-no-git')">
+      <span class="flyout-item-label">Close (No Git)</span>
+      <span class="flyout-item-desc">Skip git operations</span>
+    </button>`;
+    wrapperEl.classList.add('flyout-open');
+    return;
+  }
+
+  // Static flyout for tasks — single "All Tasks" option
+  if (type === 'tasks') {
+    flyoutMenu.innerHTML = `<button class="flyout-item" onclick="fireCommand('/all-tasks')">
+      <span class="flyout-item-label">All Tasks</span>
+      <span class="flyout-item-desc">Work + Personal combined</span>
+    </button>`;
     wrapperEl.classList.add('flyout-open');
     return;
   }

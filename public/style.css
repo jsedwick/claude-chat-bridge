@@ -1393,7 +1393,7 @@ pre.streaming {
 }
 
 .action-menu-item:hover {
-  background: var(--bg-hover);
+  background: rgba(74, 158, 255, 0.1);
 }
 
 .action-menu-item svg {
