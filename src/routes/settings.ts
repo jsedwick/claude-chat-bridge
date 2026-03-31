@@ -2,7 +2,39 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import os from 'os';
 import { config, getMcpConfigPath, setMcpConfigPath, getBridgePaths, setBridgeConfigValue, loadBridgeConfig, saveBridgeConfig } from '../config';
+
+const home = os.homedir();
+
+// Expand ~ to the current user's home directory in vault paths
+function expandVaultPaths(vaults: any[]): any[] {
+  if (!Array.isArray(vaults)) return vaults;
+  return vaults.map(v => ({
+    ...v,
+    path: typeof v.path === 'string' && (v.path.startsWith('~/') || v.path === '~')
+      ? home + v.path.slice(1)
+      : v.path,
+  }));
+}
+
+// Collapse absolute home directory back to ~ for portable storage
+function collapseVaultPaths(vaults: any[]): any[] {
+  if (!Array.isArray(vaults)) return vaults;
+  return vaults.map(v => ({
+    ...v,
+    path: typeof v.path === 'string' && v.path.startsWith(home + '/')
+      ? '~' + v.path.slice(home.length)
+      : v.path,
+  }));
+}
+
+function collapsePaths(paths: string[]): string[] {
+  if (!Array.isArray(paths)) return paths;
+  return paths.map(p =>
+    typeof p === 'string' && p.startsWith(home + '/') ? '~' + p.slice(home.length) : p
+  );
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +67,13 @@ router.get('/', (_req: Request, res: Response) => {
     const data = JSON.parse(raw);
     data._configPath = configPath;
     data._configFound = true;
+    if (data.primaryVaults) data.primaryVaults = expandVaultPaths(data.primaryVaults);
+    if (data.secondaryVaults) data.secondaryVaults = expandVaultPaths(data.secondaryVaults);
+    if (data.security?.accessControl?.allowedPaths) {
+      data.security.accessControl.allowedPaths = data.security.accessControl.allowedPaths.map((p: string) =>
+        p.startsWith('~/') || p === '~' ? home + p.slice(1) : p
+      );
+    }
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to read config: ' + err.message });
@@ -48,8 +87,13 @@ router.put('/', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Invalid config data' });
     return;
   }
-  // Strip internal fields before writing
+  // Strip internal fields and collapse expanded paths back to ~ before writing
   const { _configPath, _configFound, ...writeData } = data;
+  if (writeData.primaryVaults) writeData.primaryVaults = collapseVaultPaths(writeData.primaryVaults);
+  if (writeData.secondaryVaults) writeData.secondaryVaults = collapseVaultPaths(writeData.secondaryVaults);
+  if (writeData.security?.accessControl?.allowedPaths) {
+    writeData.security.accessControl.allowedPaths = collapsePaths(writeData.security.accessControl.allowedPaths);
+  }
   try {
     fs.writeFileSync(getMcpConfigPath(), JSON.stringify(writeData, null, 2) + '\n', 'utf-8');
     res.json(data);
@@ -95,14 +139,18 @@ router.put('/bridge-paths', (req: Request, res: Response) => {
   for (const [key, value] of Object.entries(updates)) {
     if (!allowedKeys.includes(key)) continue;
     setBridgeConfigValue(key, value);
-    (config as any)[key] = value;
+    // Expand ~ for live config so paths resolve correctly at runtime
+    const expanded = typeof value === 'string' && (value.startsWith('~/') || value === '~')
+      ? home + value.slice(1)
+      : value;
+    (config as any)[key] = expanded;
   }
   res.json(getBridgePaths());
 });
 
 // GET /api/settings/version — get current + latest Claude Code CLI version
 router.get('/version', async (_req: Request, res: Response) => {
-  const claudePath = config.claudePath.replace(/^~/, process.env.HOME || '');
+  const claudePath = config.claudePath;
   const bridgeConfig = loadBridgeConfig();
 
   let currentVersion: string | null = null;

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession } from '../services/session-store';
 import { getMode, setMode, Mode, config, getMcpConfigPath } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
@@ -13,7 +14,11 @@ function getAllowedPaths(): string[] {
   try {
     const raw = fs.readFileSync(getMcpConfigPath(), 'utf-8');
     const data = JSON.parse(raw);
-    return data?.security?.accessControl?.allowedPaths || [];
+    const paths: string[] = data?.security?.accessControl?.allowedPaths || [];
+    const home = os.homedir();
+    return paths.map(p =>
+      p.startsWith('~/') || p === '~' ? home + p.slice(1) : p
+    );
   } catch {
     return [];
   }

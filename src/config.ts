@@ -30,21 +30,29 @@ function resolve(envKey: string, bridgeKey: string, fallback: string): string {
 
 const home = os.homedir();
 
+// Expand ~ to the current user's home directory
+function expandTilde(p: string): string {
+  if (p.startsWith('~/') || p === '~') {
+    return path.join(home, p.slice(1));
+  }
+  return p;
+}
+
 export const config = {
   port: parseInt(process.env.CHAT_BRIDGE_PORT || '3456', 10),
   certsPath: process.env.CHAT_BRIDGE_CERTS_PATH || path.join(__dirname, '..', 'certs'),
-  workingDir: resolve('CHAT_BRIDGE_WORKING_DIR', 'workingDir', home),
+  workingDir: expandTilde(resolve('CHAT_BRIDGE_WORKING_DIR', 'workingDir', home)),
   maxConcurrentSessions: 3,
   sessionStorePath: path.join(__dirname, '..', 'chat-sessions.json'),
-  claudePath: resolve('CHAT_BRIDGE_CLAUDE_PATH', 'claudePath', path.join(home, '.local', 'bin', 'claude')),
+  claudePath: expandTilde(resolve('CHAT_BRIDGE_CLAUDE_PATH', 'claudePath', path.join(home, '.local', 'bin', 'claude'))),
   permissionMode: 'bypassPermissions' as const,
   sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
   autoArchiveAfterMs: 7 * 24 * 60 * 60 * 1000, // 7 days
   autoDeleteAfterMs: 30 * 24 * 60 * 60 * 1000, // 30 days
   defaultMode: 'work' as Mode,
   // Path to .obsidian-mcp.json — resolved from: env var > bridge-config.json > default
-  mcpConfigPath: resolve('CHAT_BRIDGE_MCP_CONFIG', 'mcpConfigPath',
-    path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json')),
+  mcpConfigPath: expandTilde(resolve('CHAT_BRIDGE_MCP_CONFIG', 'mcpConfigPath',
+    path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),
 };
 
 // Derive vault configuration from MCP config (Vault Setup)
@@ -52,7 +60,8 @@ function readMcpVaults(): Array<{ name: string; path: string; mode: string }> {
   try {
     const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
     const data = JSON.parse(raw);
-    return [...(data.primaryVaults || []), ...(data.secondaryVaults || [])];
+    const vaults = [...(data.primaryVaults || []), ...(data.secondaryVaults || [])];
+    return vaults.map(v => ({ ...v, path: expandTilde(v.path) }));
   } catch {
     return [];
   }
@@ -76,7 +85,7 @@ export function getVaultPath(mode: Mode): string {
     const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
     const data = JSON.parse(raw);
     const primary = (data.primaryVaults || []).find((v: any) => v.mode === mode);
-    if (primary) return primary.path;
+    if (primary) return expandTilde(primary.path);
   } catch {}
   return path.join(home, 'Documents', 'Obsidian', mode === 'work' ? 'AI-Work' : 'AI-Home');
 }
