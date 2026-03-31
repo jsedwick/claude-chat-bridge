@@ -70,6 +70,112 @@ router.get('/issues', (_req: Request, res: Response) => {
   }
 });
 
+// List recent vault sessions grouped by working directory
+interface VaultSession {
+  sessionId: string;
+  name: string;
+  date: string;
+  workingDir: string;
+  filePath: string;
+}
+
+function scanVaultSessions(vaultPath: string): VaultSession[] {
+  const sessionsDir = path.join(vaultPath, 'sessions');
+  const results: VaultSession[] = [];
+
+  try {
+    // Read month directories, sorted descending (most recent first)
+    const months = fs.readdirSync(sessionsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory() && /^\d{4}-\d{2}$/.test(e.name))
+      .map(e => e.name)
+      .sort((a, b) => b.localeCompare(a));
+
+    // Scan up to 3 most recent months for performance
+    for (const month of months.slice(0, 3)) {
+      const monthPath = path.join(sessionsDir, month);
+      const files = fs.readdirSync(monthPath)
+        .filter(f => f.endsWith('.md'))
+        .sort((a, b) => b.localeCompare(a)); // newest first by filename
+
+      for (const file of files) {
+        try {
+          const filePath = path.join(monthPath, file);
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+          if (!fmMatch) continue;
+
+          const fm = fmMatch[1];
+          const sessionIdMatch = fm.match(/session_id:\s*["']?([^"'\n]+)["']?/);
+          const dateMatch = fm.match(/date:\s*["']?([^"'\n]+)["']?/);
+          const wdMatch = fm.match(/working_directory:\s*["']?([^"'\n]+)["']?/);
+
+          if (!sessionIdMatch) continue;
+
+          const sessionId = sessionIdMatch[1].trim();
+          // Derive display name from session_id slug (after the timestamp prefix)
+          const slugMatch = sessionId.match(/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$/);
+          const name = slugMatch ? slugMatch[1].replace(/-/g, ' ') : sessionId;
+
+          results.push({
+            sessionId,
+            name,
+            date: dateMatch ? dateMatch[1].trim() : month,
+            workingDir: wdMatch ? wdMatch[1].trim() : '',
+            filePath,
+          });
+        } catch {}
+      }
+    }
+  } catch {}
+
+  return results;
+}
+
+router.get('/sessions', (req: Request, res: Response) => {
+  const currentDir = (req.query.currentDir as string) || '';
+  const vaultPath = getVaultPath(getMode());
+  const sessions = scanVaultSessions(vaultPath);
+
+  // Group by workingDir
+  const groups = new Map<string, VaultSession[]>();
+  for (const s of sessions) {
+    const dir = s.workingDir;
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir)!.push(s);
+  }
+
+  // Keep top 5 per group (already sorted newest first)
+  for (const [dir, list] of groups) {
+    groups.set(dir, list.slice(0, 5));
+  }
+
+  // Order: current dir first, then by most recent session date
+  const sortedDirs = [...groups.keys()].sort((a, b) => {
+    if (a === currentDir) return -1;
+    if (b === currentDir) return 1;
+    const aDate = groups.get(a)![0]?.date || '';
+    const bDate = groups.get(b)![0]?.date || '';
+    return bDate.localeCompare(aDate);
+  });
+
+  // Current dir + 4 more
+  const topDirs = sortedDirs.slice(0, 5);
+
+  const result = topDirs.map(dir => ({
+    dir,
+    dirLabel: dir ? path.basename(dir) : 'General',
+    current: dir === currentDir,
+    sessions: groups.get(dir)!.map(s => ({
+      sessionId: s.sessionId,
+      name: s.name,
+      date: s.date,
+      vaultPath: s.filePath,
+    })),
+  }));
+
+  res.json({ groups: result });
+});
+
 // --- KB Browser endpoints ---
 
 function validateKbPath(filePath: string): string | null {

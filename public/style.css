@@ -677,6 +677,76 @@ html, body {
 .welcome-hint {
   font-size: 13px;
   color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.welcome-sessions {
+  text-align: left;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.welcome-sessions-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.welcome-group-header {
+  padding: 6px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.welcome-group-header:first-child {
+  border-top: none;
+  margin-top: 0;
+}
+
+.welcome-group-current {
+  font-size: 9px;
+  text-transform: lowercase;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.welcome-session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.welcome-session-item:hover {
+  background: var(--bg-secondary);
+}
+
+.welcome-session-name {
+  text-transform: capitalize;
+}
+
+.welcome-session-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  margin-left: 12px;
 }
 
 .session-item-dir {
@@ -1375,6 +1445,34 @@ pre.streaming {
   font-style: italic;
 }
 
+.flyout-group-header {
+  padding: 6px 14px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.flyout-group-header:first-child {
+  border-top: none;
+  margin-top: 0;
+}
+
+.flyout-group-current {
+  font-size: 9px;
+  text-transform: lowercase;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+#flyout-sessions {
+  max-height: 400px;
+  min-width: 240px;
+}
+
 /* On narrow screens, position flyout above instead of to the side */
 @media (max-width: 480px) {
   .flyout-menu {
@@ -1383,6 +1481,88 @@ pre.streaming {
     margin-left: 0;
     margin-bottom: 4px;
   }
+}
+
+/* Voice dictation — active mic button */
+.btn-attach.voice-active {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  animation: voice-btn-pulse 1.2s ease-in-out infinite;
+}
+
+.btn-attach.voice-active svg {
+  stroke: #ef4444;
+}
+
+@keyframes voice-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* Voice dictation indicator */
+#voice-indicator {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: none;
+  z-index: 90;
+}
+
+.voice-indicator-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.voice-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: voice-pulse-anim 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes voice-pulse-anim {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+.voice-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.voice-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.voice-stop-btn {
+  padding: 4px 12px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.voice-stop-btn:hover {
+  filter: brightness(1.15);
 }
 
 .btn-send {
@@ -2251,6 +2431,30 @@ pre.streaming {
 .kb-action-btn:hover {
   background: var(--bg-secondary);
   color: var(--text-primary);
+}
+
+.kb-continue-session-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s;
+  white-space: nowrap;
+}
+
+.kb-continue-session-btn:hover {
+  filter: brightness(1.15);
+}
+
+.kb-continue-session-btn svg {
+  flex-shrink: 0;
 }
 
 .kb-save-btn {

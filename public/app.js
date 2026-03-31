@@ -414,13 +414,13 @@ function toggleSidebar() {
 // Action menu commands
 const ACTION_MENU_ITEMS = [
   { label: 'Attach Image', icon: 'image', action: 'image' },
+  { label: 'Voice Dictation', icon: 'mic', action: 'voice', desktopOnly: true },
   { divider: true },
   { label: 'Workflow', icon: 'play', command: '/workflow', flyout: 'workflows' },
   { label: 'Close Session', icon: 'check-circle', command: '/close' },
   { label: 'Close (No Git)', icon: 'x-circle', command: '/close-no-git' },
   { divider: true },
-  { label: 'Sessions', icon: 'list', command: '/sessions' },
-  { label: 'Projects', icon: 'folder', command: '/projects' },
+  { label: 'Sessions', icon: 'list', command: '/sessions', flyout: 'sessions' },
   { label: 'Issue', icon: 'alert-triangle', command: '/issue', flyout: 'issues' },
 ];
 
@@ -432,11 +432,16 @@ const ACTION_ICONS = {
   list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
   folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   'alert-triangle': '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
 };
 
 async function fetchFlyoutData(type) {
   try {
-    const res = await fetch(`/api/vault/${type}`);
+    let url = `/api/vault/${type}`;
+    if (type === 'sessions') {
+      url += `?currentDir=${encodeURIComponent(currentWorkingDir)}`;
+    }
+    const res = await fetch(url);
     if (!res.ok) return [];
     return await res.json();
   } catch { return []; }
@@ -444,11 +449,19 @@ async function fetchFlyoutData(type) {
 
 function buildActionMenu() {
   const menu = document.getElementById('action-menu');
-  menu.innerHTML = ACTION_MENU_ITEMS.map(item => {
+  const isMobile = window.matchMedia('(max-width: 480px)').matches;
+  menu.innerHTML = ACTION_MENU_ITEMS.filter(item => {
+    if (item.desktopOnly && isMobile) return false;
+    if (item.action === 'voice' && !(window.SpeechRecognition || window.webkitSpeechRecognition)) return false;
+    return true;
+  }).map(item => {
     if (item.divider) return '<div class="action-menu-divider"></div>';
     const iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ACTION_ICONS[item.icon]}</svg>`;
     if (item.action === 'image') {
       return `<button class="action-menu-item" onclick="triggerImageAttach()">${iconSvg}<span>${item.label}</span></button>`;
+    }
+    if (item.action === 'voice') {
+      return `<button class="action-menu-item" id="voice-dictation-btn" onclick="toggleVoiceDictation()">${iconSvg}<span>${item.label}</span></button>`;
     }
     if (item.flyout) {
       const chevron = '<svg class="flyout-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
@@ -478,11 +491,37 @@ function buildActionMenu() {
 }
 
 async function showFlyout(wrapperEl, type) {
-  const items = await fetchFlyoutData(type);
+  const data = await fetchFlyoutData(type);
 
   const flyoutMenu = wrapperEl.querySelector('.flyout-menu');
   const command = wrapperEl.dataset.command;
 
+  // Grouped rendering for sessions
+  if (type === 'sessions') {
+    const groups = data && data.groups;
+    if (!groups || groups.length === 0) {
+      flyoutMenu.innerHTML = '<div class="flyout-empty">No sessions</div>';
+    } else {
+      flyoutMenu.innerHTML = groups.map(group => {
+        const header = `<div class="flyout-group-header">${escapeHtml(group.dirLabel)}${group.current ? ' <span class="flyout-group-current">(current)</span>' : ''}</div>`;
+        const items = group.sessions.map(s => {
+          const onclick = s.vaultPath
+            ? `switchView('kb'); loadKbFile('${s.vaultPath.replace(/'/g, "\\'")}'); closeActionMenu();`
+            : `closeActionMenu();`;
+          return `<button class="flyout-item" onclick="${onclick}">
+            <span class="flyout-item-label">${escapeHtml(s.name)}</span>
+            <span class="flyout-item-desc">${s.date}</span>
+          </button>`;
+        }).join('');
+        return header + items;
+      }).join('');
+    }
+    wrapperEl.classList.add('flyout-open');
+    return;
+  }
+
+  // Default flat list rendering for workflows/issues
+  const items = data;
   if (!items || items.length === 0) {
     flyoutMenu.innerHTML = '<div class="flyout-empty">None available</div>';
   } else {
@@ -549,6 +588,145 @@ function triggerImageAttach() {
   document.getElementById('image-input').click();
 }
 
+// Voice dictation via Web Speech API
+let voiceRecognition = null;
+let voiceIsListening = false;
+let voiceMicStream = null; // Hold mic stream to persist permission
+
+function toggleVoiceDictation() {
+  closeActionMenu();
+  if (voiceIsListening) {
+    stopVoiceDictation();
+  } else {
+    startVoiceDictation();
+  }
+}
+
+async function startVoiceDictation() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return;
+
+  // Acquire mic permission once and hold the stream to avoid re-prompting
+  if (!voiceMicStream) {
+    try {
+      voiceMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      console.warn('Microphone permission denied:', err);
+      return;
+    }
+  }
+
+  voiceRecognition = new SpeechRecognition();
+  voiceRecognition.continuous = true;
+  voiceRecognition.interimResults = true;
+  voiceRecognition.lang = 'en-US';
+
+  voiceRecognition.onstart = () => {
+    voiceIsListening = true;
+    showVoiceIndicator();
+  };
+
+  voiceRecognition.onresult = (event) => {
+    let interimTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        // Commit each final chunk immediately to the input
+        appendToInput(transcript);
+      } else {
+        interimTranscript = transcript;
+      }
+    }
+    updateVoicePreview(interimTranscript);
+  };
+
+  voiceRecognition.onerror = (event) => {
+    if (event.error === 'no-speech' || event.error === 'aborted') return;
+    console.warn('Speech recognition error:', event.error);
+    stopVoiceDictation();
+  };
+
+  voiceRecognition.onend = () => {
+    // Browser stops recognition on silence timeout — restart if still listening
+    if (voiceIsListening) {
+      try { voiceRecognition.start(); } catch {}
+    }
+  };
+
+  voiceRecognition.start();
+}
+
+function stopVoiceDictation() {
+  voiceIsListening = false;
+  if (voiceRecognition) {
+    voiceRecognition.onend = null;
+    voiceRecognition.stop();
+    voiceRecognition = null;
+  }
+  hideVoiceIndicator();
+  messageInput.focus();
+}
+
+function appendToInput(text) {
+  if (!text) return;
+  const existing = messageInput.value;
+  const separator = existing && !existing.endsWith(' ') && !existing.endsWith('\n') ? ' ' : '';
+  messageInput.value = existing + separator + text;
+  messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function setAttachButtonVoiceMode(listening) {
+  const btn = document.querySelector('.btn-attach');
+  if (listening) {
+    btn.classList.add('voice-active');
+    btn.setAttribute('aria-label', 'Stop dictation');
+    btn.onclick = (e) => { e.stopPropagation(); stopVoiceDictation(); };
+    btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+      <line x1="4" y1="4" x2="20" y2="20"/>
+    </svg>`;
+  } else {
+    btn.classList.remove('voice-active');
+    btn.setAttribute('aria-label', 'Actions menu');
+    btn.onclick = () => toggleActionMenu();
+    btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"/>
+      <line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>`;
+  }
+}
+
+function showVoiceIndicator() {
+  setAttachButtonVoiceMode(true);
+  let indicator = document.getElementById('voice-indicator');
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'voice-indicator';
+    indicator.innerHTML = `
+      <div class="voice-indicator-content">
+        <span class="voice-pulse"></span>
+        <span class="voice-label">Listening...</span>
+        <span class="voice-preview"></span>
+      </div>
+    `;
+    document.querySelector('.input-wrapper').appendChild(indicator);
+  }
+  indicator.style.display = 'flex';
+}
+
+function hideVoiceIndicator() {
+  setAttachButtonVoiceMode(false);
+  const indicator = document.getElementById('voice-indicator');
+  if (indicator) indicator.style.display = 'none';
+}
+
+function updateVoicePreview(interim) {
+  const preview = document.querySelector('.voice-preview');
+  if (preview) {
+    preview.textContent = interim || '';
+  }
+}
+
 function fireCommand(command) {
   closeActionMenu();
   if (!currentSessionId) return;
@@ -564,6 +742,39 @@ document.addEventListener('click', (e) => {
 
 // Build menu immediately (script loads after DOM)
 buildActionMenu();
+loadWelcomeSessions();
+
+async function loadWelcomeSessions() {
+  const container = document.getElementById('welcome-sessions');
+  if (!container) return;
+  try {
+    const res = await fetch(`/api/vault/sessions?currentDir=${encodeURIComponent(currentWorkingDir)}`);
+    const data = await res.json();
+    const groups = data && data.groups;
+    if (!groups || groups.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = `<h3 class="welcome-sessions-title">Recent Sessions</h3>` +
+      groups.map(group => {
+        const header = `<div class="welcome-group-header">${escapeHtml(group.dirLabel)}${group.current ? ' <span class="welcome-group-current">(current)</span>' : ''}</div>`;
+        const items = group.sessions.map(s => {
+          return `<button class="welcome-session-item" onclick="openSessionInKb('${s.vaultPath.replace(/'/g, "\\'")}')">
+            <span class="welcome-session-name">${escapeHtml(s.name)}</span>
+            <span class="welcome-session-date">${s.date}</span>
+          </button>`;
+        }).join('');
+        return header + items;
+      }).join('');
+  } catch {
+    container.innerHTML = '';
+  }
+}
+
+function openSessionInKb(vaultPath) {
+  switchView('kb');
+  loadKbFile(vaultPath);
+}
 
 // Auto-resize textarea
 function autoResize(el) {
@@ -2838,6 +3049,74 @@ function createKbTreeNode(entry, depth) {
   return wrapper;
 }
 
+function parseSessionMeta(content) {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return null;
+  const fm = fmMatch[1];
+
+  // Only session files
+  if (!/category:\s*session/.test(fm)) return null;
+
+  const wdMatch = fm.match(/working_directory:\s*["']?([^"'\n]+)["']?/);
+  const idMatch = fm.match(/session_id:\s*["']?([^"'\n]+)["']?/);
+
+  if (!idMatch) return null;
+
+  const sessionId = idMatch[1].trim();
+  const slugMatch = sessionId.match(/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_(.+)$/);
+  const sessionName = slugMatch ? slugMatch[1].replace(/-/g, ' ') : sessionId;
+
+  return {
+    sessionId,
+    sessionName,
+    workingDir: wdMatch ? wdMatch[1].trim() : '',
+  };
+}
+
+async function continueFromSession() {
+  const btn = document.getElementById('kb-continue-session-btn');
+  const workingDir = btn.dataset.workingDir;
+  const sessionId = btn.dataset.sessionId;
+  const sessionName = btn.dataset.sessionName;
+
+  if (!workingDir) {
+    alert('No working directory found for this session.');
+    return;
+  }
+
+  try {
+    // Create a new session with the same working directory
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingDir }),
+    });
+    const session = await res.json();
+
+    // Switch to chat view
+    currentSessionId = session.id;
+    chatTitle.textContent = session.name;
+    currentWorkingDir = session.workingDir || '';
+    welcomeEl.style.display = 'none';
+    inputArea.style.display = 'block';
+    document.querySelector('.dir-picker-wrapper').style.display = '';
+    clearMessages();
+    loadSessions();
+    switchView('sessions');
+
+    // Auto-send /work or /personal based on current mode
+    const modeCommand = currentMode === 'personal' ? '/personal' : '/work';
+    messageInput.value = modeCommand;
+    await sendMessage();
+
+    // Ask Claude to load the session context via MCP tools
+    messageInput.value = `I'm continuing from a previous session: "${sessionName}" (session ID: ${sessionId}). Please use get_session_context to load the full context for this session, including related sessions and topics, then summarize what was done and what's next.`;
+    sendMessage();
+  } catch (err) {
+    console.error('Failed to continue session:', err);
+  }
+}
+
 async function loadKbFile(filePath) {
   try {
     const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
@@ -2860,6 +3139,18 @@ async function loadKbFile(filePath) {
     document.getElementById('kb-editor').style.display = 'none';
     document.getElementById('kb-save-btn').style.display = 'none';
     document.getElementById('kb-cancel-btn').style.display = 'none';
+
+    // Detect session files and show/hide Continue Session button
+    const continueBtn = document.getElementById('kb-continue-session-btn');
+    const sessionMeta = parseSessionMeta(data.content);
+    if (sessionMeta) {
+      continueBtn.style.display = '';
+      continueBtn.dataset.workingDir = sessionMeta.workingDir || '';
+      continueBtn.dataset.sessionId = sessionMeta.sessionId || '';
+      continueBtn.dataset.sessionName = sessionMeta.sessionName || data.name;
+    } else {
+      continueBtn.style.display = 'none';
+    }
 
     // Render markdown
     document.getElementById('kb-rendered').innerHTML = renderKbMarkdown(data.content);
