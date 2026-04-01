@@ -1664,6 +1664,23 @@ async function sendMessage(skipRender = false) {
   let lastEventType = '';
   let streamCompleted = false;
   let everRenderedText = false; // Track if ANY text was rendered (survives tool_use clears)
+  let slowApiTimer = null;
+
+  function showSlowApiIndicator() {
+    if (document.getElementById('slow-api-indicator')) return;
+    const el = document.createElement('div');
+    el.id = 'slow-api-indicator';
+    el.className = 'slow-api-indicator';
+    el.textContent = 'API response is slow';
+    messagesEl.appendChild(el);
+    scrollToBottom();
+  }
+
+  function clearSlowApi() {
+    if (slowApiTimer) { clearTimeout(slowApiTimer); slowApiTimer = null; }
+    const el = document.getElementById('slow-api-indicator');
+    if (el) el.remove();
+  }
 
   // Debug logging for missing output diagnosis
   const sseLog = [];
@@ -1688,6 +1705,7 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'text':
+          clearSlowApi();
           deactivateToolGroup();
           if (!assistantEl) {
             logSSE('text:create_el', { dataLen: typeof data === 'string' ? data.length : 0 });
@@ -1702,6 +1720,7 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'thinking':
+          clearSlowApi();
           if (!thinkingEl) {
             thinkingEl = addThinkingIndicator();
             addTypingIndicator(); // keep dots at bottom
@@ -1713,6 +1732,7 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'tool_use':
+          clearSlowApi();
           logSSE('tool_use:clear', { hadText: currentText.length, hadEl: !!assistantEl, data: typeof data === 'string' ? data.substring(0, 100) : '' });
           if (assistantEl && currentText) {
             assistantEl = null;
@@ -1807,6 +1827,8 @@ async function sendMessage(skipRender = false) {
     }
   }
 
+  slowApiTimer = setTimeout(showSlowApiIndicator, 8000);
+
   try {
     const res = await fetch(`/api/chat/${currentSessionId}`, {
       method: 'POST',
@@ -1832,16 +1854,14 @@ async function sendMessage(skipRender = false) {
       logSSE('reconnect:no_done', { textLen: currentText.length });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
       logSSE('reconnect:result', { reconnected, textLen: currentText.length });
-      if (!reconnected && currentSessionId === streamSessionId) {
-        // Only restore if we have no visible content — otherwise keep what's on screen
-        // rather than replacing with potentially stale server data
-        const hasVisibleContent = messagesEl.querySelector('.message-assistant, .tool-group');
-        if (!hasVisibleContent) {
-          logSSE('reconnect:fallback_restore', {});
-          await restoreMessages(streamSessionId);
-        } else {
-          logSSE('reconnect:keeping_visible_content', { childCount: messagesEl.children.length });
-        }
+      if (!reconnected && currentSessionId === streamSessionId && !everRenderedText) {
+        // No text was rendered for THIS message and reconnect failed — restore all
+        // messages from server. Previous messages may be visible in the DOM, but the
+        // current response was lost. Server-side persistence saves events independently
+        // of the SSE connection, so restoreMessages will recover the full conversation.
+        logSSE('reconnect:fallback_restore', { everRenderedText });
+        await new Promise(r => setTimeout(r, 2000));
+        await restoreMessages(streamSessionId);
       }
     }
   } catch (err) {
@@ -1852,15 +1872,10 @@ async function sendMessage(skipRender = false) {
       logSSE('reconnect:after_error', { error: err.message });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
       logSSE('reconnect:error_result', { reconnected, textLen: currentText.length });
-      if (!reconnected && currentSessionId === streamSessionId) {
-        const hasVisibleContent = messagesEl.querySelector('.message-assistant, .tool-group');
-        if (!hasVisibleContent) {
-          logSSE('reconnect:error_fallback_restore', {});
-          await new Promise(r => setTimeout(r, 2000));
-          await restoreMessages(streamSessionId);
-        } else {
-          logSSE('reconnect:error_keeping_visible_content', { childCount: messagesEl.children.length });
-        }
+      if (!reconnected && currentSessionId === streamSessionId && !everRenderedText) {
+        logSSE('reconnect:error_fallback_restore', { everRenderedText });
+        await new Promise(r => setTimeout(r, 2000));
+        await restoreMessages(streamSessionId);
       }
     } else if (!streamCompleted && currentSessionId === streamSessionId) {
       const errEl = document.createElement('div');
@@ -1870,6 +1885,7 @@ async function sendMessage(skipRender = false) {
       scrollToBottom();
     }
   } finally {
+    clearSlowApi();
     streamingSessions.delete(streamSessionId);
     // Only update DOM if we're still viewing the session that finished
     if (currentSessionId === streamSessionId) {
@@ -1884,13 +1900,13 @@ async function sendMessage(skipRender = false) {
           label.textContent = 'Thought process (tap to expand)';
         }
       }
-      // Safety net: if NO text was ever rendered but tools were used, restore from server
-      // The server may have result_text saved even when text_delta events were lost
+      // Safety net: if stream completed but NO text was ever rendered, restore from server.
+      // The server may have result_text saved even when text_delta events were lost.
       // Don't trigger if text was rendered before tools — currentText being empty just
-      // means the last segment was a tool call, not that text was lost
-      if (!everRenderedText && messagesEl.querySelector('.tool-group')) {
+      // means the last segment was a tool call, not that text was lost.
+      if (!everRenderedText && streamCompleted) {
         logSSE('finally:text_missing_restore', { streamCompleted, everRenderedText });
-        await new Promise(r => setTimeout(r, 1500)); // Allow server-side persistence to flush
+        await new Promise(r => setTimeout(r, 1500));
         await restoreMessages(streamSessionId);
       }
       // Refresh header title (may have been auto-named)

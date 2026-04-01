@@ -1285,6 +1285,18 @@ pre.streaming {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* Slow API indicator */
+.slow-api-indicator {
+  align-self: flex-start;
+  font-size: 11px;
+  color: #d97706;
+  padding: 3px 8px;
+  background: rgba(217, 119, 6, 0.08);
+  border: 1px solid rgba(217, 119, 6, 0.25);
+  border-radius: 10px;
+  margin-top: 2px;
+}
+
 /* Error message */
 .message-error {
   background: rgba(255, 107, 107, 0.1);

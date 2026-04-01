@@ -24,13 +24,15 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     return;
   }
 
-  // Set up SSE headers
+  // Set up SSE headers — flushHeaders ensures headers are sent immediately so the
+  // client's fetch() resolves and readSSEStream starts listening without delay.
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  res.flushHeaders();
 
   // Save user message server-side
   addMessage(sessionId, 'user', message);
@@ -188,6 +190,7 @@ router.get('/:sessionId/reconnect', (req: Request, res: Response) => {
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  res.flushHeaders();
 
   let reconnectDisconnected = false;
 
