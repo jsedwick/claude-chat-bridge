@@ -2770,6 +2770,75 @@ let kbEasyMDE = null;         // EasyMDE instance
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
+let kbSearchTimer = null;
+
+// KB search: debounced input handler
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('kb-search');
+  const clearBtn = document.getElementById('kb-search-clear');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(kbSearchTimer);
+      const q = searchInput.value.trim();
+      clearBtn.style.display = q ? '' : 'none';
+      if (!q) {
+        document.getElementById('kb-tree').style.display = '';
+        document.getElementById('kb-search-results').style.display = 'none';
+        document.getElementById('kb-search-results').innerHTML = '';
+        return;
+      }
+      kbSearchTimer = setTimeout(() => kbSearchDocs(q), 200);
+    });
+    clearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      clearBtn.style.display = 'none';
+      document.getElementById('kb-tree').style.display = '';
+      document.getElementById('kb-search-results').style.display = 'none';
+      document.getElementById('kb-search-results').innerHTML = '';
+      searchInput.focus();
+    });
+  }
+});
+
+async function kbSearchDocs(query) {
+  const treeEl = document.getElementById('kb-tree');
+  const resultsEl = document.getElementById('kb-search-results');
+  try {
+    const res = await fetch(`/api/vault/kb/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+
+    // If input changed while fetching, discard stale results
+    const current = document.getElementById('kb-search').value.trim();
+    if (current !== query) return;
+
+    treeEl.style.display = 'none';
+    resultsEl.style.display = '';
+    resultsEl.innerHTML = '';
+
+    if (data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="kb-search-empty">No matching documents</div>';
+      return;
+    }
+
+    for (const r of data.results) {
+      const item = document.createElement('div');
+      item.className = 'kb-search-result';
+      item.innerHTML =
+        `<span class="kb-search-result-name">${escapeHtml(r.name)}</span>` +
+        `<span class="kb-search-result-folder">${escapeHtml(r.folder)}</span>`;
+      item.addEventListener('click', () => {
+        if (kbIsEditing) {
+          if (!confirm('You have unsaved changes. Discard them?')) return;
+          kbIsEditing = false;
+        }
+        loadKbFile(r.path);
+      });
+      resultsEl.appendChild(item);
+    }
+  } catch (err) {
+    console.error('KB search failed:', err);
+  }
+}
 
 // Vault path detection and linking (fetched from server config)
 let OBSIDIAN_ROOT = '';

@@ -238,6 +238,54 @@ router.get('/topics', (_req: Request, res: Response) => {
 
 // --- KB Browser endpoints ---
 
+// Recursive search for KB files matching a query
+router.get('/kb/search', (req: Request, res: Response) => {
+  const q = ((req.query.q as string) || '').trim().toLowerCase();
+  if (!q) {
+    res.json({ results: [] });
+    return;
+  }
+
+  const root = getObsidianRoot();
+  const vaultNames = getObsidianVaults();
+  const results: { name: string; path: string; folder: string }[] = [];
+  const MAX_RESULTS = 100;
+
+  function walk(dir: string) {
+    if (results.length >= MAX_RESULTS) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (results.length >= MAX_RESULTS) return;
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full);
+      } else if (e.isFile() && e.name.endsWith('.md')) {
+        const nameNoExt = e.name.replace(/\.md$/, '');
+        if (nameNoExt.toLowerCase().includes(q)) {
+          const rel = path.relative(root, dir);
+          results.push({ name: nameNoExt, path: full, folder: rel });
+        }
+      }
+    }
+  }
+
+  for (const vault of vaultNames) {
+    const vaultDir = path.join(root, vault);
+    if (fs.existsSync(vaultDir)) {
+      walk(vaultDir);
+    }
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ results });
+});
+
 function validateKbPath(filePath: string): string | null {
   const resolved = path.resolve(filePath);
   const root = getObsidianRoot();

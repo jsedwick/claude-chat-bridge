@@ -62,7 +62,13 @@
     </div>
     <!-- KB Browser view (sidebar file tree) -->
     <div id="kb-view" class="kb-sidebar" style="display:none">
+      <div class="kb-search-wrap">
+        <svg class="kb-search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="kb-search" type="text" class="kb-search-input" placeholder="Search documents…" autocomplete="off" spellcheck="false" />
+        <svg id="kb-search-clear" class="kb-search-clear" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
       <div id="kb-tree" class="kb-tree"></div>
+      <div id="kb-search-results" class="kb-search-results" style="display:none"></div>
     </div>
     <!-- Settings view (sidebar nav) -->
     <div id="settings-view" class="settings-nav" style="display:none">
