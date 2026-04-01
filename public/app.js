@@ -3313,6 +3313,65 @@ async function continueFromSession() {
   }
 }
 
+async function expandKbPathTo(filePath) {
+  if (!OBSIDIAN_ROOT || !kbTreeLoaded) return;
+
+  // Build list of directory segments from vault root down to the file's parent
+  // e.g. for .../AI-Work/sessions/2026-04/file.md -> [.../AI-Work, .../AI-Work/sessions, .../AI-Work/sessions/2026-04]
+  const parentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+  const segments = [];
+  let current = parentDir;
+  while (current.length > OBSIDIAN_ROOT.length) {
+    segments.unshift(current);
+    current = current.substring(0, current.lastIndexOf('/'));
+  }
+
+  // Expand each directory level
+  for (const dirPath of segments) {
+    if (kbExpandedDirs.has(dirPath)) continue;
+
+    const dirItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(dirPath)}"]`);
+    if (!dirItem) continue;
+
+    const chevron = dirItem.querySelector('.kb-tree-chevron');
+    const childrenContainer = dirItem.parentElement.querySelector('.kb-tree-children');
+    if (!childrenContainer) continue;
+
+    // Mark as expanded
+    kbExpandedDirs.add(dirPath);
+    if (chevron) chevron.classList.add('expanded');
+    childrenContainer.classList.remove('collapsed');
+
+    // Load children if needed
+    if (!kbTreeCache.has(dirPath)) {
+      const data = await loadKbTree(dirPath);
+      if (data) {
+        const indent = dirItem.querySelector('.kb-tree-indent');
+        const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+        childrenContainer.innerHTML = '';
+        for (const child of data.entries) {
+          childrenContainer.appendChild(createKbTreeNode(child, parentDepth + 1));
+        }
+      }
+    } else if (childrenContainer.children.length === 0) {
+      const indent = dirItem.querySelector('.kb-tree-indent');
+      const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+      const entries = kbTreeCache.get(dirPath);
+      for (const child of entries) {
+        childrenContainer.appendChild(createKbTreeNode(child, parentDepth + 1));
+      }
+    }
+  }
+
+  // Highlight the active file
+  document.querySelectorAll('.kb-tree-item.active').forEach(el => el.classList.remove('active'));
+  const activeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(filePath)}"]`);
+  if (activeItem) {
+    activeItem.classList.add('active');
+    activeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
 async function loadKbFile(filePath) {
   try {
     const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
@@ -3369,10 +3428,8 @@ async function loadKbFile(filePath) {
     // Render markdown
     document.getElementById('kb-rendered').innerHTML = renderKbMarkdown(data.content);
 
-    // Highlight active file in tree
-    document.querySelectorAll('.kb-tree-item.active').forEach(el => el.classList.remove('active'));
-    const activeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(filePath)}"]`);
-    if (activeItem) activeItem.classList.add('active');
+    // Expand tree path to this file and highlight it
+    await expandKbPathTo(filePath);
 
     // Close sidebar on mobile
     if (sidebar.classList.contains('open')) toggleSidebar();

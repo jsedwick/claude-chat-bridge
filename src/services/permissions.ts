@@ -25,7 +25,7 @@ const BASH_ASK_PATTERNS = [
 
 // Non-Bash tools that require user approval via the permission dialog
 const TOOL_ASK_PATTERNS = [
-  /\bcode_file$/,
+  /code_file$/,
 ];
 
 // Check if a Bash command needs user permission
