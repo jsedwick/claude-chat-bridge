@@ -2768,6 +2768,7 @@ let kbIsEditing = false;
 let kbShowingDiff = false;
 let kbEditor = null;          // Toast UI Editor instance
 let kbFrontmatter = '';       // Stashed frontmatter (stripped before editor, restored on save)
+let kbHistory = [];           // Navigation history stack for back button
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
@@ -3372,11 +3373,16 @@ async function expandKbPathTo(filePath) {
   }
 }
 
-async function loadKbFile(filePath) {
+async function loadKbFile(filePath, { skipHistory = false } = {}) {
   try {
     const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
     if (data.error) return;
+
+    // Push current file to history before navigating away
+    if (!skipHistory && kbCurrentFile) {
+      kbHistory.push(kbCurrentFile.path);
+    }
 
     kbCurrentFile = data;
     kbIsEditing = false;
@@ -3425,6 +3431,13 @@ async function loadKbFile(filePath) {
       topicWrapper.style.display = 'none';
     }
 
+    // Show/hide back button and action bar
+    const backBtn = document.getElementById('kb-back-btn');
+    const actionBar = document.getElementById('kb-action-bar');
+    backBtn.style.display = kbHistory.length > 0 ? '' : 'none';
+    const hasAnyButton = kbHistory.length > 0 || sessionMeta || topicMeta;
+    actionBar.style.display = hasAnyButton ? '' : 'none';
+
     // Render markdown
     document.getElementById('kb-rendered').innerHTML = renderKbMarkdown(data.content);
 
@@ -3439,6 +3452,12 @@ async function loadKbFile(filePath) {
   } catch (err) {
     console.error('Failed to load KB file:', err);
   }
+}
+
+function navigateKbBack() {
+  if (kbHistory.length === 0) return;
+  const previousPath = kbHistory.pop();
+  loadKbFile(previousPath, { skipHistory: true });
 }
 
 function renderKbMarkdown(text) {
@@ -3488,6 +3507,36 @@ async function navigateWikiLink(el) {
     console.error('Failed to resolve wiki-link:', err);
   }
 }
+
+// Intercept clicks on standard markdown links in KB rendered view
+// so that internal vault links navigate within the KB instead of opening new tabs
+document.getElementById('kb-rendered')?.addEventListener('click', async (e) => {
+  const anchor = e.target.closest('a');
+  if (!anchor) return;
+
+  const href = anchor.getAttribute('href');
+  if (!href) return;
+
+  const obsidianRoot = '/Documents/Obsidian/';
+
+  // Absolute vault path (e.g. /Users/.../Documents/Obsidian/AI-Work/topics/foo.md)
+  if (href.includes(obsidianRoot) && href.endsWith('.md')) {
+    e.preventDefault();
+    loadKbFile(href);
+    return;
+  }
+
+  // Relative .md link (e.g. ./file.md, ../topics/file.md, file.md)
+  // Must not start with http/https/mailto/# and must end in .md
+  if (!href.match(/^(https?:|mailto:|#)/) && href.endsWith('.md') && kbCurrentFile?.path) {
+    e.preventDefault();
+    // Resolve relative to current file's directory
+    const currentDir = kbCurrentFile.path.substring(0, kbCurrentFile.path.lastIndexOf('/'));
+    const resolved = decodeURIComponent(new URL(href, 'file:///' + currentDir + '/').pathname);
+    loadKbFile(resolved);
+    return;
+  }
+});
 
 async function toggleKbDiff() {
   if (!kbCurrentFile) return;

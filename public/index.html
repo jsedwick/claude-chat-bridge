@@ -196,21 +196,34 @@
         <div id="kb-welcome-sessions" class="welcome-sessions welcome-tab-content active"></div>
         <div id="kb-welcome-topics" class="welcome-topics welcome-tab-content" style="display:none"></div>
       </div>
-      <div id="kb-continue-session-wrapper" class="kb-continue-session-wrapper" style="display:none">
-        <button id="kb-continue-session-btn" class="kb-continue-session-btn" onclick="continueFromSession()" aria-label="Continue Session">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          <span>Continue Session</span>
-        </button>
-      </div>
-      <div id="kb-start-from-topic-wrapper" class="kb-continue-session-wrapper" style="display:none">
-        <button id="kb-start-from-topic-btn" class="kb-continue-session-btn" onclick="startFromTopic()" aria-label="Start Session from Topic">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          <span>Start Session from Topic</span>
-        </button>
+      <div id="kb-action-bar" class="kb-action-bar" style="display:none">
+        <div class="kb-action-bar-left">
+          <button id="kb-back-btn" class="kb-back-btn" style="display:none" onclick="navigateKbBack()" aria-label="Back">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"/>
+              <polyline points="12 19 5 12 12 5"/>
+            </svg>
+            <span>Back</span>
+          </button>
+        </div>
+        <div class="kb-action-bar-right">
+          <div id="kb-continue-session-wrapper" style="display:none">
+            <button id="kb-continue-session-btn" class="kb-continue-session-btn" onclick="continueFromSession()" aria-label="Continue Session">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span>Continue Session</span>
+            </button>
+          </div>
+          <div id="kb-start-from-topic-wrapper" style="display:none">
+            <button id="kb-start-from-topic-btn" class="kb-continue-session-btn" onclick="startFromTopic()" aria-label="Start Session from Topic">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span>Start Session from Topic</span>
+            </button>
+          </div>
+        </div>
       </div>
       <div id="kb-rendered" class="kb-rendered" style="display:none"></div>
       <div id="kb-diff" class="kb-diff" style="display:none"></div>

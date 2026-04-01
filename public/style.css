@@ -2606,11 +2606,43 @@ pre.streaming {
   color: var(--text-primary);
 }
 
-.kb-continue-session-wrapper {
+.kb-action-bar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   padding: 8px 0 4px 0;
   margin-bottom: 12px;
+}
+
+.kb-action-bar-left,
+.kb-action-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s;
+  white-space: nowrap;
+}
+
+.kb-back-btn:hover {
+  filter: brightness(1.15);
+}
+
+.kb-back-btn svg {
+  flex-shrink: 0;
 }
 
 .kb-continue-session-btn {
