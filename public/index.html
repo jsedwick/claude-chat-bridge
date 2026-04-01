@@ -153,6 +153,15 @@
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
       <h1 id="kb-title" class="chat-title" style="cursor:default">Knowledge Base</h1>
       <div class="kb-header-actions">
+        <button id="kb-diff-btn" class="kb-action-btn" style="display:none" onclick="toggleKbDiff()" aria-label="Diff">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v18"/>
+            <path d="M3 12h4"/>
+            <path d="M17 12h4"/>
+            <path d="M17 6h4"/>
+            <path d="M3 18h4"/>
+          </svg>
+        </button>
         <button id="kb-edit-btn" class="kb-action-btn" style="display:none" onclick="toggleKbEdit()" aria-label="Edit">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -198,6 +207,7 @@
         </button>
       </div>
       <div id="kb-rendered" class="kb-rendered" style="display:none"></div>
+      <div id="kb-diff" class="kb-diff" style="display:none"></div>
       <textarea id="kb-editor" class="kb-editor" style="display:none"></textarea>
     </div>
   </div>

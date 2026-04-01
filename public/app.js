@@ -2763,6 +2763,7 @@ function browseForPath(inputId) {
 
 let kbCurrentFile = null;     // { path, name, content }
 let kbIsEditing = false;
+let kbShowingDiff = false;
 let kbEasyMDE = null;         // EasyMDE instance
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
@@ -3248,6 +3249,7 @@ async function loadKbFile(filePath) {
 
     kbCurrentFile = data;
     kbIsEditing = false;
+    kbShowingDiff = false;
 
     // Clean up EasyMDE if switching files while editing
     if (kbEasyMDE) {
@@ -3258,6 +3260,8 @@ async function loadKbFile(filePath) {
     document.getElementById('kb-title').textContent = data.name;
     document.getElementById('kb-welcome').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
+    document.getElementById('kb-diff').style.display = 'none';
+    document.getElementById('kb-diff-btn').style.display = '';
     document.getElementById('kb-edit-btn').style.display = '';
     document.getElementById('kb-editor').style.display = 'none';
     document.getElementById('kb-save-btn').style.display = 'none';
@@ -3354,11 +3358,99 @@ async function navigateWikiLink(el) {
   }
 }
 
+async function toggleKbDiff() {
+  if (!kbCurrentFile) return;
+
+  // If already showing diff, switch back to rendered view
+  if (kbShowingDiff) {
+    kbShowingDiff = false;
+    document.getElementById('kb-diff').style.display = 'none';
+    document.getElementById('kb-rendered').style.display = '';
+    document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
+    return;
+  }
+
+  kbShowingDiff = true;
+  document.getElementById('kb-rendered').style.display = 'none';
+  document.getElementById('kb-diff').style.display = '';
+  document.getElementById('kb-diff-btn').classList.add('kb-action-btn-active');
+  document.getElementById('kb-diff').innerHTML = '<div class="kb-diff-loading">Loading diff...</div>';
+
+  try {
+    const res = await fetch(`/api/vault/kb/diff?path=${encodeURIComponent(kbCurrentFile.path)}`);
+    const data = await res.json();
+
+    if (!data.diff) {
+      document.getElementById('kb-diff').innerHTML =
+        `<div class="kb-diff-empty">${escapeHtml(data.message || 'No diff available')}</div>`;
+      return;
+    }
+
+    document.getElementById('kb-diff').innerHTML = renderDiff(data.diff);
+  } catch (err) {
+    console.error('Failed to load diff:', err);
+    document.getElementById('kb-diff').innerHTML =
+      '<div class="kb-diff-empty">Failed to load diff</div>';
+  }
+}
+
+function renderDiff(rawDiff) {
+  const lines = rawDiff.split('\n');
+  let html = '';
+  let inHeader = true;
+  let headerLines = [];
+  let diffLines = [];
+
+  for (const line of lines) {
+    if (inHeader) {
+      // Header ends at the first "diff --git" line
+      if (line.startsWith('diff --git')) {
+        inHeader = false;
+      } else {
+        headerLines.push(line);
+        continue;
+      }
+    }
+
+    if (line.startsWith('diff --git')) {
+      // File separator — skip, we only have one file
+      continue;
+    } else if (line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
+      // Git metadata lines — skip
+      continue;
+    } else if (line.startsWith('@@')) {
+      diffLines.push(`<div class="kb-diff-hunk">${escapeHtml(line)}</div>`);
+    } else if (line.startsWith('+')) {
+      diffLines.push(`<div class="kb-diff-add">${escapeHtml(line)}</div>`);
+    } else if (line.startsWith('-')) {
+      diffLines.push(`<div class="kb-diff-del">${escapeHtml(line)}</div>`);
+    } else {
+      diffLines.push(`<div class="kb-diff-ctx">${escapeHtml(line)}</div>`);
+    }
+  }
+
+  // Build commit header
+  if (headerLines.length) {
+    html += '<div class="kb-diff-header">';
+    for (const hl of headerLines) {
+      html += `<div>${escapeHtml(hl)}</div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '<div class="kb-diff-body">' + diffLines.join('') + '</div>';
+  return html;
+}
+
 function toggleKbEdit() {
   if (!kbCurrentFile) return;
   kbIsEditing = true;
+  kbShowingDiff = false;
 
   document.getElementById('kb-rendered').style.display = 'none';
+  document.getElementById('kb-diff').style.display = 'none';
+  document.getElementById('kb-diff-btn').style.display = 'none';
+  document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
   document.getElementById('kb-editor').style.display = 'block';
   document.getElementById('kb-editor').value = kbCurrentFile.content;
   document.getElementById('kb-edit-btn').style.display = 'none';
@@ -3399,7 +3491,9 @@ function cancelKbEdit() {
   }
 
   document.getElementById('kb-rendered').style.display = '';
+  document.getElementById('kb-diff').style.display = 'none';
   document.getElementById('kb-editor').style.display = 'none';
+  document.getElementById('kb-diff-btn').style.display = '';
   document.getElementById('kb-edit-btn').style.display = '';
   document.getElementById('kb-save-btn').style.display = 'none';
   document.getElementById('kb-cancel-btn').style.display = 'none';

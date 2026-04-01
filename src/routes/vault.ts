@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getMode, getObsidianRoot, getObsidianVaults, getVaultPath } from '../config';
@@ -321,6 +322,54 @@ router.get('/kb/file', (req: Request, res: Response) => {
     });
   } catch {
     res.status(404).json({ error: 'File not found' });
+  }
+});
+
+// Get the latest git diff for a file
+router.get('/kb/diff', (req: Request, res: Response) => {
+  const filePath = req.query.path as string;
+  if (!filePath) {
+    res.status(400).json({ error: 'Path required' });
+    return;
+  }
+
+  const resolved = validateKbPath(filePath);
+  if (!resolved || !resolved.endsWith('.md')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  // Find the git repo root for this file
+  let repoDir: string;
+  try {
+    repoDir = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: path.dirname(resolved),
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+  } catch {
+    res.json({ diff: null, message: 'Not a git repository' });
+    return;
+  }
+
+  const relativePath = path.relative(repoDir, resolved);
+
+  try {
+    // Get the diff of the most recent commit that touched this file
+    const diff = execFileSync('git', [
+      'log', '-1', '-p',
+      '--format=commit %H%nAuthor: %an%nDate: %ai%nSubject: %s',
+      '--', relativePath,
+    ], { cwd: repoDir, encoding: 'utf-8', timeout: 10000 }).trim();
+
+    if (!diff) {
+      res.json({ diff: null, message: 'No git history for this file' });
+      return;
+    }
+
+    res.json({ diff, path: resolved });
+  } catch {
+    res.json({ diff: null, message: 'Failed to retrieve git diff' });
   }
 });
 
