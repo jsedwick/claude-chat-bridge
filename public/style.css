@@ -2845,67 +2845,116 @@ pre.streaming {
   color: var(--text-secondary);
 }
 
-/* EasyMDE overrides */
-.kb-content .EasyMDEContainer {
-  border: none;
+/* Toast UI Editor overrides */
+.kb-content .toastui-editor-defaultUI {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.kb-content .EasyMDEContainer .CodeMirror {
+.kb-content .toastui-editor-defaultUI .toastui-editor-toolbar {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.kb-content .toastui-editor-toolbar-icons {
+  background-color: transparent;
+  border: 1px solid transparent;
+}
+
+.kb-content .toastui-editor-toolbar-icons:hover {
+  background-color: var(--border);
+  border-color: var(--border);
+}
+
+.kb-content .toastui-editor-toolbar-icons.active {
+  background-color: var(--border);
+}
+
+.kb-content .toastui-editor-toolbar-divider {
+  background-color: var(--border);
+}
+
+.kb-content .toastui-editor-ww-container,
+.kb-content .toastui-editor-md-container {
   background: var(--bg-input);
+}
+
+.kb-content .toastui-editor-ww-container .toastui-editor-contents,
+.kb-content .toastui-editor-md-container .toastui-editor-md-preview {
   color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 0 0 8px 8px;
-  font-family: var(--font-mono);
   font-size: 14px;
   line-height: 1.6;
-  padding: 8px;
 }
 
-.kb-content .EasyMDEContainer .CodeMirror-cursor {
-  border-left-color: var(--text-primary);
+.kb-content .toastui-editor-contents p,
+.kb-content .toastui-editor-contents li {
+  color: var(--text-primary);
 }
 
-.kb-content .EasyMDEContainer .CodeMirror-selected {
-  background: var(--accent);
-  opacity: 0.3;
+.kb-content .toastui-editor-contents h1,
+.kb-content .toastui-editor-contents h2,
+.kb-content .toastui-editor-contents h3,
+.kb-content .toastui-editor-contents h4,
+.kb-content .toastui-editor-contents h5,
+.kb-content .toastui-editor-contents h6 {
+  color: var(--text-primary);
+  border-bottom-color: var(--border);
 }
 
-.kb-content .editor-toolbar {
+.kb-content .toastui-editor-contents a {
+  color: var(--accent);
+}
+
+.kb-content .toastui-editor-contents code {
   background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 8px 8px 0 0;
-  opacity: 1;
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 2px 4px;
 }
 
-.kb-content .editor-toolbar button {
-  color: var(--text-secondary) !important;
+.kb-content .toastui-editor-contents pre {
+  background: var(--bg-secondary);
+  border-radius: 6px;
+}
+
+.kb-content .toastui-editor-contents pre code {
+  color: var(--text-primary);
+}
+
+.kb-content .toastui-editor-contents blockquote {
+  border-left-color: var(--accent);
+  color: var(--text-secondary);
+}
+
+.kb-content .toastui-editor-contents hr {
+  border-color: var(--border);
+}
+
+.kb-content .toastui-editor-contents table th,
+.kb-content .toastui-editor-contents table td {
+  border-color: var(--border);
+}
+
+.kb-content .toastui-editor-contents table th {
+  background: var(--bg-secondary);
+}
+
+/* Toast UI mode switch tabs */
+.kb-content .toastui-editor-mode-switch {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+.kb-content .toastui-editor-mode-switch .tab-item {
+  background: transparent;
+  color: var(--text-secondary);
   border: none;
 }
 
-.kb-content .editor-toolbar button:hover {
-  background: var(--border);
-  color: var(--text-primary) !important;
-}
-
-.kb-content .editor-toolbar button.active {
-  background: var(--border);
-  color: var(--accent) !important;
-}
-
-.kb-content .editor-toolbar i.separator {
-  border-left-color: var(--border);
-  border-right-color: transparent;
-}
-
-.kb-content .EasyMDEContainer .editor-preview {
-  background: var(--bg-input);
+.kb-content .toastui-editor-mode-switch .tab-item.active {
   color: var(--text-primary);
-}
-
-.kb-content .EasyMDEContainer .editor-preview-side {
-  background: var(--bg-input);
-  color: var(--text-primary);
-  border-left: 1px solid var(--border);
+  border-bottom: 2px solid var(--accent);
 }
 
 /* Task checkbox rendering */
@@ -2927,12 +2976,11 @@ pre.streaming {
     border-right: none;
   }
 
-  .kb-content .EasyMDEContainer .CodeMirror {
-    font-size: 16px;
+  .kb-content .toastui-editor-defaultUI {
     border-radius: 0;
   }
 
-  .kb-content .editor-toolbar {
-    border-radius: 0;
+  .kb-content .toastui-editor-contents {
+    font-size: 16px; /* prevent iOS auto-zoom */
   }
 }

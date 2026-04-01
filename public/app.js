@@ -2766,7 +2766,8 @@ function browseForPath(inputId) {
 let kbCurrentFile = null;     // { path, name, content }
 let kbIsEditing = false;
 let kbShowingDiff = false;
-let kbEasyMDE = null;         // EasyMDE instance
+let kbEditor = null;          // Toast UI Editor instance
+let kbFrontmatter = '';       // Stashed frontmatter (stripped before editor, restored on save)
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
@@ -3322,10 +3323,12 @@ async function loadKbFile(filePath) {
     kbIsEditing = false;
     kbShowingDiff = false;
 
-    // Clean up EasyMDE if switching files while editing
-    if (kbEasyMDE) {
-      kbEasyMDE.toTextArea();
-      kbEasyMDE = null;
+    // Clean up Toast UI Editor if switching files while editing
+    if (kbEditor) {
+      kbEditor.destroy();
+      kbEditor = null;
+      kbFrontmatter = '';
+      document.getElementById('kb-editor').innerHTML = '';
     }
 
     document.getElementById('kb-title').textContent = data.name;
@@ -3523,42 +3526,74 @@ function toggleKbEdit() {
   document.getElementById('kb-diff-btn').style.display = 'none';
   document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
   document.getElementById('kb-editor').style.display = 'block';
-  document.getElementById('kb-editor').value = kbCurrentFile.content;
   document.getElementById('kb-edit-btn').style.display = 'none';
   document.getElementById('kb-save-btn').style.display = '';
   document.getElementById('kb-cancel-btn').style.display = '';
 
-  // Initialize EasyMDE on the textarea
-  if (kbEasyMDE) {
-    kbEasyMDE.toTextArea();
-    kbEasyMDE = null;
+  // Initialize Toast UI Editor in WYSIWYG mode
+  if (kbEditor) {
+    kbEditor.destroy();
+    kbEditor = null;
   }
-  kbEasyMDE = new EasyMDE({
-    element: document.getElementById('kb-editor'),
-    initialValue: kbCurrentFile.content,
-    spellChecker: false,
+
+  // Strip YAML frontmatter — editor can't handle it, we'll restore on save
+  kbFrontmatter = '';
+  let editContent = kbCurrentFile.content;
+  const fmMatch = editContent.match(/^---\r?\n([\s\S]*?\r?\n)---\r?\n?/);
+  if (fmMatch) {
+    kbFrontmatter = fmMatch[0];
+    editContent = editContent.slice(fmMatch[0].length);
+  }
+
+  const editorEl = document.getElementById('kb-editor');
+  editorEl.innerHTML = '';
+  kbEditor = new toastui.Editor({
+    el: editorEl,
+    initialEditType: 'wysiwyg',
+    initialValue: editContent,
+    previewStyle: 'vertical',
+    height: 'calc(100vh - 160px)',
+    usageStatistics: false,
     autofocus: true,
-    status: false,
-    toolbar: [
-      'bold', 'italic', 'heading', '|',
-      'unordered-list', 'ordered-list', 'checklist', '|',
-      'link', 'image', 'code', 'quote', '|',
-      'preview', 'side-by-side', '|',
-      'guide'
+    toolbarItems: [
+      ['heading', 'bold', 'italic', 'strike'],
+      ['hr', 'quote'],
+      ['ul', 'ol', 'task'],
+      ['table', 'link', {
+        name: 'imageUrl',
+        tooltip: 'Insert image (URL)',
+        className: 'toastui-editor-toolbar-icons image',
+        command: 'imageUrl',
+      }, 'code', 'codeblock'],
     ],
-    minHeight: 'calc(100vh - 160px)',
-    sideBySideFullscreen: false,
-    previewImagesInEditor: false,
+  });
+
+  // Custom image URL-only button — no file upload
+  kbEditor.addCommand('wysiwyg', 'imageUrl', () => {
+    const url = prompt('Image URL:');
+    if (!url) return;
+    const alt = prompt('Description (optional):') || '';
+    kbEditor.insertText(`![${alt}](${url})`);
+    return true;
+  });
+  kbEditor.addCommand('markdown', 'imageUrl', () => {
+    const url = prompt('Image URL:');
+    if (!url) return;
+    const alt = prompt('Description (optional):') || '';
+    kbEditor.insertText(`![${alt}](${url})`);
+    return true;
   });
 }
 
 function cancelKbEdit() {
   kbIsEditing = false;
+  kbFrontmatter = '';
 
-  // Destroy EasyMDE instance
-  if (kbEasyMDE) {
-    kbEasyMDE.toTextArea();
-    kbEasyMDE = null;
+  // Destroy Toast UI Editor instance
+  if (kbEditor) {
+    kbEditor.destroy();
+    kbEditor = null;
+    document.getElementById('kb-editor').innerHTML = '';
   }
 
   document.getElementById('kb-rendered').style.display = '';
@@ -3570,8 +3605,20 @@ function cancelKbEdit() {
   document.getElementById('kb-cancel-btn').style.display = 'none';
 }
 
+// Clean up Toast UI's overly aggressive markdown escaping
+function cleanToastMarkdown(md) {
+  return md
+    // Restore wiki-links: \[\[...\]\] → [[...]]
+    .replace(/\\\[\\\[/g, '[[')
+    .replace(/\\\]\\\]/g, ']]')
+    // Remove backslash escapes before hyphens, underscores, and pipes inside links/text
+    .replace(/\\([_\-|])/g, '$1');
+}
+
 async function saveKbFile() {
-  const content = kbEasyMDE ? kbEasyMDE.value() : document.getElementById('kb-editor').value;
+  const rawContent = kbEditor ? kbEditor.getMarkdown() : '';
+  const editorContent = cleanToastMarkdown(rawContent);
+  const content = kbFrontmatter + editorContent;
   try {
     const res = await fetch('/api/vault/kb/file', {
       method: 'PUT',
