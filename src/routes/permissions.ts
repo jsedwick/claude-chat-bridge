@@ -5,6 +5,7 @@ import { getObsidianRoot } from '../config';
 import {
   isAutoAllowed,
   isBashAskCommand,
+  isToolAskCommand,
   isSessionAllowed,
   createPermissionRequest,
   resolvePermission,
@@ -39,8 +40,11 @@ router.post('/request', async (req: Request, res: Response) => {
       return;
     }
     // Falls through to vault-dir check, session-allow, or permission dialog
+  } else if (isToolAskCommand(tool_name)) {
+    // Tool explicitly requires permission — falls through to permission dialog
+    console.log(`[permissions] tool requires permission: ${tool_name}`);
   } else if (isAutoAllowed(tool_name)) {
-    // Auto-allow all non-Bash tools
+    // Auto-allow all other non-Bash tools
     console.log(`[permissions] auto-allow: ${tool_name}`);
     res.json({ decision: 'allow' });
     return;

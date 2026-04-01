@@ -14,13 +14,18 @@ interface PendingPermission {
   timer: ReturnType<typeof setTimeout>;
 }
 
-// All tools are auto-allowed except specific Bash commands listed below
+// All tools are auto-allowed except specific Bash commands and tools listed below
 const AUTO_ALLOW_ALL = true;
 
 // Bash commands that require user approval via the permission dialog
 const BASH_ASK_PATTERNS = [
   /^git\s+(add|commit|push)\b/,
   /\brm\s/,
+];
+
+// Non-Bash tools that require user approval via the permission dialog
+const TOOL_ASK_PATTERNS = [
+  /\bcode_file$/,
 ];
 
 // Check if a Bash command needs user permission
@@ -39,6 +44,10 @@ const sessionAllowAll = new Map<string, Set<string>>();
 
 export function isBashAskCommand(toolInput: Record<string, unknown>): boolean {
   return bashNeedsPermission(toolInput);
+}
+
+export function isToolAskCommand(toolName: string): boolean {
+  return TOOL_ASK_PATTERNS.some(pattern => pattern.test(toolName));
 }
 
 export function isAutoAllowed(toolName: string): boolean {

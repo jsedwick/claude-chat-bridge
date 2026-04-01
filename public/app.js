@@ -2122,6 +2122,8 @@ function showPermissionDialog(id, toolName, toolInput) {
     detail = toolInput.command;
   } else if ((toolName === 'Edit' || toolName === 'Write') && toolInput?.file_path) {
     detail = toolInput.file_path;
+  } else if (toolInput?.file_path) {
+    detail = `${toolInput.operation || 'write'}: ${toolInput.file_path}`;
   } else if (toolInput) {
     const json = JSON.stringify(toolInput, null, 2);
     detail = json.length > 500 ? json.substring(0, 500) + '...' : json;
