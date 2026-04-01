@@ -95,6 +95,10 @@ html, body {
   transform: translateX(0);
 }
 
+.sidebar.open ~ .chat-main .btn-menu {
+  visibility: hidden;
+}
+
 .sidebar-header {
   padding: 16px;
   border-bottom: 1px solid var(--border);
@@ -1824,6 +1828,10 @@ pre.streaming {
     transform: translateX(0);
     position: relative;
     z-index: auto;
+  }
+
+  .btn-menu {
+    display: none;
   }
 
   .sidebar-overlay {
