@@ -68,6 +68,12 @@
             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
           </svg>
         </button>
+        <button id="kb-toolbar-recent" class="kb-toolbar-btn" onclick="toggleKbRecentView()" aria-label="Recently updated files" title="Recent files">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </button>
         <button id="kb-toolbar-collapse" class="kb-toolbar-btn" onclick="collapseAllKbDirs()" aria-label="Collapse all folders" title="Collapse all">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="4 14 10 14 10 20"/>
@@ -85,6 +91,7 @@
       <div id="kb-tree" class="kb-tree"></div>
       <div id="kb-search-results" class="kb-search-results" style="display:none"></div>
       <div id="kb-bookmarks-list" class="kb-bookmarks-list" style="display:none"></div>
+      <div id="kb-recent-list" class="kb-recent-list" style="display:none"></div>
     </div>
     <!-- Settings view (sidebar nav) -->
     <div id="settings-view" class="settings-nav" style="display:none">
@@ -178,7 +185,7 @@
           <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
         </svg>
       </button>
-      <h1 id="kb-title" class="chat-title" style="cursor:default">Knowledge Base</h1>
+      <h1 id="kb-title" class="chat-title" style="cursor:default" ondblclick="renameCurrentKbFile()">Knowledge Base</h1>
       <div class="kb-header-actions">
         <button id="kb-diff-btn" class="kb-action-btn" style="display:none" onclick="toggleKbDiff()" aria-label="Diff">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

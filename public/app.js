@@ -2927,6 +2927,7 @@ const kbTreeCache = new Map(); // path -> entries
 let kbSearchTimer = null;
 let kbBookmarks = JSON.parse(localStorage.getItem('kb-bookmarks') || '[]'); // [{path, name}]
 let kbShowingBookmarks = false;
+let kbShowingRecent = false;
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
@@ -2941,19 +2942,29 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('kb-search-results').style.display = 'none';
         document.getElementById('kb-search-results').innerHTML = '';
         document.getElementById('kb-bookmarks-list').style.display = 'none';
+        document.getElementById('kb-recent-list').style.display = 'none';
         document.getElementById('kb-tree').style.display = '';
         if (kbShowingBookmarks) {
           kbShowingBookmarks = false;
           document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
         }
+        if (kbShowingRecent) {
+          kbShowingRecent = false;
+          document.getElementById('kb-toolbar-recent').classList.remove('active');
+        }
         return;
       }
-      // Hide bookmarks and tree when searching
+      // Hide bookmarks, recent, and tree when searching
       document.getElementById('kb-bookmarks-list').style.display = 'none';
+      document.getElementById('kb-recent-list').style.display = 'none';
       document.getElementById('kb-tree').style.display = 'none';
       if (kbShowingBookmarks) {
         kbShowingBookmarks = false;
         document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
+      }
+      if (kbShowingRecent) {
+        kbShowingRecent = false;
+        document.getElementById('kb-toolbar-recent').classList.remove('active');
       }
       kbSearchTimer = setTimeout(() => kbSearchDocs(q), 200);
     });
@@ -2963,10 +2974,15 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('kb-search-results').style.display = 'none';
       document.getElementById('kb-search-results').innerHTML = '';
       document.getElementById('kb-bookmarks-list').style.display = 'none';
+      document.getElementById('kb-recent-list').style.display = 'none';
       document.getElementById('kb-tree').style.display = '';
       if (kbShowingBookmarks) {
         kbShowingBookmarks = false;
         document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
+      }
+      if (kbShowingRecent) {
+        kbShowingRecent = false;
+        document.getElementById('kb-toolbar-recent').classList.remove('active');
       }
       searchInput.focus();
     });
@@ -3161,6 +3177,170 @@ async function kbMoveFile(sourcePath, destDirPath) {
   }
 }
 
+// Delete a KB file
+async function deleteKbFile(filePath, dirPath) {
+  const fileName = filePath.split('/').pop();
+  if (!confirm(`Delete "${fileName}"?`)) return;
+  try {
+    const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) {
+      alert('Delete failed: ' + data.error);
+      return;
+    }
+    // Clear current file if it was the deleted one
+    if (kbCurrentFile && kbCurrentFile.path === filePath) {
+      kbCurrentFile = null;
+      document.getElementById('kb-title').textContent = 'Knowledge Base';
+      document.getElementById('kb-title').style.cursor = 'default';
+      document.getElementById('kb-welcome').style.display = '';
+      document.getElementById('kb-rendered').style.display = 'none';
+      document.getElementById('kb-diff-btn').style.display = 'none';
+      document.getElementById('kb-edit-btn').style.display = 'none';
+      document.getElementById('kb-bookmark-toggle').style.display = 'none';
+    }
+    // Remove from bookmarks if bookmarked
+    const bmIdx = kbBookmarks.findIndex(b => b.path === filePath);
+    if (bmIdx !== -1) {
+      kbBookmarks.splice(bmIdx, 1);
+      localStorage.setItem('kb-bookmarks', JSON.stringify(kbBookmarks));
+      if (kbShowingBookmarks) renderKbBookmarksList();
+    }
+    // Refresh tree
+    kbTreeCache.delete(dirPath);
+    await reloadKbSubtree(dirPath);
+  } catch (err) {
+    console.error('Failed to delete KB file:', err);
+  }
+}
+
+// Create a new file in a directory, then immediately enter rename mode
+async function createKbFile(dirPath, childrenContainer, chevron, depth) {
+  // Ensure directory is expanded
+  if (!kbExpandedDirs.has(dirPath)) {
+    kbExpandedDirs.add(dirPath);
+    chevron.classList.add('expanded');
+    childrenContainer.classList.remove('collapsed');
+
+    if (!kbTreeCache.has(dirPath)) {
+      const data = await loadKbTree(dirPath);
+      if (data) {
+        childrenContainer.innerHTML = '';
+        for (const child of data.entries) {
+          childrenContainer.appendChild(createKbTreeNode(child, depth + 1));
+        }
+      }
+    }
+  }
+
+  // Find a unique name
+  let tempName = 'Untitled';
+  let filePath = dirPath + '/' + tempName + '.md';
+  let counter = 1;
+  // Check cache for existing names to avoid 409s
+  const cached = kbTreeCache.get(dirPath);
+  if (cached) {
+    const names = new Set(cached.map(e => e.name));
+    while (names.has(tempName)) {
+      tempName = 'Untitled ' + counter++;
+    }
+    filePath = dirPath + '/' + tempName + '.md';
+  }
+
+  try {
+    const res = await fetch('/api/vault/kb/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Create failed: ' + data.error);
+      return;
+    }
+
+    // Refresh tree to show the new file
+    kbTreeCache.delete(dirPath);
+    await reloadKbSubtree(dirPath);
+
+    // Find the new file's name span and start rename
+    const newItem = childrenContainer.querySelector(`.kb-tree-item[data-path="${CSS.escape(data.path)}"]`);
+    if (newItem) {
+      const nameSpan = newItem.querySelector('.kb-tree-name');
+      if (nameSpan) {
+        startKbRename(data.path, nameSpan);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to create KB file:', err);
+  }
+}
+
+// Rename a KB file via inline editing
+function startKbRename(entryPath, nameEl) {
+  const originalName = nameEl.textContent;
+  nameEl.contentEditable = true;
+  nameEl.classList.add('editing');
+  nameEl.focus();
+  const range = document.createRange();
+  range.selectNodeContents(nameEl);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  async function finish() {
+    nameEl.contentEditable = false;
+    nameEl.classList.remove('editing');
+    const newName = nameEl.textContent.trim();
+    if (!newName || newName === originalName) {
+      nameEl.textContent = originalName;
+      return;
+    }
+    const dir = entryPath.substring(0, entryPath.lastIndexOf('/'));
+    const newPath = dir + '/' + newName + '.md';
+    try {
+      const res = await fetch('/api/vault/kb/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: entryPath, destination: newPath }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert('Rename failed: ' + data.error);
+        nameEl.textContent = originalName;
+        return;
+      }
+      if (kbCurrentFile && kbCurrentFile.path === entryPath) {
+        kbCurrentFile.path = data.path;
+        kbCurrentFile.name = newName;
+        document.getElementById('kb-title').textContent = newName;
+      }
+      const bmIdx = kbBookmarks.findIndex(b => b.path === entryPath);
+      if (bmIdx !== -1) {
+        kbBookmarks[bmIdx].path = data.path;
+        kbBookmarks[bmIdx].name = newName;
+        localStorage.setItem('kb-bookmarks', JSON.stringify(kbBookmarks));
+        if (kbShowingBookmarks) renderKbBookmarksList();
+      }
+      kbTreeCache.delete(dir);
+      await reloadKbSubtree(dir);
+    } catch (err) {
+      console.error('Failed to rename KB file:', err);
+      nameEl.textContent = originalName;
+    }
+  }
+
+  nameEl.onblur = finish;
+  nameEl.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+    if (e.key === 'Escape') { nameEl.contentEditable = false; nameEl.classList.remove('editing'); nameEl.textContent = originalName; }
+  };
+}
+
+function renameCurrentKbFile() {
+  if (!kbCurrentFile) return;
+  startKbRename(kbCurrentFile.path, document.getElementById('kb-title'));
+}
+
 async function reloadKbSubtree(dirPath) {
   // Fetch fresh data for this directory
   kbTreeCache.delete(dirPath);
@@ -3324,6 +3504,17 @@ function createKbTreeNode(entry, depth) {
     nameSpan.textContent = entry.name;
     item.appendChild(nameSpan);
 
+    // New file button (visible on hover)
+    const addBtn = document.createElement('button');
+    addBtn.className = 'kb-tree-add-btn';
+    addBtn.title = 'Create file';
+    addBtn.innerHTML = '+';
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      createKbFile(entry.path, children, chevron, depth);
+    });
+    item.appendChild(addBtn);
+
     wrapper.appendChild(item);
     wrapper.appendChild(children);
   } else {
@@ -3359,6 +3550,23 @@ function createKbTreeNode(entry, depth) {
       }
       loadKbFile(entry.path);
     });
+
+    nameSpan.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      startKbRename(entry.path, nameSpan);
+    });
+
+    // Delete button (visible on hover)
+    const delBtn = document.createElement('button');
+    delBtn.className = 'kb-tree-del-btn';
+    delBtn.title = 'Delete file';
+    delBtn.innerHTML = '&times;';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const dirPath = entry.path.substring(0, entry.path.lastIndexOf('/'));
+      deleteKbFile(entry.path, dirPath);
+    });
+    item.appendChild(delBtn);
 
     wrapper.appendChild(item);
   }
@@ -3568,6 +3776,7 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     }
 
     document.getElementById('kb-title').textContent = data.name;
+    document.getElementById('kb-title').style.cursor = 'pointer';
     document.getElementById('kb-welcome').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
     document.getElementById('kb-diff').style.display = 'none';
@@ -3670,11 +3879,19 @@ function toggleKbBookmarksView() {
   const tree = document.getElementById('kb-tree');
   const searchResults = document.getElementById('kb-search-results');
   const bookmarksList = document.getElementById('kb-bookmarks-list');
+  const recentList = document.getElementById('kb-recent-list');
   const toolbarBtn = document.getElementById('kb-toolbar-bookmarks');
+  const recentBtn = document.getElementById('kb-toolbar-recent');
 
   kbShowingBookmarks = !kbShowingBookmarks;
 
   if (kbShowingBookmarks) {
+    // Exit recent if active
+    if (kbShowingRecent) {
+      kbShowingRecent = false;
+      recentList.style.display = 'none';
+      recentBtn.classList.remove('active');
+    }
     tree.style.display = 'none';
     searchResults.style.display = 'none';
     bookmarksList.style.display = '';
@@ -3743,12 +3960,97 @@ function collapseAllKbDirs() {
   tree.querySelectorAll('.kb-tree-children').forEach(children => {
     children.classList.add('collapsed');
   });
-  // Exit bookmarks view if active
+  // Exit bookmarks/recent view if active
   if (kbShowingBookmarks) {
     kbShowingBookmarks = false;
     document.getElementById('kb-bookmarks-list').style.display = 'none';
     document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
     tree.style.display = '';
+  }
+  if (kbShowingRecent) {
+    kbShowingRecent = false;
+    document.getElementById('kb-recent-list').style.display = 'none';
+    document.getElementById('kb-toolbar-recent').classList.remove('active');
+    tree.style.display = '';
+  }
+}
+
+// ---- KB Recent Files ----
+
+function toggleKbRecentView() {
+  const tree = document.getElementById('kb-tree');
+  const searchResults = document.getElementById('kb-search-results');
+  const bookmarksList = document.getElementById('kb-bookmarks-list');
+  const recentList = document.getElementById('kb-recent-list');
+  const toolbarBtn = document.getElementById('kb-toolbar-recent');
+  const bookmarksBtn = document.getElementById('kb-toolbar-bookmarks');
+
+  kbShowingRecent = !kbShowingRecent;
+
+  if (kbShowingRecent) {
+    // Exit bookmarks if active
+    if (kbShowingBookmarks) {
+      kbShowingBookmarks = false;
+      bookmarksList.style.display = 'none';
+      bookmarksBtn.classList.remove('active');
+    }
+    tree.style.display = 'none';
+    searchResults.style.display = 'none';
+    recentList.style.display = '';
+    toolbarBtn.classList.add('active');
+    loadKbRecentFiles();
+  } else {
+    recentList.style.display = 'none';
+    tree.style.display = '';
+    toolbarBtn.classList.remove('active');
+  }
+}
+
+async function loadKbRecentFiles() {
+  const container = document.getElementById('kb-recent-list');
+  container.innerHTML = '<div class="kb-bookmarks-empty">Loading…</div>';
+
+  try {
+    const resp = await fetch('/api/vault/kb/recent');
+    const data = await resp.json();
+
+    if (!data.results || data.results.length === 0) {
+      container.innerHTML = '<div class="kb-bookmarks-empty">No recent files found.</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    for (const file of data.results) {
+      const item = document.createElement('div');
+      item.className = 'kb-bookmark-item';
+
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.setAttribute('width', '14');
+      icon.setAttribute('height', '14');
+      icon.setAttribute('fill', 'none');
+      icon.setAttribute('stroke', 'currentColor');
+      icon.setAttribute('stroke-width', '2');
+      icon.innerHTML = '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>';
+
+      const textWrap = document.createElement('div');
+      textWrap.className = 'kb-recent-text';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'kb-recent-name';
+      nameSpan.textContent = file.name;
+      const folderSpan = document.createElement('span');
+      folderSpan.className = 'kb-recent-folder';
+      folderSpan.textContent = file.folder;
+      textWrap.appendChild(nameSpan);
+      textWrap.appendChild(folderSpan);
+
+      item.appendChild(icon);
+      item.appendChild(textWrap);
+      item.addEventListener('click', () => loadKbFile(file.path));
+      container.appendChild(item);
+    }
+  } catch (err) {
+    container.innerHTML = '<div class="kb-bookmarks-empty">Failed to load recent files.</div>';
   }
 }
 

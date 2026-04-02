@@ -2581,6 +2581,34 @@ pre.streaming {
   padding: 24px 12px;
 }
 
+/* KB Recent files list in sidebar */
+.kb-recent-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.kb-recent-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.kb-recent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-recent-folder {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .kb-tree {
   flex: 1;
   overflow-y: auto;
@@ -2685,6 +2713,64 @@ pre.streaming {
 .kb-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.kb-tree-name.editing {
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.kb-tree-add-btn {
+  visibility: hidden;
+  margin-left: auto;
+  padding: 0 5px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: bold;
+  line-height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.kb-tree-add-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.kb-tree-item:hover > .kb-tree-add-btn {
+  visibility: visible;
+}
+
+.kb-tree-del-btn {
+  visibility: hidden;
+  margin-left: auto;
+  padding: 0 5px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: bold;
+  line-height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.kb-tree-del-btn:hover {
+  color: var(--error, #e74c3c);
+  border-color: var(--error, #e74c3c);
+}
+
+.kb-tree-item:hover > .kb-tree-del-btn {
+  visibility: visible;
 }
 
 .kb-tree-children {

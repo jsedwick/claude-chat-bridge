@@ -286,6 +286,60 @@ router.get('/kb/search', (req: Request, res: Response) => {
   res.json({ results });
 });
 
+// 50 most recently modified .md files across all vaults
+router.get('/kb/recent', (_req: Request, res: Response) => {
+  const root = getObsidianRoot();
+  const vaultNames = getObsidianVaults();
+  const files: { name: string; path: string; folder: string; modified: number }[] = [];
+
+  function walk(dir: string) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full);
+      } else if (e.isFile() && e.name.endsWith('.md')) {
+        try {
+          const stat = fs.statSync(full);
+          files.push({
+            name: e.name.replace(/\.md$/, ''),
+            path: full,
+            folder: path.relative(root, dir),
+            modified: stat.mtimeMs,
+          });
+        } catch {
+          // skip unreadable files
+        }
+      }
+    }
+  }
+
+  for (const vault of vaultNames) {
+    const vaultDir = path.join(root, vault);
+    if (fs.existsSync(vaultDir)) {
+      walk(vaultDir);
+    }
+  }
+
+  files.sort((a, b) => b.modified - a.modified);
+  const top = files.slice(0, 50);
+
+  res.json({
+    results: top.map(f => ({
+      name: f.name,
+      path: f.path,
+      folder: f.folder,
+      modified: new Date(f.modified).toISOString(),
+    })),
+  });
+});
+
 function validateKbPath(filePath: string): string | null {
   const resolved = path.resolve(filePath);
   const root = getObsidianRoot();
@@ -443,6 +497,68 @@ router.put('/kb/file', (req: Request, res: Response) => {
   try {
     fs.writeFileSync(resolved, content, 'utf-8');
     // Clear wiki-link cache since file changed
+    wikiLinkCache = null;
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a new markdown file
+router.post('/kb/file', (req: Request, res: Response) => {
+  const { path: filePath } = req.body;
+  if (!filePath) {
+    res.status(400).json({ error: 'Path required' });
+    return;
+  }
+
+  const resolved = validateKbPath(filePath);
+  if (!resolved || !resolved.endsWith('.md')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (fs.existsSync(resolved)) {
+    res.status(409).json({ error: 'File already exists' });
+    return;
+  }
+
+  const dir = path.dirname(resolved);
+  if (!fs.existsSync(dir)) {
+    res.status(400).json({ error: 'Directory does not exist' });
+    return;
+  }
+
+  try {
+    fs.writeFileSync(resolved, '', 'utf-8');
+    wikiLinkCache = null;
+    res.json({ success: true, path: resolved, name: path.basename(resolved, '.md') });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a markdown file
+router.delete('/kb/file', (req: Request, res: Response) => {
+  const filePath = req.query.path as string;
+  if (!filePath) {
+    res.status(400).json({ error: 'Path required' });
+    return;
+  }
+
+  const resolved = validateKbPath(filePath);
+  if (!resolved || !resolved.endsWith('.md')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (!fs.existsSync(resolved)) {
+    res.status(404).json({ error: 'File not found' });
+    return;
+  }
+
+  try {
+    fs.unlinkSync(resolved);
     wikiLinkCache = null;
     res.json({ success: true });
   } catch (err: any) {
