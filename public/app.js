@@ -2471,7 +2471,16 @@ async function renderUpdatesSettings(container) {
         </svg>
         Release Notes
       </button>` : ''}
+      <button class="settings-theme-btn" onclick="updateClaudeCli()">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Update CLI
+      </button>
     </div>
+    <div id="cli-update-status"></div>
   `;
 
   // Acknowledge current version as seen (dismisses startup banner)
@@ -2490,6 +2499,44 @@ async function checkVersionUpdate() {
   versionData = null;
   const container = document.getElementById('settings-content');
   renderUpdatesSettings(container);
+}
+
+async function updateClaudeCli() {
+  const statusEl = document.getElementById('cli-update-status');
+  if (!statusEl) return;
+  statusEl.innerHTML = '<div class="version-loading">Updating Claude Code CLI...</div>';
+  try {
+    const res = await fetch('/api/settings/update-cli', { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      statusEl.innerHTML = `
+        <div class="git-pull-result">
+          <div class="git-pull-result-header">
+            <span class="git-pull-result-name">@anthropic-ai/claude-code</span>
+            <span class="version-badge version-badge-current">${data.updated ? 'Updated' : 'Up to date'}</span>
+          </div>
+          ${data.output ? `<pre class="git-pull-output">${escapeHtml(data.output)}</pre>` : ''}
+        </div>
+      `;
+      if (data.updated) {
+        versionData = null;
+        const container = document.getElementById('settings-content');
+        renderUpdatesSettings(container);
+      }
+    } else {
+      statusEl.innerHTML = `
+        <div class="git-pull-result">
+          <div class="git-pull-result-header">
+            <span class="git-pull-result-name">@anthropic-ai/claude-code</span>
+            <span class="version-badge version-badge-error">Failed</span>
+          </div>
+          ${data.output ? `<pre class="git-pull-output">${escapeHtml(data.output)}</pre>` : ''}
+        </div>
+      `;
+    }
+  } catch {
+    statusEl.innerHTML = '<div class="version-error">Failed to update Claude Code CLI.</div>';
+  }
 }
 
 async function pullProjectUpdates() {

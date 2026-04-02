@@ -238,6 +238,19 @@ router.post('/git-pull', async (_req: Request, res: Response) => {
   res.json({ results });
 });
 
+// POST /api/settings/update-cli — update Claude Code CLI via npm
+router.post('/update-cli', async (_req: Request, res: Response) => {
+  try {
+    const { stdout, stderr } = await execFileAsync('npm', ['update', '-g', '@anthropic-ai/claude-code'], { timeout: 120000 });
+    const output = (stdout + stderr).trim();
+    const updated = !output.includes('up to date') || output.includes('added') || output.includes('changed');
+    res.json({ success: true, updated, output });
+  } catch (err: any) {
+    const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
+    res.json({ success: false, updated: false, output });
+  }
+});
+
 // POST /api/settings/restart — restart the server via launchctl
 router.post('/restart', (_req: Request, res: Response) => {
   const uid = process.getuid?.() ?? 501;
