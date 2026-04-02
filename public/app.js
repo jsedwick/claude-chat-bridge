@@ -2209,13 +2209,11 @@ function switchView(view) {
     document.getElementById('sidebar-view-menu').style.display = 'none';
     return;
   }
-  // Guard against navigating away from KB with unsaved edits
+  // Guard against navigating away from KB while editing — flush autosave first
   if (currentView === 'kb' && kbIsEditing) {
-    if (!confirm('You have unsaved changes. Discard them?')) {
-      document.getElementById('sidebar-view-menu').style.display = 'none';
-      return;
-    }
-    kbIsEditing = false;
+    clearTimeout(kbAutosaveTimer);
+    kbAutosave();
+    cancelKbEdit();
   }
   currentView = view;
   document.getElementById('sidebar-view-menu').style.display = 'none';
@@ -2925,6 +2923,7 @@ let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
 let kbSearchTimer = null;
+let kbAutosaveTimer = null;
 let kbBookmarks = JSON.parse(localStorage.getItem('kb-bookmarks') || '[]'); // [{path, name}]
 let kbShowingBookmarks = false;
 let kbShowingRecent = false;
@@ -3018,8 +3017,9 @@ async function kbSearchDocs(query) {
         `<span class="kb-search-result-folder">${escapeHtml(r.folder)}</span>`;
       item.addEventListener('click', () => {
         if (kbIsEditing) {
-          if (!confirm('You have unsaved changes. Discard them?')) return;
-          kbIsEditing = false;
+          clearTimeout(kbAutosaveTimer);
+          kbAutosave();
+          cancelKbEdit();
         }
         loadKbFile(r.path);
       });
@@ -3546,8 +3546,9 @@ function createKbTreeNode(entry, depth) {
 
     item.addEventListener('click', () => {
       if (kbIsEditing) {
-        if (!confirm('You have unsaved changes. Discard them?')) return;
-        kbIsEditing = false;
+        clearTimeout(kbAutosaveTimer);
+        kbAutosave();
+        cancelKbEdit();
       }
       loadKbFile(entry.path);
     });
@@ -4280,6 +4281,9 @@ async function toggleKbEdit() {
     ],
   });
 
+  // Autosave on content changes (debounced 2s)
+  kbEditor.on('change', scheduleKbAutosave);
+
   // Custom image URL-only button — no file upload
   kbEditor.addCommand('wysiwyg', 'imageUrl', () => {
     const url = prompt('Image URL:');
@@ -4302,6 +4306,7 @@ async function toggleKbEdit() {
 }
 
 function cancelKbEdit() {
+  clearTimeout(kbAutosaveTimer);
   kbIsEditing = false;
   kbFrontmatter = '';
 
@@ -4319,6 +4324,8 @@ function cancelKbEdit() {
   document.getElementById('kb-edit-btn').style.display = '';
   document.getElementById('kb-save-btn').style.display = 'none';
   document.getElementById('kb-cancel-btn').style.display = 'none';
+  const statusEl = document.getElementById('kb-save-status');
+  if (statusEl) statusEl.remove();
 }
 
 // Clean up Toast UI's overly aggressive markdown escaping
@@ -4440,7 +4447,56 @@ async function applyTemplate(template) {
   }
 }
 
+function showKbSaveStatus(text, type = 'info') {
+  let el = document.getElementById('kb-save-status');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'kb-save-status';
+    el.style.cssText = 'font-size:12px;margin-left:8px;opacity:0.7;transition:opacity 0.3s';
+    document.getElementById('kb-save-btn').parentNode.insertBefore(el, document.getElementById('kb-save-btn'));
+  }
+  el.textContent = text;
+  el.style.color = type === 'error' ? '#e74c3c' : '#888';
+  el.style.opacity = '1';
+  if (type !== 'error') {
+    setTimeout(() => { el.style.opacity = '0'; }, 2000);
+  }
+}
+
+async function kbAutosave() {
+  if (!kbEditor || !kbCurrentFile || !kbIsEditing) return;
+  const rawContent = kbEditor.getMarkdown();
+  const editorContent = cleanToastMarkdown(rawContent);
+  const content = kbFrontmatter + editorContent;
+  // Skip save if content hasn't actually changed
+  if (content === kbCurrentFile.content) return;
+  try {
+    showKbSaveStatus('Saving...');
+    const res = await fetch('/api/vault/kb/file', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: kbCurrentFile.path, content }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      kbCurrentFile.content = content;
+      showKbSaveStatus('Saved');
+    } else {
+      showKbSaveStatus('Save failed', 'error');
+    }
+  } catch (err) {
+    console.error('Autosave failed:', err);
+    showKbSaveStatus('Save failed', 'error');
+  }
+}
+
+function scheduleKbAutosave() {
+  clearTimeout(kbAutosaveTimer);
+  kbAutosaveTimer = setTimeout(kbAutosave, 2000);
+}
+
 async function saveKbFile() {
+  clearTimeout(kbAutosaveTimer);
   const rawContent = kbEditor ? kbEditor.getMarkdown() : '';
   const editorContent = cleanToastMarkdown(rawContent);
   const content = kbFrontmatter + editorContent;
