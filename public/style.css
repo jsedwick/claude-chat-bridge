@@ -1034,6 +1034,11 @@ pre.streaming {
 }
 
 /* Tool use group (collapsed by default) */
+/* Hide tool groups when user preference is set */
+[data-hide-tools="true"] .tool-group {
+  display: none !important;
+}
+
 .tool-group {
   background: var(--tool-bg);
   border: 1px solid var(--tool-border);

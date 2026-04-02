@@ -311,10 +311,13 @@ document.addEventListener('click', (e) => {
 // Track which sessions are actively working (polled from backend)
 let activeSessionIds = new Set();
 
-// Apply saved theme before first paint
+// Apply saved theme and tool visibility before first paint
 (function() {
   const saved = localStorage.getItem('chat-bridge-theme');
   if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  if (localStorage.getItem('chat-bridge-hide-tools') === 'true') {
+    document.documentElement.setAttribute('data-hide-tools', 'true');
+  }
 })();
 
 // Initialize — always start in work mode on page load
@@ -2354,7 +2357,34 @@ function renderAppearanceSettings(container) {
         </button>
       </div>
     </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Tool Usage Display</div>
+      <div class="settings-section-desc">Show or hide the "Tools used" groups in chat messages.</div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${localStorage.getItem('chat-bridge-hide-tools') !== 'true' ? 'active' : ''}" onclick="setHideTools(false)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+          Show
+        </button>
+        <button class="settings-theme-btn ${localStorage.getItem('chat-bridge-hide-tools') === 'true' ? 'active' : ''}" onclick="setHideTools(true)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+          Hide
+        </button>
+      </div>
+    </div>
   `;
+}
+
+function setHideTools(hide) {
+  localStorage.setItem('chat-bridge-hide-tools', hide ? 'true' : 'false');
+  document.documentElement.setAttribute('data-hide-tools', hide ? 'true' : 'false');
+  // Re-render to update active states
+  const container = document.getElementById('settings-content');
+  if (container) renderAppearanceSettings(container);
 }
 
 function setTheme(theme) {
@@ -2378,14 +2408,14 @@ async function renderUpdatesSettings(container) {
     </div>
     <div class="settings-section">
       <div class="settings-section-title">Project Source Updates</div>
-      <div class="settings-section-desc">Pull the latest changes from git for claude-chat-bridge and obsidian-mcp-server.</div>
+      <div class="settings-section-desc">Pull the latest changes from git, build, and restart the server.</div>
       <div id="git-pull-status"></div>
       <div class="version-actions" style="margin-top:12px">
         <button class="settings-theme-btn" onclick="pullProjectUpdates()">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
           </svg>
-          Pull Latest
+          Pull &amp; Restart
         </button>
       </div>
     </div>
@@ -2465,21 +2495,62 @@ async function checkVersionUpdate() {
 async function pullProjectUpdates() {
   const statusEl = document.getElementById('git-pull-status');
   if (!statusEl) return;
-  statusEl.innerHTML = '<div class="version-loading">Pulling updates...</div>';
+  statusEl.innerHTML = '<div class="version-loading">Pulling updates &amp; building...</div>';
   try {
     const res = await fetch('/api/settings/git-pull', { method: 'POST' });
     const data = await res.json();
-    statusEl.innerHTML = data.results.map(r => `
-      <div class="git-pull-result">
-        <div class="git-pull-result-header">
-          <span class="git-pull-result-name">${escapeHtml(r.name)}</span>
-          <span class="version-badge ${r.success ? 'version-badge-current' : 'version-badge-error'}">${r.success ? 'Success' : 'Failed'}</span>
+    const anyBuilt = data.results.some(r => r.built);
+    const allSuccess = data.results.every(r => r.success);
+
+    statusEl.innerHTML = data.results.map(r => {
+      let badge = '';
+      if (!r.success) {
+        badge = '<span class="version-badge version-badge-error">Failed</span>';
+      } else if (r.built) {
+        badge = '<span class="version-badge version-badge-current">Pulled &amp; Built</span>';
+      } else {
+        badge = '<span class="version-badge version-badge-current">Up to date</span>';
+      }
+      const pullSection = r.pullOutput ? `<pre class="git-pull-output">${escapeHtml(r.pullOutput)}</pre>` : '';
+      const buildSection = r.buildOutput ? `<div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">Build output:</div><pre class="git-pull-output">${escapeHtml(r.buildOutput)}</pre>` : '';
+      return `
+        <div class="git-pull-result">
+          <div class="git-pull-result-header">
+            <span class="git-pull-result-name">${escapeHtml(r.name)}</span>
+            ${badge}
+          </div>
+          ${pullSection}
+          ${buildSection}
         </div>
-        ${r.output ? `<pre class="git-pull-output">${escapeHtml(r.output)}</pre>` : ''}
-      </div>
-    `).join('');
+      `;
+    }).join('');
+
+    // If new code was built successfully, restart the server
+    if (anyBuilt && allSuccess) {
+      statusEl.innerHTML += '<div class="version-loading" style="margin-top:12px">Restarting server...</div>';
+      try {
+        await fetch('/api/settings/restart', { method: 'POST' });
+      } catch { /* expected — server is dying */ }
+      // Wait for server to come back, then reload
+      statusEl.innerHTML += '<div class="version-loading" style="margin-top:4px">Waiting for server to restart...</div>';
+      await waitForServer(10000);
+      window.location.reload();
+    }
   } catch {
-    statusEl.innerHTML = '<div class="version-error">Failed to run git pull.</div>';
+    statusEl.innerHTML = '<div class="version-error">Failed to pull updates.</div>';
+  }
+}
+
+async function waitForServer(timeoutMs) {
+  const start = Date.now();
+  // Initial delay to let the server shut down
+  await new Promise(r => setTimeout(r, 1500));
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch('/api/settings/version', { signal: AbortSignal.timeout(2000) });
+      if (res.ok) return;
+    } catch { /* server not up yet */ }
+    await new Promise(r => setTimeout(r, 500));
   }
 }
 

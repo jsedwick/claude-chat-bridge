@@ -198,7 +198,7 @@ router.get('/version', async (_req: Request, res: Response) => {
   });
 });
 
-// POST /api/settings/git-pull — run git pull on both project directories
+// POST /api/settings/git-pull — run git pull and npm run build on both project directories
 router.post('/git-pull', async (_req: Request, res: Response) => {
   const bridgeDir = path.resolve(__dirname, '..', '..');
   const mcpDir = path.dirname(config.mcpConfigPath);
@@ -209,16 +209,49 @@ router.post('/git-pull', async (_req: Request, res: Response) => {
   ];
 
   const results = await Promise.all(projects.map(async ({ name, dir }) => {
+    // Step 1: git pull
+    let pullOutput = '';
     try {
       const { stdout, stderr } = await execFileAsync('git', ['pull'], { cwd: dir, timeout: 30000 });
-      return { name, path: dir, success: true, output: (stdout + stderr).trim() };
+      pullOutput = (stdout + stderr).trim();
     } catch (err: any) {
       const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
-      return { name, path: dir, success: false, output };
+      return { name, path: dir, success: false, pullOutput: output, buildOutput: '', pulled: false, built: false };
+    }
+
+    // Step 2: npm run build (skip if already up to date)
+    const alreadyUpToDate = pullOutput.includes('Already up to date');
+    if (alreadyUpToDate) {
+      return { name, path: dir, success: true, pullOutput, buildOutput: '', pulled: true, built: false };
+    }
+
+    try {
+      const { stdout, stderr } = await execFileAsync('npm', ['run', 'build'], { cwd: dir, timeout: 60000 });
+      const buildOutput = (stdout + stderr).trim();
+      return { name, path: dir, success: true, pullOutput, buildOutput, pulled: true, built: true };
+    } catch (err: any) {
+      const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
+      return { name, path: dir, success: false, pullOutput, buildOutput: output, pulled: true, built: false };
     }
   }));
 
   res.json({ results });
+});
+
+// POST /api/settings/restart — restart the server via launchctl
+router.post('/restart', (_req: Request, res: Response) => {
+  const uid = process.getuid?.() ?? 501;
+  const label = 'com.jsedwick.claude-chat-bridge';
+  res.json({ restarting: true });
+  // Delay kill so the response can be sent
+  setTimeout(() => {
+    execFile('launchctl', ['kickstart', '-k', `gui/${uid}/${label}`], (err) => {
+      if (err) {
+        // If launchctl fails, fall back to process.exit so launchd restarts us
+        process.exit(0);
+      }
+    });
+  }, 500);
 });
 
 // POST /api/settings/version/acknowledge — mark current version as seen
