@@ -607,6 +607,46 @@ router.post('/kb/move', (req: Request, res: Response) => {
   }
 });
 
+// List template files from Template(s)/ folders across all vaults
+router.get('/kb/templates', (_req: Request, res: Response) => {
+  const root = getObsidianRoot();
+  const vaultNames = getObsidianVaults();
+  const templates: { name: string; path: string; vault: string; folder: string }[] = [];
+
+  function scanTemplateDir(dir: string, vault: string, baseDir: string) {
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          scanTemplateDir(full, vault, baseDir);
+        } else if (e.isFile() && e.name.endsWith('.md')) {
+          const rel = path.relative(baseDir, dir);
+          templates.push({
+            name: e.name.replace(/\.md$/, ''),
+            path: full,
+            vault,
+            folder: rel || '',
+          });
+        }
+      }
+    } catch {}
+  }
+
+  for (const vault of vaultNames) {
+    for (const dirName of ['Templates', 'Template']) {
+      const templatesDir = path.join(root, vault, dirName);
+      if (!fs.existsSync(templatesDir)) continue;
+      scanTemplateDir(templatesDir, vault, templatesDir);
+      break; // use first match per vault
+    }
+  }
+
+  templates.sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ templates });
+});
+
 // Wiki-link filename index cache
 let wikiLinkCache: Map<string, string> | null = null;
 

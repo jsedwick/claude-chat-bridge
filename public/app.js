@@ -2928,6 +2928,7 @@ let kbSearchTimer = null;
 let kbBookmarks = JSON.parse(localStorage.getItem('kb-bookmarks') || '[]'); // [{path, name}]
 let kbShowingBookmarks = false;
 let kbShowingRecent = false;
+let kbTemplatesCache = null;  // null = not fetched, [] = no templates
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
@@ -4216,7 +4217,7 @@ function renderDiff(rawDiff) {
   return html;
 }
 
-function toggleKbEdit() {
+async function toggleKbEdit() {
   if (!kbCurrentFile) return;
   kbIsEditing = true;
   kbShowingDiff = false;
@@ -4245,6 +4246,16 @@ function toggleKbEdit() {
     editContent = editContent.slice(fmMatch[0].length);
   }
 
+  // Fetch templates if not cached, then build toolbar
+  if (kbTemplatesCache === null) await fetchKbTemplates();
+
+  const templateToolbarItem = (kbTemplatesCache && kbTemplatesCache.length > 0) ? [{
+    name: 'template',
+    tooltip: 'Insert template',
+    className: 'toastui-editor-toolbar-icons kb-template-toolbar-btn',
+    command: 'insertTemplate',
+  }] : [];
+
   const editorEl = document.getElementById('kb-editor');
   editorEl.innerHTML = '';
   kbEditor = new toastui.Editor({
@@ -4265,6 +4276,7 @@ function toggleKbEdit() {
         className: 'toastui-editor-toolbar-icons image',
         command: 'imageUrl',
       }, 'code', 'codeblock'],
+      ...templateToolbarItem.length ? [templateToolbarItem] : [],
     ],
   });
 
@@ -4283,6 +4295,10 @@ function toggleKbEdit() {
     kbEditor.insertText(`![${alt}](${url})`);
     return true;
   });
+
+  // Template picker command
+  kbEditor.addCommand('wysiwyg', 'insertTemplate', () => { showTemplatePicker(); return true; });
+  kbEditor.addCommand('markdown', 'insertTemplate', () => { showTemplatePicker(); return true; });
 }
 
 function cancelKbEdit() {
@@ -4313,6 +4329,115 @@ function cleanToastMarkdown(md) {
     .replace(/\\\]\\\]/g, ']]')
     // Remove backslash escapes before hyphens, underscores, and pipes inside links/text
     .replace(/\\([_\-|])/g, '$1');
+}
+
+async function fetchKbTemplates() {
+  try {
+    const res = await fetch('/api/vault/kb/templates');
+    const data = await res.json();
+    kbTemplatesCache = data.templates || [];
+  } catch {
+    kbTemplatesCache = [];
+  }
+  return kbTemplatesCache;
+}
+
+function showTemplatePicker() {
+  // Remove existing picker if open
+  const existing = document.querySelector('.kb-template-picker');
+  if (existing) { existing.remove(); return; }
+
+  const templates = kbTemplatesCache;
+  if (!templates || templates.length === 0) return;
+
+  // Find the toolbar button to anchor the dropdown
+  const btn = document.querySelector('.kb-template-toolbar-btn');
+  if (!btn) return;
+  const rect = btn.getBoundingClientRect();
+
+  const picker = document.createElement('div');
+  picker.className = 'kb-template-picker';
+  picker.style.position = 'fixed';
+  picker.style.top = (rect.bottom + 4) + 'px';
+  picker.style.left = rect.left + 'px';
+  picker.style.zIndex = '9999';
+
+  // Group by vault, then by folder
+  const grouped = {};
+  for (const t of templates) {
+    const key = t.vault;
+    if (!grouped[key]) grouped[key] = {};
+    const folder = t.folder || '';
+    if (!grouped[key][folder]) grouped[key][folder] = [];
+    grouped[key][folder].push(t);
+  }
+
+  const vaults = Object.keys(grouped);
+  for (const vault of vaults) {
+    if (vaults.length > 1) {
+      const header = document.createElement('div');
+      header.className = 'kb-template-picker-vault';
+      header.textContent = vault;
+      picker.appendChild(header);
+    }
+    const folders = Object.keys(grouped[vault]).sort();
+    for (const folder of folders) {
+      if (folder) {
+        const folderHeader = document.createElement('div');
+        folderHeader.className = 'kb-template-picker-folder';
+        folderHeader.textContent = folder;
+        picker.appendChild(folderHeader);
+      }
+      for (const t of grouped[vault][folder]) {
+        const item = document.createElement('div');
+        item.className = 'kb-template-picker-item';
+        if (folder) item.style.paddingLeft = '24px';
+        item.textContent = t.name;
+        item.addEventListener('click', () => applyTemplate(t));
+        picker.appendChild(item);
+      }
+    }
+  }
+
+  document.body.appendChild(picker);
+
+  // Close on outside click
+  setTimeout(() => {
+    function closePicker(e) {
+      if (!picker.contains(e.target) && e.target !== btn) {
+        picker.remove();
+        document.removeEventListener('click', closePicker);
+      }
+    }
+    document.addEventListener('click', closePicker);
+  }, 0);
+}
+
+async function applyTemplate(template) {
+  // Close picker
+  const picker = document.querySelector('.kb-template-picker');
+  if (picker) picker.remove();
+
+  if (!kbEditor) return;
+
+  try {
+    const res = await fetch('/api/vault/kb/file?path=' + encodeURIComponent(template.path));
+    const data = await res.json();
+    if (data.content == null) return;
+
+    // Separate frontmatter from template body
+    let body = data.content;
+    const fmMatch = body.match(/^---\r?\n([\s\S]*?\r?\n)---\r?\n?/);
+    if (fmMatch) {
+      kbFrontmatter = fmMatch[0];
+      body = body.slice(fmMatch[0].length);
+    }
+
+    // Replace editor content with template body
+    kbEditor.setMarkdown(body);
+  } catch (err) {
+    console.error('Failed to load template:', err);
+  }
 }
 
 async function saveKbFile() {
