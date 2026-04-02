@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
+import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
@@ -195,6 +196,29 @@ router.get('/version', async (_req: Request, res: Response) => {
     lastSeenVersion,
     versionChanged,
   });
+});
+
+// POST /api/settings/git-pull — run git pull on both project directories
+router.post('/git-pull', async (_req: Request, res: Response) => {
+  const bridgeDir = path.resolve(__dirname, '..', '..');
+  const mcpDir = path.dirname(config.mcpConfigPath);
+
+  const projects = [
+    { name: 'claude-chat-bridge', dir: bridgeDir },
+    { name: 'obsidian-mcp-server', dir: mcpDir },
+  ];
+
+  const results = await Promise.all(projects.map(async ({ name, dir }) => {
+    try {
+      const { stdout, stderr } = await execFileAsync('git', ['pull'], { cwd: dir, timeout: 30000 });
+      return { name, path: dir, success: true, output: (stdout + stderr).trim() };
+    } catch (err: any) {
+      const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
+      return { name, path: dir, success: false, output };
+    }
+  }));
+
+  res.json({ results });
 });
 
 // POST /api/settings/version/acknowledge — mark current version as seen

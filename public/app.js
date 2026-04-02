@@ -2376,6 +2376,19 @@ async function renderUpdatesSettings(container) {
         <div class="version-loading">Checking version...</div>
       </div>
     </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Project Source Updates</div>
+      <div class="settings-section-desc">Pull the latest changes from git for claude-chat-bridge and obsidian-mcp-server.</div>
+      <div id="git-pull-status"></div>
+      <div class="version-actions" style="margin-top:12px">
+        <button class="settings-theme-btn" onclick="pullProjectUpdates()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+          </svg>
+          Pull Latest
+        </button>
+      </div>
+    </div>
   `;
 
   try {
@@ -2447,6 +2460,27 @@ async function checkVersionUpdate() {
   versionData = null;
   const container = document.getElementById('settings-content');
   renderUpdatesSettings(container);
+}
+
+async function pullProjectUpdates() {
+  const statusEl = document.getElementById('git-pull-status');
+  if (!statusEl) return;
+  statusEl.innerHTML = '<div class="version-loading">Pulling updates...</div>';
+  try {
+    const res = await fetch('/api/settings/git-pull', { method: 'POST' });
+    const data = await res.json();
+    statusEl.innerHTML = data.results.map(r => `
+      <div class="git-pull-result">
+        <div class="git-pull-result-header">
+          <span class="git-pull-result-name">${escapeHtml(r.name)}</span>
+          <span class="version-badge ${r.success ? 'version-badge-current' : 'version-badge-error'}">${r.success ? 'Success' : 'Failed'}</span>
+        </div>
+        ${r.output ? `<pre class="git-pull-output">${escapeHtml(r.output)}</pre>` : ''}
+      </div>
+    `).join('');
+  } catch {
+    statusEl.innerHTML = '<div class="version-error">Failed to run git pull.</div>';
+  }
 }
 
 // Bridge paths settings — cached from /api/settings/bridge-paths
@@ -2773,6 +2807,8 @@ let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
 let kbSearchTimer = null;
+let kbBookmarks = JSON.parse(localStorage.getItem('kb-bookmarks') || '[]'); // [{path, name}]
+let kbShowingBookmarks = false;
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
@@ -2784,19 +2820,36 @@ document.addEventListener('DOMContentLoaded', () => {
       const q = searchInput.value.trim();
       clearBtn.style.display = q ? '' : 'none';
       if (!q) {
-        document.getElementById('kb-tree').style.display = '';
         document.getElementById('kb-search-results').style.display = 'none';
         document.getElementById('kb-search-results').innerHTML = '';
+        document.getElementById('kb-bookmarks-list').style.display = 'none';
+        document.getElementById('kb-tree').style.display = '';
+        if (kbShowingBookmarks) {
+          kbShowingBookmarks = false;
+          document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
+        }
         return;
+      }
+      // Hide bookmarks and tree when searching
+      document.getElementById('kb-bookmarks-list').style.display = 'none';
+      document.getElementById('kb-tree').style.display = 'none';
+      if (kbShowingBookmarks) {
+        kbShowingBookmarks = false;
+        document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
       }
       kbSearchTimer = setTimeout(() => kbSearchDocs(q), 200);
     });
     clearBtn.addEventListener('click', () => {
       searchInput.value = '';
       clearBtn.style.display = 'none';
-      document.getElementById('kb-tree').style.display = '';
       document.getElementById('kb-search-results').style.display = 'none';
       document.getElementById('kb-search-results').innerHTML = '';
+      document.getElementById('kb-bookmarks-list').style.display = 'none';
+      document.getElementById('kb-tree').style.display = '';
+      if (kbShowingBookmarks) {
+        kbShowingBookmarks = false;
+        document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
+      }
       searchInput.focus();
     });
   }
@@ -3405,6 +3458,8 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     document.getElementById('kb-editor').style.display = 'none';
     document.getElementById('kb-save-btn').style.display = 'none';
     document.getElementById('kb-cancel-btn').style.display = 'none';
+    document.getElementById('kb-bookmark-toggle').style.display = '';
+    updateKbBookmarkBtn();
 
     // Detect session files and show/hide Continue Session button
     const continueBtn = document.getElementById('kb-continue-session-btn');
@@ -3458,6 +3513,125 @@ function navigateKbBack() {
   if (kbHistory.length === 0) return;
   const previousPath = kbHistory.pop();
   loadKbFile(previousPath, { skipHistory: true });
+}
+
+// ---- KB Bookmarks ----
+
+function saveKbBookmarks() {
+  localStorage.setItem('kb-bookmarks', JSON.stringify(kbBookmarks));
+}
+
+function isKbBookmarked(filePath) {
+  return kbBookmarks.some(b => b.path === filePath);
+}
+
+function toggleKbBookmark() {
+  if (!kbCurrentFile) return;
+  const idx = kbBookmarks.findIndex(b => b.path === kbCurrentFile.path);
+  if (idx >= 0) {
+    kbBookmarks.splice(idx, 1);
+  } else {
+    kbBookmarks.push({ path: kbCurrentFile.path, name: kbCurrentFile.name });
+  }
+  saveKbBookmarks();
+  updateKbBookmarkBtn();
+  if (kbShowingBookmarks) renderKbBookmarksList();
+}
+
+function updateKbBookmarkBtn() {
+  const btn = document.getElementById('kb-bookmark-toggle');
+  if (!btn) return;
+  if (kbCurrentFile && isKbBookmarked(kbCurrentFile.path)) {
+    btn.classList.add('bookmarked');
+  } else {
+    btn.classList.remove('bookmarked');
+  }
+}
+
+function toggleKbBookmarksView() {
+  const tree = document.getElementById('kb-tree');
+  const searchResults = document.getElementById('kb-search-results');
+  const bookmarksList = document.getElementById('kb-bookmarks-list');
+  const toolbarBtn = document.getElementById('kb-toolbar-bookmarks');
+
+  kbShowingBookmarks = !kbShowingBookmarks;
+
+  if (kbShowingBookmarks) {
+    tree.style.display = 'none';
+    searchResults.style.display = 'none';
+    bookmarksList.style.display = '';
+    toolbarBtn.classList.add('active');
+    renderKbBookmarksList();
+  } else {
+    bookmarksList.style.display = 'none';
+    tree.style.display = '';
+    toolbarBtn.classList.remove('active');
+  }
+}
+
+function renderKbBookmarksList() {
+  const container = document.getElementById('kb-bookmarks-list');
+  container.innerHTML = '';
+
+  if (kbBookmarks.length === 0) {
+    container.innerHTML = '<div class="kb-bookmarks-empty">No bookmarks yet.<br>Open a file and click the bookmark icon in the title bar.</div>';
+    return;
+  }
+
+  for (const bm of kbBookmarks) {
+    const item = document.createElement('div');
+    item.className = 'kb-bookmark-item';
+
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('width', '14');
+    icon.setAttribute('height', '14');
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.setAttribute('stroke-width', '2');
+    icon.innerHTML = '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = bm.name;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'kb-bookmark-remove';
+    removeBtn.setAttribute('aria-label', 'Remove bookmark');
+    removeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      kbBookmarks = kbBookmarks.filter(b => b.path !== bm.path);
+      saveKbBookmarks();
+      updateKbBookmarkBtn();
+      renderKbBookmarksList();
+    });
+
+    item.appendChild(icon);
+    item.appendChild(nameSpan);
+    item.appendChild(removeBtn);
+    item.addEventListener('click', () => loadKbFile(bm.path));
+    container.appendChild(item);
+  }
+}
+
+// ---- KB Collapse All ----
+
+function collapseAllKbDirs() {
+  kbExpandedDirs.clear();
+  const tree = document.getElementById('kb-tree');
+  tree.querySelectorAll('.kb-tree-chevron.expanded').forEach(chev => {
+    chev.classList.remove('expanded');
+  });
+  tree.querySelectorAll('.kb-tree-children').forEach(children => {
+    children.classList.add('collapsed');
+  });
+  // Exit bookmarks view if active
+  if (kbShowingBookmarks) {
+    kbShowingBookmarks = false;
+    document.getElementById('kb-bookmarks-list').style.display = 'none';
+    document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
+    tree.style.display = '';
+  }
 }
 
 function renderKbMarkdown(text) {

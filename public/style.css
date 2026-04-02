@@ -2313,6 +2313,44 @@ pre.streaming {
   color: var(--error);
 }
 
+.version-badge-error {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+
+.git-pull-result {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.git-pull-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.git-pull-result-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.git-pull-output {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* Version change banner (shown in chat view) */
 .version-banner {
   display: flex;
@@ -2440,6 +2478,102 @@ pre.streaming {
 
 .kb-search-input::placeholder {
   color: var(--text-muted);
+}
+
+/* KB Sidebar Toolbar */
+.kb-sidebar-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.kb-toolbar-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.kb-toolbar-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.kb-toolbar-btn.active {
+  color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+/* KB Bookmark toggle in title bar */
+.kb-bookmark-toggle {
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.kb-bookmark-toggle.bookmarked svg {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+/* KB Bookmarks list in sidebar */
+.kb-bookmarks-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.kb-bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: 1px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.kb-bookmark-item:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.kb-bookmark-item .kb-bookmark-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.kb-bookmark-item:hover .kb-bookmark-remove {
+  opacity: 1;
+}
+
+.kb-bookmark-remove:hover {
+  color: var(--text-primary);
+}
+
+.kb-bookmarks-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 12px;
 }
 
 .kb-tree {
