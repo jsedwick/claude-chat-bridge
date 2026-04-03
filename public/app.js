@@ -1100,6 +1100,41 @@ function createAssistantMessage() {
   return el;
 }
 
+function extractMessageContent(el) {
+  const clone = el.cloneNode(true);
+  // Remove the copy button itself from the clone
+  const copyBtn = clone.querySelector('.btn-copy-msg');
+  if (copyBtn) copyBtn.remove();
+  // Remove code block copy buttons
+  clone.querySelectorAll('.btn-copy-code').forEach(b => b.remove());
+
+  // Build HTML version (clean copy of the rendered content)
+  const html = clone.innerHTML;
+
+  // Build plain text version with markdown tables
+  clone.querySelectorAll('table').forEach(table => {
+    const rows = Array.from(table.querySelectorAll('tr'));
+    if (!rows.length) return;
+
+    const mdRows = rows.map(row => {
+      const cells = Array.from(row.querySelectorAll('th, td'));
+      return '| ' + cells.map(c => c.textContent.trim()).join(' | ') + ' |';
+    });
+
+    // Insert separator after header row if first row has <th> cells
+    const firstRowCells = rows[0].querySelectorAll('th');
+    if (firstRowCells.length > 0) {
+      const sep = '| ' + Array.from(firstRowCells).map(() => '---').join(' | ') + ' |';
+      mdRows.splice(1, 0, sep);
+    }
+
+    const textNode = document.createTextNode('\n' + mdRows.join('\n') + '\n');
+    table.replaceWith(textNode);
+  });
+
+  return { html, text: clone.innerText };
+}
+
 function ensureCopyButton(el) {
   let btn = el.querySelector('.btn-copy-msg');
   if (!btn) {
@@ -1107,9 +1142,14 @@ function ensureCopyButton(el) {
     btn.className = 'btn-copy-msg';
     btn.title = 'Copy message';
     btn.onclick = () => {
-      const text = el.innerText;
-      const doCopy = navigator.clipboard?.writeText
-        ? navigator.clipboard.writeText(text)
+      const { html, text } = extractMessageContent(el);
+      const doCopy = navigator.clipboard?.write
+        ? navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': new Blob([html], { type: 'text/html' }),
+              'text/plain': new Blob([text], { type: 'text/plain' }),
+            })
+          ])
         : new Promise((resolve, reject) => {
             const ta = document.createElement('textarea');
             ta.value = text;
@@ -3215,6 +3255,277 @@ async function deleteKbFile(filePath, dirPath) {
   }
 }
 
+// Create a new directory, then enter rename mode
+async function createKbDir(dirPath) {
+  // Find a unique name
+  let tempName = 'New Folder';
+  let newPath = dirPath + '/' + tempName;
+  let counter = 1;
+  const cached = kbTreeCache.get(dirPath);
+  if (cached) {
+    const names = new Set(cached.map(e => e.name));
+    while (names.has(tempName)) {
+      tempName = 'New Folder ' + counter++;
+    }
+    newPath = dirPath + '/' + tempName;
+  }
+
+  try {
+    const res = await fetch('/api/vault/kb/dir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: newPath }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Create folder failed: ' + data.error);
+      return;
+    }
+    // Refresh the parent tree
+    kbTreeCache.delete(dirPath);
+    await reloadKbSubtree(dirPath);
+
+    // Start rename on the new directory
+    const newItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(data.path)}"]`);
+    if (newItem) {
+      const nameSpan = newItem.querySelector('.kb-tree-name');
+      if (nameSpan) startKbRenameDir(data.path, nameSpan);
+    }
+  } catch (err) {
+    console.error('Failed to create directory:', err);
+    alert('Create folder failed: ' + err.message);
+  }
+}
+
+// Delete an empty directory
+async function deleteKbDir(dirPath) {
+  const dirName = dirPath.split('/').pop();
+  if (!confirm(`Delete folder "${dirName}"? (must be empty)`)) return;
+  try {
+    const res = await fetch(`/api/vault/kb/dir?path=${encodeURIComponent(dirPath)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) {
+      alert('Delete folder failed: ' + data.error);
+      return;
+    }
+    const parentPath = dirPath.substring(0, dirPath.lastIndexOf('/'));
+    kbTreeCache.delete(parentPath);
+    kbExpandedDirs.delete(dirPath);
+    await reloadKbSubtree(parentPath);
+  } catch (err) {
+    console.error('Failed to delete directory:', err);
+    alert('Delete folder failed: ' + err.message);
+  }
+}
+
+// Rename a directory inline (similar to startKbRename for files)
+function startKbRenameDir(entryPath, nameEl) {
+  const originalName = nameEl.textContent;
+  nameEl.contentEditable = true;
+  nameEl.classList.add('editing');
+  nameEl.focus();
+  const range = document.createRange();
+  range.selectNodeContents(nameEl);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  async function finish() {
+    nameEl.contentEditable = false;
+    nameEl.classList.remove('editing');
+    const newName = nameEl.textContent.trim();
+    if (!newName || newName === originalName) {
+      nameEl.textContent = originalName;
+      return;
+    }
+    const parentDir = entryPath.substring(0, entryPath.lastIndexOf('/'));
+    const newPath = parentDir + '/' + newName;
+    try {
+      const res = await fetch('/api/vault/kb/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: entryPath, destination: newPath }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert('Rename failed: ' + data.error);
+        nameEl.textContent = originalName;
+        return;
+      }
+      // Update expanded dirs set
+      if (kbExpandedDirs.has(entryPath)) {
+        kbExpandedDirs.delete(entryPath);
+        kbExpandedDirs.add(data.path);
+      }
+      kbTreeCache.delete(parentDir);
+      await reloadKbSubtree(parentDir);
+    } catch (err) {
+      alert('Rename failed: ' + err.message);
+      nameEl.textContent = originalName;
+    }
+  }
+
+  nameEl.addEventListener('blur', finish, { once: true });
+  nameEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+    if (e.key === 'Escape') { nameEl.textContent = originalName; nameEl.blur(); }
+  }, { once: true });
+}
+
+// KB Context Menu
+let kbContextMenuEl = null;
+
+function getOrCreateKbContextMenu() {
+  if (!kbContextMenuEl) {
+    kbContextMenuEl = document.createElement('div');
+    kbContextMenuEl.className = 'kb-context-menu';
+    document.body.appendChild(kbContextMenuEl);
+    document.addEventListener('click', dismissKbContextMenu);
+    document.addEventListener('contextmenu', dismissKbContextMenu);
+    document.addEventListener('scroll', dismissKbContextMenu, true);
+  }
+  return kbContextMenuEl;
+}
+
+function dismissKbContextMenu() {
+  if (kbContextMenuEl) kbContextMenuEl.style.display = 'none';
+}
+
+function showKbContextMenu(x, y, entry, depth) {
+  const menu = getOrCreateKbContextMenu();
+  menu.innerHTML = '';
+
+  const isDir = entry.type === 'directory';
+  const isRootVault = depth === 0 && isDir;
+
+  const items = [];
+
+  if (isDir) {
+    items.push({ label: 'New File', action: () => {
+      // Find the tree item's children container and chevron for createKbFile
+      const dirItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
+      if (!dirItem) return;
+      const chevron = dirItem.querySelector('.kb-tree-chevron');
+      const childrenContainer = dirItem.parentElement.querySelector('.kb-tree-children');
+      if (chevron && childrenContainer) {
+        const indent = dirItem.querySelector('.kb-tree-indent');
+        const d = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+        createKbFile(entry.path, childrenContainer, chevron, d);
+      }
+    }});
+    items.push({ label: 'New Folder', action: () => createKbDir(entry.path) });
+  }
+
+  if (!isRootVault) {
+    items.push({ label: 'Rename', action: () => {
+      const treeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
+      if (!treeItem) return;
+      const nameSpan = treeItem.querySelector('.kb-tree-name');
+      if (isDir) {
+        startKbRenameDir(entry.path, nameSpan);
+      } else {
+        startKbRename(entry.path, nameSpan);
+      }
+    }});
+  }
+
+  if (!isDir) {
+    items.push({ label: 'Duplicate', action: () => duplicateKbFile(entry.path) });
+  }
+
+  items.push({ label: 'Copy Path', action: () => {
+    const relativePath = OBSIDIAN_ROOT
+      ? entry.path.replace(OBSIDIAN_ROOT + '/', '')
+      : entry.path;
+    navigator.clipboard.writeText(relativePath).catch(() => {});
+  }});
+
+  if (!isRootVault) {
+    if (isDir) {
+      items.push({ label: 'Delete Folder', className: 'danger', action: () => deleteKbDir(entry.path) });
+    } else {
+      items.push({ label: 'Delete', className: 'danger', action: () => {
+        const dirPath = entry.path.substring(0, entry.path.lastIndexOf('/'));
+        deleteKbFile(entry.path, dirPath);
+      }});
+    }
+  }
+
+  for (const item of items) {
+    const btn = document.createElement('button');
+    btn.className = 'kb-context-menu-item' + (item.className ? ' ' + item.className : '');
+    btn.textContent = item.label;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dismissKbContextMenu();
+      item.action();
+    });
+    menu.appendChild(btn);
+  }
+
+  // Position: ensure menu stays within viewport
+  menu.style.display = 'block';
+  const menuRect = menu.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  menu.style.left = (x + menuRect.width > vw ? vw - menuRect.width - 4 : x) + 'px';
+  menu.style.top = (y + menuRect.height > vh ? vh - menuRect.height - 4 : y) + 'px';
+}
+
+// Duplicate a file: copy content to "Name (copy).md" and enter rename mode
+async function duplicateKbFile(filePath) {
+  try {
+    // Read source content
+    const readRes = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
+    const readData = await readRes.json();
+    if (readData.error) { alert('Duplicate failed: ' + readData.error); return; }
+
+    // Build copy path
+    const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    const baseName = filePath.split('/').pop().replace(/\.md$/, '');
+    let copyName = baseName + ' (copy)';
+    let copyPath = dirPath + '/' + copyName + '.md';
+    let counter = 2;
+    const cached = kbTreeCache.get(dirPath);
+    if (cached) {
+      const names = new Set(cached.map(e => e.name));
+      while (names.has(copyName + '.md')) {
+        copyName = baseName + ' (copy ' + counter++ + ')';
+        copyPath = dirPath + '/' + copyName + '.md';
+      }
+    }
+
+    // Create the new file
+    const createRes = await fetch('/api/vault/kb/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: copyPath }),
+    });
+    const createData = await createRes.json();
+    if (createData.error) { alert('Duplicate failed: ' + createData.error); return; }
+
+    // Write the content
+    if (readData.content) {
+      await fetch('/api/vault/kb/file', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: createData.path, content: readData.content }),
+      });
+    }
+
+    // Refresh tree and enter rename mode
+    kbTreeCache.delete(dirPath);
+    await reloadKbSubtree(dirPath);
+    const newItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(createData.path)}"]`);
+    if (newItem) {
+      const nameSpan = newItem.querySelector('.kb-tree-name');
+      if (nameSpan) startKbRename(createData.path, nameSpan);
+    }
+  } catch (err) {
+    console.error('Failed to duplicate file:', err);
+    alert('Duplicate failed: ' + err.message);
+  }
+}
+
 // Create a new file in a directory, then immediately enter rename mode
 async function createKbFile(dirPath, childrenContainer, chevron, depth) {
   // Ensure directory is expanded
@@ -3505,16 +3816,22 @@ function createKbTreeNode(entry, depth) {
     nameSpan.textContent = entry.name;
     item.appendChild(nameSpan);
 
-    // New file button (visible on hover)
-    const addBtn = document.createElement('button');
-    addBtn.className = 'kb-tree-add-btn';
-    addBtn.title = 'Create file';
-    addBtn.innerHTML = '+';
-    addBtn.addEventListener('click', (e) => {
+    // Context menu (right-click / long-press)
+    item.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      createKbFile(entry.path, children, chevron, depth);
+      showKbContextMenu(e.clientX, e.clientY, entry, depth);
     });
-    item.appendChild(addBtn);
+    let _touchTimer;
+    item.addEventListener('touchstart', (e) => {
+      _touchTimer = setTimeout(() => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        showKbContextMenu(touch.clientX, touch.clientY, entry, depth);
+      }, 500);
+    }, { passive: false });
+    item.addEventListener('touchend', () => clearTimeout(_touchTimer));
+    item.addEventListener('touchmove', () => clearTimeout(_touchTimer));
 
     wrapper.appendChild(item);
     wrapper.appendChild(children);
@@ -3558,17 +3875,22 @@ function createKbTreeNode(entry, depth) {
       startKbRename(entry.path, nameSpan);
     });
 
-    // Delete button (visible on hover)
-    const delBtn = document.createElement('button');
-    delBtn.className = 'kb-tree-del-btn';
-    delBtn.title = 'Delete file';
-    delBtn.innerHTML = '&times;';
-    delBtn.addEventListener('click', (e) => {
+    // Context menu (right-click / long-press)
+    item.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
       e.stopPropagation();
-      const dirPath = entry.path.substring(0, entry.path.lastIndexOf('/'));
-      deleteKbFile(entry.path, dirPath);
+      showKbContextMenu(e.clientX, e.clientY, entry, depth);
     });
-    item.appendChild(delBtn);
+    let _touchTimer;
+    item.addEventListener('touchstart', (e) => {
+      _touchTimer = setTimeout(() => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        showKbContextMenu(touch.clientX, touch.clientY, entry, depth);
+      }, 500);
+    }, { passive: false });
+    item.addEventListener('touchend', () => clearTimeout(_touchTimer));
+    item.addEventListener('touchmove', () => clearTimeout(_touchTimer));
 
     wrapper.appendChild(item);
   }

@@ -566,6 +566,78 @@ router.delete('/kb/file', (req: Request, res: Response) => {
   }
 });
 
+// Create a directory
+router.post('/kb/dir', (req: Request, res: Response) => {
+  const { path: dirPath } = req.body;
+  if (!dirPath) {
+    res.status(400).json({ error: 'Path required' });
+    return;
+  }
+
+  const resolved = validateKbPath(dirPath);
+  if (!resolved) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (fs.existsSync(resolved)) {
+    res.status(409).json({ error: 'Already exists' });
+    return;
+  }
+
+  const parent = path.dirname(resolved);
+  if (!fs.existsSync(parent)) {
+    res.status(400).json({ error: 'Parent directory does not exist' });
+    return;
+  }
+
+  try {
+    fs.mkdirSync(resolved);
+    res.json({ success: true, path: resolved, name: path.basename(resolved) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete an empty directory
+router.delete('/kb/dir', (req: Request, res: Response) => {
+  const dirPath = req.query.path as string;
+  if (!dirPath) {
+    res.status(400).json({ error: 'Path required' });
+    return;
+  }
+
+  const resolved = validateKbPath(dirPath);
+  if (!resolved) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  if (!fs.existsSync(resolved)) {
+    res.status(404).json({ error: 'Directory not found' });
+    return;
+  }
+
+  const stat = fs.statSync(resolved);
+  if (!stat.isDirectory()) {
+    res.status(400).json({ error: 'Not a directory' });
+    return;
+  }
+
+  const contents = fs.readdirSync(resolved);
+  if (contents.length > 0) {
+    res.status(400).json({ error: 'Directory is not empty' });
+    return;
+  }
+
+  try {
+    fs.rmdirSync(resolved);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Move/rename a file or directory within the vault
 router.post('/kb/move', (req: Request, res: Response) => {
   const { source, destination } = req.body;
