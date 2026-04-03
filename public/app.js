@@ -7,6 +7,8 @@ let currentMode = 'work';
 let pendingPermissionId = null;
 let permissionPollInterval = null;
 const permissionQueue = []; // queue for parallel permission requests
+let pendingPermissionSessionId = null; // which session the current permission dialog is for
+const permissionBlockedSessions = new Set(); // sessions waiting on permission approval
 let versionData = null; // cached version check data
 
 // Message history (server-backed)
@@ -158,6 +160,25 @@ async function renderDirRoots(container, onSelect) {
     header.appendChild(pathLabel);
     container.appendChild(header);
 
+    // Show last-used directory at the top if available
+    const lastDir = localStorage.getItem('chat-bridge-last-dir');
+    if (lastDir) {
+      const lastDirName = lastDir.split('/').filter(Boolean).pop();
+      const recentSection = document.createElement('div');
+      recentSection.className = 'dir-browser-recent';
+      const recentLabel = document.createElement('div');
+      recentLabel.className = 'dir-browser-recent-label';
+      recentLabel.textContent = 'Recent';
+      recentSection.appendChild(recentLabel);
+      const recentItem = document.createElement('button');
+      recentItem.className = 'dir-picker-item dir-picker-item-recent';
+      recentItem.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + lastDirName + '</span>';
+      recentItem.title = lastDir;
+      recentItem.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, lastDir, onSelect); };
+      recentSection.appendChild(recentItem);
+      container.appendChild(recentSection);
+    }
+
     if (roots.length > 0) {
       const list = document.createElement('div');
       list.className = 'dir-browser-list';
@@ -265,6 +286,7 @@ function toggleSidebarDirPicker() {
     sidebarDirBtn.classList.add('selected');
     sidebarDirBtn.title = dirPath;
     newChatBtn.disabled = false;
+    localStorage.setItem('chat-bridge-last-dir', dirPath);
   };
   if (selectedNewChatDir) {
     renderDirBrowser(sidebarDirPicker, selectedNewChatDir, onSelect);
@@ -287,6 +309,7 @@ function toggleDirPicker() {
         body: JSON.stringify({ workingDir: dirPath }),
       });
       currentWorkingDir = dirPath;
+      localStorage.setItem('chat-bridge-last-dir', dirPath);
     } catch (err) {
       console.error('Failed to update working directory:', err);
     }
@@ -885,7 +908,7 @@ function renderSessionItem(s, isArchived) {
     <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''}"
          onclick="switchSession('${s.id}')">
       ${actions}
-      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${s.closedAt ? '<span class="session-closed-badge" title="Session closed">&#10003;</span>' : s.usedCodeFile ? '<span class="session-code-badge" title="Code changes made">&lt;/&gt;</span>' : ''}${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : ''}${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} msgs</span>
@@ -1051,6 +1074,20 @@ async function switchSession(id) {
   }
   if (sidebar.classList.contains('open')) toggleSidebar();
   messageInput.focus();
+  // Immediately check for pending permission on this session (don't wait for 2s poll)
+  if (!pendingPermissionId && permissionBlockedSessions.has(id)) {
+    try {
+      const permRes = await fetch(`/api/permissions/pending/${id}`);
+      if (permRes.ok) {
+        const pending = await permRes.json();
+        if (pending && pending.id) {
+          showPermissionDialog(pending.id, pending.toolName, pending.toolInput);
+        }
+      }
+    } catch (err) {
+      console.error('[permission] immediate check failed:', err);
+    }
+  }
 }
 
 async function deleteSessionItem(id) {
@@ -1735,6 +1772,16 @@ async function sendMessage(skipRender = false) {
   }
 
   function processEvent(type, data) {
+    // Handle permission requests for background sessions (before mismatch return)
+    if (currentSessionId !== streamSessionId && type === 'permission_request') {
+      try {
+        const perm = typeof data === 'string' ? JSON.parse(data) : data;
+        console.log('[permission] background session blocked:', streamSessionId, perm);
+        updateSessionBlockedBadge(streamSessionId, true);
+      } catch (err) {
+        console.error('[permission] failed to parse background permission:', err);
+      }
+    }
     // Don't update DOM if user switched to a different session
     if (currentSessionId !== streamSessionId) {
       logSSE('SESSION_MISMATCH', { type, current: currentSessionId, stream: streamSessionId });
@@ -1814,6 +1861,7 @@ async function sendMessage(skipRender = false) {
           try {
             const perm = typeof data === 'string' ? JSON.parse(data) : data;
             console.log('[permission] parsed:', perm);
+            updateSessionBlockedBadge(streamSessionId, true);
             showPermissionDialog(perm.id, perm.toolName, perm.toolInput);
             console.log('[permission] dialog shown, overlay display:', document.getElementById('permission-overlay')?.style.display);
           } catch (err) {
@@ -1930,6 +1978,7 @@ async function sendMessage(skipRender = false) {
   } finally {
     clearSlowApi();
     streamingSessions.delete(streamSessionId);
+    updateSessionBlockedBadge(streamSessionId, false);
     // Only update DOM if we're still viewing the session that finished
     if (currentSessionId === streamSessionId) {
       sendBtn.style.display = 'flex';
@@ -2115,6 +2164,40 @@ function formatTime(iso) {
 
 // Permission dialog
 
+function updateSessionBlockedBadge(sessionId, blocked) {
+  if (blocked) {
+    permissionBlockedSessions.add(sessionId);
+  } else {
+    permissionBlockedSessions.delete(sessionId);
+  }
+  document.querySelectorAll('.session-item').forEach(el => {
+    const elSessionId = el.getAttribute('onclick')?.match(/switchSession\('([^']+)'\)/)?.[1];
+    if (elSessionId !== sessionId) return;
+    const nameEl = el.querySelector('.session-item-name');
+    if (!nameEl) return;
+    const existingBlocked = nameEl.querySelector('.session-blocked-badge');
+    if (blocked && !existingBlocked) {
+      // Hide existing badges, insert blocked badge
+      const closedBadge = nameEl.querySelector('.session-closed-badge');
+      const codeBadge = nameEl.querySelector('.session-code-badge');
+      if (closedBadge) closedBadge.style.display = 'none';
+      if (codeBadge) codeBadge.style.display = 'none';
+      const badge = document.createElement('span');
+      badge.className = 'session-blocked-badge';
+      badge.title = 'Waiting for permission';
+      badge.textContent = '!';
+      nameEl.insertBefore(badge, nameEl.firstChild);
+    } else if (!blocked && existingBlocked) {
+      existingBlocked.remove();
+      // Restore hidden badges
+      const closedBadge = nameEl.querySelector('.session-closed-badge');
+      const codeBadge = nameEl.querySelector('.session-code-badge');
+      if (closedBadge) closedBadge.style.display = '';
+      if (codeBadge) codeBadge.style.display = '';
+    }
+  });
+}
+
 // Poll for pending permission requests (fallback when SSE event doesn't arrive)
 function startPermissionPolling() {
   if (permissionPollInterval) return;
@@ -2157,6 +2240,7 @@ function showPermissionDialog(id, toolName, toolInput) {
   }
 
   pendingPermissionId = id;
+  pendingPermissionSessionId = currentSessionId;
   document.getElementById('permission-tool-name').textContent = toolName;
 
   // Format the tool input for display
@@ -2206,6 +2290,12 @@ async function respondPermission(decision, allowAll) {
   }
 
   pendingPermissionId = null;
+
+  // Clear blocked badge for the session that was waiting
+  if (pendingPermissionSessionId) {
+    updateSessionBlockedBadge(pendingPermissionSessionId, false);
+    pendingPermissionSessionId = null;
+  }
 
   // Handle queued permission requests
   if (allowAll && permissionQueue.length > 0) {
