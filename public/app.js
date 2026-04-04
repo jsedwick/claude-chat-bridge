@@ -1108,7 +1108,10 @@ async function deleteSessionItem(id) {
 
 // Messages
 function clearMessages() {
+  // Preserve the welcome element (it lives inside messagesEl)
+  const welcome = welcomeEl.parentNode === messagesEl ? welcomeEl : null;
   messagesEl.innerHTML = '';
+  if (welcome) messagesEl.appendChild(welcome);
 }
 
 function addUserMessage(text) {
