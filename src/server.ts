@@ -11,6 +11,7 @@ import permissionRoutes from './routes/permissions';
 import vaultRoutes from './routes/vault';
 import settingsRoutes from './routes/settings';
 import { startReaper, shutdownAll } from './services/session-reaper';
+import { resolveShellEnv } from './services/shell-env';
 
 const app = express();
 
@@ -44,52 +45,58 @@ app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
-// Determine HTTP vs HTTPS mode
-const args = process.argv.slice(2);
-const useHttp = args.includes('--http');
+// Resolve the user's full shell PATH before starting the server,
+// so child processes (npm, claude, git) work under launchd.
+resolveShellEnv().then(startServer);
 
-if (useHttp) {
-  const server = http.createServer(app);
-  server.listen(config.port, '0.0.0.0', () => {
-    console.log(`Chat Bridge running on HTTP at http://0.0.0.0:${config.port}`);
-    startReaper();
-  });
-} else {
-  // HTTPS mode (default)
-  try {
-    const certPath = path.join(config.certsPath, 'cert.pem');
-    const keyPath = path.join(config.certsPath, 'key.pem');
+function startServer() {
+  // Determine HTTP vs HTTPS mode
+  const args = process.argv.slice(2);
+  const useHttp = args.includes('--http');
 
-    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      console.error('HTTPS certificates not found in', config.certsPath);
-      console.error('Either place cert.pem and key.pem in the certs/ directory,');
-      console.error('or run with --http for plain HTTP mode.');
-      process.exit(1);
-    }
-
-    const httpsOptions = {
-      cert: fs.readFileSync(certPath),
-      key: fs.readFileSync(keyPath),
-    };
-
-    const server = https.createServer(httpsOptions, app);
-
-    server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        console.error(`Port ${config.port} is already in use`);
-      } else {
-        console.error('Server error:', err.message);
-      }
-      process.exit(1);
-    });
-
+  if (useHttp) {
+    const server = http.createServer(app);
     server.listen(config.port, '0.0.0.0', () => {
-      console.log(`Chat Bridge running on HTTPS at https://0.0.0.0:${config.port}`);
+      console.log(`Chat Bridge running on HTTP at http://0.0.0.0:${config.port}`);
       startReaper();
     });
-  } catch (err: any) {
-    console.error('Failed to start HTTPS server:', err.message);
-    process.exit(1);
+  } else {
+    // HTTPS mode (default)
+    try {
+      const certPath = path.join(config.certsPath, 'cert.pem');
+      const keyPath = path.join(config.certsPath, 'key.pem');
+
+      if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+        console.error('HTTPS certificates not found in', config.certsPath);
+        console.error('Either place cert.pem and key.pem in the certs/ directory,');
+        console.error('or run with --http for plain HTTP mode.');
+        process.exit(1);
+      }
+
+      const httpsOptions = {
+        cert: fs.readFileSync(certPath),
+        key: fs.readFileSync(keyPath),
+      };
+
+      const server = https.createServer(httpsOptions, app);
+
+      server.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          console.error(`Port ${config.port} is already in use`);
+        } else {
+          console.error('Server error:', err.message);
+        }
+        process.exit(1);
+      });
+
+      server.listen(config.port, '0.0.0.0', () => {
+        console.log(`Chat Bridge running on HTTPS at https://0.0.0.0:${config.port}`);
+        startReaper();
+      });
+    } catch (err: any) {
+      console.error('Failed to start HTTPS server:', err.message);
+      process.exit(1);
+    }
   }
 }
 

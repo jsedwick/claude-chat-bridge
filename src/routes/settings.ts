@@ -4,6 +4,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
+import { shellExecOpts } from '../services/shell-env';
 import { config, getMcpConfigPath, setMcpConfigPath, getBridgePaths, setBridgeConfigValue, loadBridgeConfig, saveBridgeConfig } from '../config';
 
 const home = os.homedir();
@@ -159,12 +160,12 @@ router.get('/version', async (_req: Request, res: Response) => {
 
   // Get installed version
   try {
-    const { stdout } = await execFileAsync(claudePath, ['--version'], { timeout: 10000 });
+    const { stdout } = await execFileAsync(claudePath, ['--version'], shellExecOpts({ timeout: 10000 }));
     currentVersion = extractVersion(stdout);
   } catch {
     // CLI not found or errored — try bare 'claude' in case it's on PATH
     try {
-      const { stdout } = await execFileAsync('claude', ['--version'], { timeout: 10000 });
+      const { stdout } = await execFileAsync('claude', ['--version'], shellExecOpts({ timeout: 10000 }));
       currentVersion = extractVersion(stdout);
     } catch {
       // Can't determine current version
@@ -173,7 +174,7 @@ router.get('/version', async (_req: Request, res: Response) => {
 
   // Get latest published version from npm
   try {
-    const { stdout } = await execFileAsync('npm', ['info', '@anthropic-ai/claude-code', 'version'], { timeout: 15000 });
+    const { stdout } = await execFileAsync('npm', ['info', '@anthropic-ai/claude-code', 'version'], shellExecOpts({ timeout: 15000 }));
     latestVersion = extractVersion(stdout);
   } catch {
     // npm not available or network error
@@ -212,7 +213,7 @@ router.post('/git-pull', async (_req: Request, res: Response) => {
     // Step 1: git pull
     let pullOutput = '';
     try {
-      const { stdout, stderr } = await execFileAsync('git', ['pull'], { cwd: dir, timeout: 30000 });
+      const { stdout, stderr } = await execFileAsync('git', ['pull'], shellExecOpts({ cwd: dir, timeout: 30000 }));
       pullOutput = (stdout + stderr).trim();
     } catch (err: any) {
       const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
@@ -226,7 +227,7 @@ router.post('/git-pull', async (_req: Request, res: Response) => {
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync('npm', ['run', 'build'], { cwd: dir, timeout: 60000 });
+      const { stdout, stderr } = await execFileAsync('npm', ['run', 'build'], shellExecOpts({ cwd: dir, timeout: 60000 }));
       const buildOutput = (stdout + stderr).trim();
       return { name, path: dir, success: true, pullOutput, buildOutput, pulled: true, built: true };
     } catch (err: any) {
@@ -241,7 +242,7 @@ router.post('/git-pull', async (_req: Request, res: Response) => {
 // POST /api/settings/update-cli — update Claude Code CLI via npm
 router.post('/update-cli', async (_req: Request, res: Response) => {
   try {
-    const { stdout, stderr } = await execFileAsync('npm', ['update', '-g', '@anthropic-ai/claude-code'], { timeout: 120000 });
+    const { stdout, stderr } = await execFileAsync('npm', ['update', '-g', '@anthropic-ai/claude-code'], shellExecOpts({ timeout: 120000 }));
     const output = (stdout + stderr).trim();
     const updated = !output.includes('up to date') || output.includes('added') || output.includes('changed');
     res.json({ success: true, updated, output });
