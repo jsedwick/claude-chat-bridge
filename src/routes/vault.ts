@@ -137,11 +137,11 @@ router.get('/sessions', (req: Request, res: Response) => {
   const vaultPath = getVaultPath(getMode());
   const sessions = scanVaultSessions(vaultPath);
 
-  // Group by workingDir (skip sessions without one)
+  // Group by workingDir; sessions without one go into a special ungrouped bucket
+  const UNGROUPED = '__ungrouped__';
   const groups = new Map<string, VaultSession[]>();
   for (const s of sessions) {
-    const dir = s.workingDir;
-    if (!dir) continue;
+    const dir = s.workingDir || UNGROUPED;
     if (!groups.has(dir)) groups.set(dir, []);
     groups.get(dir)!.push(s);
   }
@@ -151,10 +151,12 @@ router.get('/sessions', (req: Request, res: Response) => {
     groups.set(dir, list.slice(0, 5));
   }
 
-  // Order: current dir first, then by most recent session date
+  // Order: current dir first, ungrouped last, then by most recent session date
   const sortedDirs = [...groups.keys()].sort((a, b) => {
     if (a === currentDir) return -1;
     if (b === currentDir) return 1;
+    if (a === UNGROUPED) return 1;
+    if (b === UNGROUPED) return -1;
     const aDate = groups.get(a)![0]?.date || '';
     const bDate = groups.get(b)![0]?.date || '';
     return bDate.localeCompare(aDate);
@@ -164,8 +166,8 @@ router.get('/sessions', (req: Request, res: Response) => {
   const topDirs = sortedDirs.slice(0, 5);
 
   const result = topDirs.map(dir => ({
-    dir,
-    dirLabel: path.basename(dir),
+    dir: dir === UNGROUPED ? '' : dir,
+    dirLabel: dir === UNGROUPED ? 'Other Sessions' : path.basename(dir),
     current: dir === currentDir,
     sessions: groups.get(dir)!.map(s => ({
       sessionId: s.sessionId,
