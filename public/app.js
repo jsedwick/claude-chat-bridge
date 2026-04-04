@@ -2646,11 +2646,10 @@ async function updateClaudeCli() {
           ${data.output ? `<pre class="git-pull-output">${escapeHtml(data.output)}</pre>` : ''}
         </div>
       `;
-      if (data.updated) {
-        versionData = null;
-        const container = document.getElementById('settings-content');
-        renderUpdatesSettings(container);
-      }
+      // Always re-fetch version info after a successful update attempt
+      versionData = null;
+      const container = document.getElementById('settings-content');
+      renderUpdatesSettings(container);
     } else {
       statusEl.innerHTML = `
         <div class="git-pull-result">

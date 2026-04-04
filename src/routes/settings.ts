@@ -239,16 +239,26 @@ router.post('/git-pull', async (_req: Request, res: Response) => {
   res.json({ results });
 });
 
-// POST /api/settings/update-cli — update Claude Code CLI via npm
+// POST /api/settings/update-cli — update Claude Code CLI
 router.post('/update-cli', async (_req: Request, res: Response) => {
+  const claudePath = config.claudePath;
   try {
-    const { stdout, stderr } = await execFileAsync('npm', ['update', '-g', '@anthropic-ai/claude-code'], shellExecOpts({ timeout: 120000 }));
+    // Use 'claude update' so the same binary being version-checked is the one updated
+    const { stdout, stderr } = await execFileAsync(claudePath, ['update'], shellExecOpts({ timeout: 120000 }));
     const output = (stdout + stderr).trim();
-    const updated = !output.includes('up to date') || output.includes('added') || output.includes('changed');
+    const updated = !output.includes('up to date');
     res.json({ success: true, updated, output });
-  } catch (err: any) {
-    const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
-    res.json({ success: false, updated: false, output });
+  } catch {
+    // Fallback: try bare 'claude' on PATH
+    try {
+      const { stdout, stderr } = await execFileAsync('claude', ['update'], shellExecOpts({ timeout: 120000 }));
+      const output = (stdout + stderr).trim();
+      const updated = !output.includes('up to date');
+      res.json({ success: true, updated, output });
+    } catch (err: any) {
+      const output = ((err.stdout || '') + (err.stderr || err.message || 'Unknown error')).trim();
+      res.json({ success: false, updated: false, output });
+    }
   }
 });
 
