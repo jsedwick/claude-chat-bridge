@@ -65,6 +65,13 @@ const sidebarDirBtn = document.querySelector('.btn-sidebar-dir');
 const newChatBtn = document.getElementById('new-chat-btn');
 let selectedNewChatDir = '';
 
+// App title
+function getAppTitle() {
+  return localStorage.getItem('chat-bridge-app-title') || 'Claude Chat Bridge';
+}
+chatTitle.textContent = getAppTitle();
+document.title = getAppTitle();
+
 // Restore saved model
 const savedModel = localStorage.getItem('chat-bridge-model') || 'opus';
 modelSelect.value = savedModel;
@@ -105,7 +112,7 @@ async function setMode(mode) {
         const s = await fetch(`/api/sessions/${currentSessionId}`).then(r => r.json());
         if ((s.mode || 'work') !== result.mode) {
           currentSessionId = null;
-          chatTitle.textContent = 'Claude Chat Bridge';
+          chatTitle.textContent = getAppTitle();
           currentWorkingDir = '';
           welcomeEl.style.display = '';
           inputArea.style.display = 'none';
@@ -943,7 +950,7 @@ async function archiveSessionItem(id) {
   await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
   if (currentSessionId === id) {
     currentSessionId = null;
-    chatTitle.textContent = 'Claude Chat Bridge';
+    chatTitle.textContent = getAppTitle();
     currentWorkingDir = '';
     welcomeEl.style.display = '';
     inputArea.style.display = 'none';
@@ -958,10 +965,65 @@ async function unarchiveSessionItem(id) {
   loadSessions();
 }
 
-// Rename via header title click
+// Rename via header title double-click
 function renameCurrentSession() {
-  if (!currentSessionId) return;
+  if (!currentSessionId) {
+    renameAppTitle();
+    return;
+  }
   startEditing(currentSessionId, chatTitle);
+}
+
+// App persona modal
+async function renameAppTitle() {
+  const overlay = document.getElementById('persona-overlay');
+  const titleInput = document.getElementById('persona-title-input');
+  const textarea = document.getElementById('persona-textarea');
+
+  // Populate title
+  titleInput.value = getAppTitle();
+
+  // Fetch persona from server
+  try {
+    const res = await fetch('/api/settings/persona');
+    const data = await res.json();
+    textarea.value = data.persona || '';
+  } catch {
+    textarea.value = '';
+  }
+
+  overlay.style.display = '';
+  overlay.onclick = (e) => { if (e.target === overlay) closePersonaModal(); };
+  titleInput.focus();
+  titleInput.select();
+}
+
+function closePersonaModal() {
+  document.getElementById('persona-overlay').style.display = 'none';
+}
+
+async function savePersonaModal() {
+  const titleInput = document.getElementById('persona-title-input');
+  const textarea = document.getElementById('persona-textarea');
+
+  // Save title
+  const title = titleInput.value.trim() || 'Claude Chat Bridge';
+  localStorage.setItem('chat-bridge-app-title', title);
+  chatTitle.textContent = title;
+  document.title = title;
+
+  // Save persona to server
+  try {
+    await fetch('/api/settings/persona', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persona: textarea.value }),
+    });
+  } catch (err) {
+    console.error('Failed to save persona:', err);
+  }
+
+  closePersonaModal();
 }
 
 // Rename via sidebar double-click
@@ -1096,7 +1158,7 @@ async function deleteSessionItem(id) {
   sessionInputDrafts.delete(id);
   if (currentSessionId === id) {
     currentSessionId = null;
-    chatTitle.textContent = 'Claude Chat Bridge';
+    chatTitle.textContent = getAppTitle();
     currentWorkingDir = '';
     welcomeEl.style.display = '';
     inputArea.style.display = 'none';

@@ -115,7 +115,7 @@
         </button>
         <div id="dir-picker" class="dir-picker" style="display:none"></div>
       </div>
-      <h1 id="chat-title" class="chat-title" onclick="renameCurrentSession()">Claude Chat Bridge</h1>
+      <h1 id="chat-title" class="chat-title" ondblclick="renameCurrentSession()">Claude Chat Bridge</h1>
       <select id="model-select" class="model-select" onchange="saveModel(this.value)">
         <option value="opus">Opus</option>
         <option value="sonnet">Sonnet</option>
@@ -256,6 +256,23 @@
       <div id="kb-rendered" class="kb-rendered" style="display:none"></div>
       <div id="kb-diff" class="kb-diff" style="display:none"></div>
       <div id="kb-editor" class="kb-editor" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- App Persona Modal -->
+  <div id="persona-overlay" class="persona-overlay" style="display:none">
+    <div class="persona-dialog">
+      <div class="persona-header">App Settings</div>
+      <div class="persona-body">
+        <label class="persona-label" for="persona-title-input">App Title</label>
+        <input type="text" id="persona-title-input" class="persona-input" placeholder="Claude Chat Bridge" />
+        <label class="persona-label" for="persona-textarea">Persona <span class="persona-hint">(saved to ~/.claude/CLAUDE.md)</span></label>
+        <textarea id="persona-textarea" class="persona-textarea" placeholder="Describe how Claude should behave in your sessions..."></textarea>
+      </div>
+      <div class="persona-actions">
+        <button class="persona-btn persona-btn-cancel" onclick="closePersonaModal()">Cancel</button>
+        <button class="persona-btn persona-btn-save" onclick="savePersonaModal()">Save</button>
+      </div>
     </div>
   </div>
 

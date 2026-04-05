@@ -291,4 +291,62 @@ router.post('/version/acknowledge', async (req: Request, res: Response) => {
   res.json({ acknowledged: version });
 });
 
+// --- Persona (from ~/.claude/CLAUDE.md <persona> tags) ---
+
+const claudeMdPath = path.join(home, '.claude', 'CLAUDE.md');
+
+function readPersona(): string {
+  try {
+    const content = fs.readFileSync(claudeMdPath, 'utf-8');
+    const match = content.match(/<persona>([\s\S]*?)<\/persona>/);
+    return match ? match[1].trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function writePersona(persona: string): void {
+  let content: string;
+  try {
+    content = fs.readFileSync(claudeMdPath, 'utf-8');
+  } catch {
+    content = '';
+  }
+
+  const personaBlock = `<persona>\n${persona.trim()}\n</persona>`;
+
+  if (/<persona>[\s\S]*?<\/persona>/.test(content)) {
+    // Replace existing persona block
+    content = content.replace(/<persona>[\s\S]*?<\/persona>/, personaBlock);
+  } else if (content.trim()) {
+    // Prepend to existing file
+    content = personaBlock + '\n\n' + content;
+  } else {
+    // New file
+    content = personaBlock + '\n';
+  }
+
+  fs.writeFileSync(claudeMdPath, content, 'utf-8');
+}
+
+// GET /api/settings/persona
+router.get('/persona', (_req: Request, res: Response) => {
+  res.json({ persona: readPersona() });
+});
+
+// PUT /api/settings/persona
+router.put('/persona', (req: Request, res: Response) => {
+  const { persona } = req.body || {};
+  if (typeof persona !== 'string') {
+    res.status(400).json({ error: 'persona is required' });
+    return;
+  }
+  try {
+    writePersona(persona);
+    res.json({ persona: persona.trim() });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to write persona: ' + err.message });
+  }
+});
+
 export default router;
