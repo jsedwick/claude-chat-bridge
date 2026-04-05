@@ -711,8 +711,10 @@ html, body {
 
 .welcome-message {
   text-align: center;
-  margin: auto;
+  margin: 0 auto;
   padding: 32px;
+  width: 100%;
+  max-width: 600px;
 }
 
 .welcome-message h2 {
@@ -839,6 +841,11 @@ html, body {
   color: var(--text-muted);
   flex-shrink: 0;
   margin-left: 12px;
+}
+
+.welcome-topics .welcome-sessions-title {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .session-item-dir {

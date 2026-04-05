@@ -107,7 +107,7 @@ async function setMode(mode) {
           currentSessionId = null;
           chatTitle.textContent = 'Claude Chat Bridge';
           currentWorkingDir = '';
-          welcomeEl.style.display = 'flex';
+          welcomeEl.style.display = '';
           inputArea.style.display = 'none';
           document.querySelector('.dir-picker-wrapper').style.display = 'none';
           clearMessages();
@@ -945,7 +945,7 @@ async function archiveSessionItem(id) {
     currentSessionId = null;
     chatTitle.textContent = 'Claude Chat Bridge';
     currentWorkingDir = '';
-    welcomeEl.style.display = 'flex';
+    welcomeEl.style.display = '';
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
     clearMessages();
@@ -1098,7 +1098,7 @@ async function deleteSessionItem(id) {
     currentSessionId = null;
     chatTitle.textContent = 'Claude Chat Bridge';
     currentWorkingDir = '';
-    welcomeEl.style.display = 'flex';
+    welcomeEl.style.display = '';
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
     clearMessages();
