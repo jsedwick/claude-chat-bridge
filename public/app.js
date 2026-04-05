@@ -41,10 +41,19 @@ async function restoreMessages(sessionId, sessionMeta) {
         addUsageInfo(msg.content);
       }
     }
-    // Show fork-point divider if this is a forked session
+    // Show fork-point divider and mark the fork-point message if this is a forked session
     if (sessionMeta?.forkedFrom) {
       addForkDivider(sessionMeta.forkedFrom.sessionName, sessionMeta.forkedFrom.sessionId);
+      markForkPointMessage(sessionMeta.forkedFrom.messageIndex);
     }
+    // Add fork badges to messages that have been forked from
+    try {
+      const forkRes = await fetch(`/api/sessions/${sessionId}/forks`);
+      if (forkRes.ok) {
+        const forkPoints = await forkRes.json();
+        addForkBadges(forkPoints);
+      }
+    } catch {}
     scrollToBottom();
   } catch (err) {
     console.error('Failed to load messages:', err);
@@ -150,6 +159,7 @@ function updateModeTabsUI(mode) {
 
 // Directory browser state
 let currentWorkingDir = '';
+let currentForkDepth = 0;
 const dirPicker = document.getElementById('dir-picker');
 
 // Shared directory browser renderer
@@ -900,7 +910,8 @@ async function loadSessions() {
   }
 }
 
-function renderSessionItem(s, isArchived) {
+function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, forkCount = 0 } = {}) {
+  const isFork = forkDepth > 0;
   const actions = isArchived
     ? `<div class="session-item-actions">
          <button class="session-item-action" onclick="event.stopPropagation(); unarchiveSessionItem('${s.id}')" title="Unarchive">
@@ -915,11 +926,19 @@ function renderSessionItem(s, isArchived) {
          <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')" title="Delete">&times;</button>
        </div>`;
 
+  const forkBadge = forkCount > 0
+    ? `<span class="session-fork-badge" title="${forkCount} fork${forkCount > 1 ? 's' : ''}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="3" r="1"/><circle cx="6" cy="21" r="1"/><circle cx="18" cy="21" r="1"/><path d="M12 4v6m0 0c-3.5 0-6 4-6 10m6-10c3.5 0 6 4 6 10"/></svg>${forkCount}</span>`
+    : '';
+
+  const forkClasses = isFork ? `session-item-fork${isLastFork ? ' session-item-fork-last' : ''}` : '';
+  const indentStyle = forkDepth > 0 ? ` style="margin-left:${forkDepth * 20}px"` : '';
+
   return `
-    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''}"
-         onclick="switchSession('${s.id}')">
+    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''} ${forkClasses}"
+         onclick="switchSession('${s.id}')"${indentStyle}>
+      ${isFork ? '<span class="session-fork-branch"></span>' : ''}
       ${actions}
-      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : ''}${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : ''}${forkBadge}${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} msgs</span>
@@ -929,17 +948,68 @@ function renderSessionItem(s, isArchived) {
     </div>`;
 }
 
+function buildForkTree(sessions) {
+  const sessionIds = new Set(sessions.map(s => s.id));
+  const forksByParent = new Map();
+  const forkIds = new Set();
+  for (const s of sessions) {
+    if (s.forkedFrom?.sessionId && sessionIds.has(s.forkedFrom.sessionId)) {
+      const parentId = s.forkedFrom.sessionId;
+      if (!forksByParent.has(parentId)) forksByParent.set(parentId, []);
+      forksByParent.get(parentId).push(s);
+      forkIds.add(s.id);
+    }
+    // Orphaned forks (parent deleted/archived) render at top level naturally
+  }
+  return { forksByParent, forkIds };
+}
+
+function renderForkChildren(html, parentId, isArchived, forksByParent, depth) {
+  const forks = forksByParent.get(parentId) || [];
+  forks.forEach((fork, i) => {
+    const childForks = forksByParent.get(fork.id) || [];
+    const isLastInGroup = i === forks.length - 1;
+    html.push(renderSessionItem(fork, isArchived, {
+      forkDepth: depth,
+      isLastFork: isLastInGroup,
+      forkCount: childForks.length,
+    }));
+    // Recurse into nested forks at the same depth (they visually chain downward)
+    if (childForks.length > 0) {
+      renderForkChildren(html, fork.id, isArchived, forksByParent, depth + 1);
+    }
+  });
+}
+
 function renderSessionList(sessions) {
-  sessionListEl.innerHTML = sessions.map(s => renderSessionItem(s, false)).join('');
+  const { forksByParent, forkIds } = buildForkTree(sessions);
+  const html = [];
+  for (const s of sessions) {
+    if (forkIds.has(s.id)) continue;
+    const forks = forksByParent.get(s.id) || [];
+    html.push(renderSessionItem(s, false, { forkCount: forks.length }));
+    renderForkChildren(html, s.id, false, forksByParent, 1);
+  }
+  sessionListEl.innerHTML = html.join('');
 }
 
 function renderArchiveList(sessions) {
   const countEl = document.getElementById('archive-count');
   const listEl = document.getElementById('archive-list');
   countEl.textContent = sessions.length;
-  listEl.innerHTML = sessions.length
-    ? sessions.map(s => renderSessionItem(s, true)).join('')
-    : '<div class="archive-empty">No archived sessions</div>';
+  if (!sessions.length) {
+    listEl.innerHTML = '<div class="archive-empty">No archived sessions</div>';
+    return;
+  }
+  const { forksByParent, forkIds } = buildForkTree(sessions);
+  const html = [];
+  for (const s of sessions) {
+    if (forkIds.has(s.id)) continue;
+    const forks = forksByParent.get(s.id) || [];
+    html.push(renderSessionItem(s, true, { forkCount: forks.length }));
+    renderForkChildren(html, s.id, true, forksByParent, 1);
+  }
+  listEl.innerHTML = html.join('');
 }
 
 function toggleArchiveSection() {
@@ -1123,6 +1193,7 @@ async function switchSession(id) {
   const session = await res.json();
   chatTitle.textContent = session.name;
   currentWorkingDir = session.workingDir || '';
+  currentForkDepth = session.forkDepth || 0;
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
   document.querySelector('.dir-picker-wrapper').style.display = '';
@@ -1230,6 +1301,61 @@ function addForkDivider(parentName, parentId) {
   messagesEl.appendChild(el);
 }
 
+function markForkPointMessage(messageIndex) {
+  const visibleMsgs = messagesEl.querySelectorAll('.message-user, .message-assistant');
+  const msgEl = visibleMsgs[messageIndex];
+  if (!msgEl) return;
+  const marker = document.createElement('div');
+  marker.className = 'msg-fork-point-marker';
+  marker.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg> fork point';
+  msgEl.appendChild(marker);
+}
+
+function addForkBadges(forkPoints) {
+  // forkPoints is { messageIndex: [{ id, name }] }
+  const visibleMsgs = messagesEl.querySelectorAll('.message-user, .message-assistant');
+  for (const [idx, forks] of Object.entries(forkPoints)) {
+    const msgEl = visibleMsgs[Number(idx)];
+    if (!msgEl) continue;
+    const badge = document.createElement('div');
+    badge.className = 'msg-fork-badge';
+    const count = forks.length;
+    badge.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="3" r="1"/><circle cx="6" cy="21" r="1"/><circle cx="18" cy="21" r="1"/><path d="M12 4v6m0 0c-3.5 0-6 4-6 10m6-10c3.5 0 6 4 6 10"/></svg> ${count}`;
+    badge.title = forks.map(f => f.name).join(', ');
+    // Clicking the badge navigates to the first (or only) fork
+    if (count === 1) {
+      badge.style.cursor = 'pointer';
+      badge.onclick = (e) => { e.stopPropagation(); switchSession(forks[0].id); };
+    } else {
+      // Show a small picker for multiple forks
+      badge.style.cursor = 'pointer';
+      badge.onclick = (e) => {
+        e.stopPropagation();
+        showForkPicker(badge, forks);
+      };
+    }
+    msgEl.appendChild(badge);
+  }
+}
+
+function showForkPicker(anchor, forks) {
+  // Remove any existing picker
+  document.querySelectorAll('.fork-picker').forEach(el => el.remove());
+  const picker = document.createElement('div');
+  picker.className = 'fork-picker';
+  for (const fork of forks) {
+    const item = document.createElement('button');
+    item.className = 'fork-picker-item';
+    item.textContent = fork.name;
+    item.onclick = (e) => { e.stopPropagation(); picker.remove(); switchSession(fork.id); };
+    picker.appendChild(item);
+  }
+  anchor.parentElement.appendChild(picker);
+  // Close on outside click
+  const close = (e) => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
 function createAssistantMessage() {
   const el = document.createElement('div');
   el.className = 'message message-assistant';
@@ -1319,19 +1445,21 @@ function ensureCopyButton(el) {
     };
     menu.appendChild(copyItem);
 
-    // Fork action (only if there's an active session)
-    const forkItem = document.createElement('button');
-    forkItem.className = 'msg-action-menu-item';
-    forkItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg> Fork from here';
-    forkItem.onclick = async (e) => {
-      e.stopPropagation();
-      closeAllMsgActionMenus();
-      if (!currentSessionId) return;
-      const msgIndex = getMsgIndex(el);
-      if (msgIndex < 0) return;
-      await forkSession(currentSessionId, msgIndex);
-    };
-    menu.appendChild(forkItem);
+    // Fork action (only if there's an active session and not at max fork depth)
+    if (currentForkDepth < 2) {
+      const forkItem = document.createElement('button');
+      forkItem.className = 'msg-action-menu-item';
+      forkItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg> Fork from here';
+      forkItem.onclick = async (e) => {
+        e.stopPropagation();
+        closeAllMsgActionMenus();
+        if (!currentSessionId) return;
+        const msgIndex = getMsgIndex(el);
+        if (msgIndex < 0) return;
+        await forkSession(currentSessionId, msgIndex);
+      };
+      menu.appendChild(forkItem);
+    }
 
     btn.onclick = (e) => {
       e.stopPropagation();

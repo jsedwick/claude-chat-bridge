@@ -84,8 +84,22 @@ export function updateSession(id: string, updates: Partial<ChatSession>): ChatSe
 }
 
 export function deleteSession(id: string): boolean {
+  const session = sessions.find(s => s.id === id);
+  if (!session) return false;
+
+  // Re-parent fork children to this session's parent (or make them root)
+  const grandparent = session.forkedFrom || undefined;
+  for (const s of sessions) {
+    if (s.forkedFrom?.sessionId === id) {
+      if (grandparent) {
+        s.forkedFrom = { ...grandparent };
+      } else {
+        delete s.forkedFrom;
+      }
+    }
+  }
+
   const idx = sessions.findIndex(s => s.id === id);
-  if (idx === -1) return false;
   sessions.splice(idx, 1);
   save();
   return true;
@@ -121,9 +135,22 @@ export function getMessages(sessionId: string): ChatMessage[] {
   return session?.messages || [];
 }
 
-export function forkSession(sourceId: string, messageIndex: number): ChatSession | undefined {
+export function getForkDepth(sessionId: string): number {
+  let depth = 0;
+  let current = sessions.find(s => s.id === sessionId);
+  while (current?.forkedFrom?.sessionId) {
+    depth++;
+    current = sessions.find(s => s.id === current!.forkedFrom!.sessionId);
+  }
+  return depth;
+}
+
+const MAX_FORK_DEPTH = 2;
+
+export function forkSession(sourceId: string, messageIndex: number): ChatSession | undefined | 'max_depth' {
   const source = sessions.find(s => s.id === sourceId);
   if (!source) return undefined;
+  if (getForkDepth(sourceId) >= MAX_FORK_DEPTH) return 'max_depth';
   if (!source.messages || messageIndex < 0 || messageIndex >= source.messages.length) return undefined;
 
   // Copy messages up to and including messageIndex
@@ -172,4 +199,16 @@ export function forkSession(sourceId: string, messageIndex: number): ChatSession
   sessions.push(forked);
   save();
   return forked;
+}
+
+export function getForkPoints(sessionId: string): Record<number, { id: string; name: string }[]> {
+  const forks: Record<number, { id: string; name: string }[]> = {};
+  for (const s of sessions) {
+    if (s.forkedFrom?.sessionId === sessionId && !s.archived) {
+      const idx = s.forkedFrom.messageIndex;
+      if (!forks[idx]) forks[idx] = [];
+      forks[idx].push({ id: s.id, name: s.name });
+    }
+  }
+  return forks;
 }

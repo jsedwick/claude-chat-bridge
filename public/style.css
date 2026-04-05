@@ -292,6 +292,57 @@ html, body {
   background: rgba(255, 107, 107, 0.1);
 }
 
+/* Fork grouping — margin-left set inline based on fork depth */
+.session-item-fork {
+  position: relative;
+}
+
+.session-fork-branch {
+  position: absolute;
+  left: -14px;
+  top: 0;
+  width: 14px;
+  height: 50%;
+  border-left: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  border-bottom-left-radius: 6px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* For non-last forks, extend the vertical line all the way down to connect to the next fork */
+.session-item-fork:not(.session-item-fork-last) .session-fork-branch {
+  height: calc(100% + 4px); /* +4px for margin-bottom gap */
+  border-bottom: none;
+  border-bottom-left-radius: 0;
+}
+
+/* Horizontal arm for non-last forks (since the vertical line goes straight down) */
+.session-item-fork:not(.session-item-fork-last)::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  width: 14px;
+  border-bottom: 1.5px solid var(--text-muted);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.session-fork-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.session-fork-badge svg {
+  opacity: 0.6;
+}
+
 .session-item.archived {
   opacity: 0.7;
 }
@@ -994,6 +1045,93 @@ html, body {
 
 .fork-divider-label svg {
   flex-shrink: 0;
+}
+
+/* Fork-point marker on the message where a fork diverged */
+.msg-fork-point-marker {
+  position: absolute;
+  bottom: -8px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-primary, #181825);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px 1px 5px;
+  opacity: 0.6;
+  z-index: 5;
+}
+
+.msg-fork-point-marker svg {
+  opacity: 0.5;
+}
+
+/* Fork badges on messages */
+.msg-fork-badge {
+  position: absolute;
+  bottom: -8px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-primary, #181825);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px 1px 5px;
+  z-index: 5;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.msg-fork-badge:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.msg-fork-badge svg {
+  opacity: 0.6;
+}
+
+.msg-fork-badge:hover svg {
+  opacity: 1;
+}
+
+.fork-picker {
+  position: absolute;
+  bottom: -4px;
+  right: 12px;
+  transform: translateY(100%);
+  z-index: 110;
+  min-width: 160px;
+  background: var(--bg-secondary, #1e1e2e);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.fork-picker-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fork-picker-item:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .message-assistant p {

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, forkSession } from '../services/session-store';
+import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
 import { getMode, setMode, Mode, config, getMcpConfigPath } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
@@ -158,11 +158,24 @@ router.post('/:id/fork', (req: Request, res: Response) => {
     return;
   }
   const forked = forkSession(req.params.id as string, messageIndex);
+  if (forked === 'max_depth') {
+    res.status(400).json({ error: 'Maximum fork depth reached (2 levels)' });
+    return;
+  }
   if (!forked) {
     res.status(404).json({ error: 'Session not found or invalid message index' });
     return;
   }
   res.status(201).json(forked);
+});
+
+router.get('/:id/forks', (req: Request, res: Response) => {
+  const session = getSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  res.json(getForkPoints(req.params.id as string));
 });
 
 router.post('/:id/archive', (req: Request, res: Response) => {
@@ -190,7 +203,7 @@ router.get('/:id', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Session not found' });
     return;
   }
-  res.json(session);
+  res.json({ ...session, forkDepth: getForkDepth(session.id) });
 });
 
 router.get('/:id/messages', (req: Request, res: Response) => {
