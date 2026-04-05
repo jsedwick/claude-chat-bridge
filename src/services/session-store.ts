@@ -120,3 +120,56 @@ export function getMessages(sessionId: string): ChatMessage[] {
   const session = sessions.find(s => s.id === sessionId);
   return session?.messages || [];
 }
+
+export function forkSession(sourceId: string, messageIndex: number): ChatSession | undefined {
+  const source = sessions.find(s => s.id === sourceId);
+  if (!source) return undefined;
+  if (!source.messages || messageIndex < 0 || messageIndex >= source.messages.length) return undefined;
+
+  // Copy messages up to and including messageIndex
+  // But we need to map DOM message indices (user + assistant only) to the full messages array
+  // which also includes tool, tool_result, and usage messages
+  let visibleCount = -1;
+  let sliceEnd = 0;
+  for (let i = 0; i < source.messages.length; i++) {
+    const role = source.messages[i].role;
+    if (role === 'user' || role === 'assistant') {
+      visibleCount++;
+    }
+    if (visibleCount === messageIndex) {
+      // Include all messages up through the next visible message (or end)
+      // This captures tool/tool_result messages that belong to this assistant turn
+      sliceEnd = i + 1;
+      // Continue to grab trailing tool/tool_result/usage for this turn
+      for (let j = i + 1; j < source.messages.length; j++) {
+        const r = source.messages[j].role;
+        if (r === 'user' || r === 'assistant') break;
+        sliceEnd = j + 1;
+      }
+      break;
+    }
+  }
+
+  if (visibleCount < messageIndex) return undefined;
+
+  const forked: ChatSession = {
+    id: crypto.randomUUID(),
+    claudeSessionId: null,
+    name: `${source.name} (fork)`,
+    mode: source.mode,
+    workingDir: source.workingDir,
+    created: new Date().toISOString(),
+    lastActivity: new Date().toISOString(),
+    lastMessage: source.lastMessage,
+    messageCount: sliceEnd,
+    messages: source.messages.slice(0, sliceEnd).map(m => ({ ...m })),
+    forkedFrom: {
+      sessionId: source.id,
+      sessionName: source.name,
+      messageIndex,
+    },
+  };
+  sessions.push(forked);
+  save();
+  return forked;
+}

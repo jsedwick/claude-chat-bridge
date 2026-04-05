@@ -18,6 +18,11 @@ export interface ChatSession {
   archived?: boolean;
   closedAt?: string;
   usedCodeFile?: boolean;
+  forkedFrom?: {
+    sessionId: string;
+    sessionName: string;
+    messageIndex: number;
+  };
 }
 
 export interface StreamEvent {
@@ -27,6 +32,7 @@ export interface StreamEvent {
 
 export interface ClaudeRunnerOptions {
   sessionId?: string;
+  forkFromSessionId?: string;
   appSessionId: string;
   message: string;
   model?: string;

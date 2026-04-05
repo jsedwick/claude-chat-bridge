@@ -114,7 +114,7 @@ export function getAppSessionByClaudeId(claudeSessionId: string): string | undef
 }
 
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, appSessionId, message, model, mode, workingDir, attachments, onEvent, onClose } = options;
+  const { sessionId, forkFromSessionId, appSessionId, message, model, mode, workingDir, attachments, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
@@ -169,6 +169,8 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   if (sessionId) {
     args.push('--resume', sessionId);
+  } else if (forkFromSessionId) {
+    args.push('--resume', forkFromSessionId, '--fork-session');
   }
 
   // When no images, pass message as CLI arg (simpler)

@@ -63,8 +63,18 @@ router.post('/:sessionId', (req: Request, res: Response) => {
 
   let assistantText = '';
 
+  // For forked sessions on their first message, resume from parent's Claude session with --fork-session
+  let forkFromClaudeId: string | undefined;
+  if (!session.claudeSessionId && session.forkedFrom) {
+    const parentSession = getSession(session.forkedFrom.sessionId);
+    if (parentSession?.claudeSessionId) {
+      forkFromClaudeId = parentSession.claudeSessionId;
+    }
+  }
+
   runClaude({
     sessionId: session.claudeSessionId || undefined,
+    forkFromSessionId: forkFromClaudeId,
     appSessionId: sessionId,
     message: message,
     model: model || undefined,

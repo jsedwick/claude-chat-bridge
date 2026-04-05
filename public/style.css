@@ -882,8 +882,8 @@ html, body {
   position: relative;
 }
 
-/* Copy button for assistant messages */
-.btn-copy-msg {
+/* Message action menu (ellipsis button + flyout) */
+.btn-msg-actions {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -898,14 +898,102 @@ html, body {
   line-height: 0;
 }
 
-.message-assistant:hover .btn-copy-msg,
-.message-user:hover .btn-copy-msg {
+.message-assistant:hover .btn-msg-actions,
+.message-user:hover .btn-msg-actions {
   opacity: 0.5;
 }
 
-.btn-copy-msg:hover {
+.btn-msg-actions:hover,
+.btn-msg-actions.active {
   opacity: 1 !important;
   background: rgba(255, 255, 255, 0.1);
+}
+
+.msg-action-menu {
+  display: none;
+  position: absolute;
+  top: 28px;
+  right: 4px;
+  z-index: 100;
+  min-width: 150px;
+  background: var(--bg-secondary, #1e1e2e);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.msg-action-menu.open {
+  display: block;
+}
+
+.msg-action-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.msg-action-menu-item:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.msg-action-menu-item svg {
+  flex-shrink: 0;
+}
+
+/* Fork divider */
+.fork-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 12px 0;
+  margin: 4px 0;
+}
+
+.fork-divider::before,
+.fork-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.5;
+}
+
+.fork-divider::before {
+  margin-right: 12px;
+}
+
+.fork-divider::after {
+  margin-left: 12px;
+}
+
+.fork-divider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.fork-divider-label:hover {
+  opacity: 1;
+}
+
+.fork-divider-label svg {
+  flex-shrink: 0;
 }
 
 .message-assistant p {

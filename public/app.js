@@ -12,7 +12,7 @@ const permissionBlockedSessions = new Set(); // sessions waiting on permission a
 let versionData = null; // cached version check data
 
 // Message history (server-backed)
-async function restoreMessages(sessionId) {
+async function restoreMessages(sessionId, sessionMeta) {
   console.log('[SSE] restoreMessages called', sessionId, new Error().stack?.split('\n').slice(1,4).join(' <- '));
   clearMessages();
   try {
@@ -40,6 +40,10 @@ async function restoreMessages(sessionId) {
       } else if (msg.role === 'usage') {
         addUsageInfo(msg.content);
       }
+    }
+    // Show fork-point divider if this is a forked session
+    if (sessionMeta?.forkedFrom) {
+      addForkDivider(sessionMeta.forkedFrom.sessionName, sessionMeta.forkedFrom.sessionId);
     }
     scrollToBottom();
   } catch (err) {
@@ -1122,7 +1126,7 @@ async function switchSession(id) {
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
   document.querySelector('.dir-picker-wrapper').style.display = '';
-  restoreMessages(id);
+  restoreMessages(id, session);
   loadSessions();
   // Show correct button state for this session
   if (streamingSessions.has(id)) {
@@ -1195,6 +1199,37 @@ function addInfoMessage(text) {
   messagesEl.appendChild(el);
 }
 
+function addForkDivider(parentName, parentId) {
+  const el = document.createElement('div');
+  el.className = 'fork-divider';
+  const label = document.createElement('span');
+  label.className = 'fork-divider-label';
+  // Build via DOM to avoid XSS from user-editable session names
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', '12');
+  svg.setAttribute('height', '12');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.innerHTML = '<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>';
+  label.appendChild(svg);
+  label.appendChild(document.createTextNode(' Forked from '));
+  const strong = document.createElement('strong');
+  strong.textContent = parentName;
+  label.appendChild(strong);
+  label.appendChild(document.createTextNode(' \u2014 conversation continues from this point'));
+  if (parentId) {
+    label.style.cursor = 'pointer';
+    label.title = 'Click to open parent session';
+    label.onclick = () => switchSession(parentId);
+  }
+  el.appendChild(label);
+  messagesEl.appendChild(el);
+}
+
 function createAssistantMessage() {
   const el = document.createElement('div');
   el.className = 'message message-assistant';
@@ -1204,9 +1239,11 @@ function createAssistantMessage() {
 
 function extractMessageContent(el) {
   const clone = el.cloneNode(true);
-  // Remove the copy button itself from the clone
-  const copyBtn = clone.querySelector('.btn-copy-msg');
-  if (copyBtn) copyBtn.remove();
+  // Remove the action menu elements from the clone
+  const actionsBtn = clone.querySelector('.btn-msg-actions');
+  if (actionsBtn) actionsBtn.remove();
+  const actionsMenu = clone.querySelector('.msg-action-menu');
+  if (actionsMenu) actionsMenu.remove();
   // Remove code block copy buttons
   clone.querySelectorAll('.btn-copy-code').forEach(b => b.remove());
 
@@ -1238,12 +1275,23 @@ function extractMessageContent(el) {
 }
 
 function ensureCopyButton(el) {
-  let btn = el.querySelector('.btn-copy-msg');
+  let btn = el.querySelector('.btn-msg-actions');
   if (!btn) {
     btn = document.createElement('button');
-    btn.className = 'btn-copy-msg';
-    btn.title = 'Copy message';
-    btn.onclick = () => {
+    btn.className = 'btn-msg-actions';
+    btn.title = 'Message actions';
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
+
+    const menu = document.createElement('div');
+    menu.className = 'msg-action-menu';
+
+    // Copy action
+    const copyItem = document.createElement('button');
+    copyItem.className = 'msg-action-menu-item';
+    copyItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy';
+    copyItem.onclick = (e) => {
+      e.stopPropagation();
+      closeAllMsgActionMenus();
       const { html, text } = extractMessageContent(el);
       const doCopy = navigator.clipboard?.write
         ? navigator.clipboard.write([
@@ -1263,19 +1311,81 @@ function ensureCopyButton(el) {
             ta.remove();
           });
       doCopy.then(() => {
-        btn.classList.add('copied');
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
         setTimeout(() => {
-          btn.classList.remove('copied');
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
         }, 1500);
       });
     };
+    menu.appendChild(copyItem);
+
+    // Fork action (only if there's an active session)
+    const forkItem = document.createElement('button');
+    forkItem.className = 'msg-action-menu-item';
+    forkItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg> Fork from here';
+    forkItem.onclick = async (e) => {
+      e.stopPropagation();
+      closeAllMsgActionMenus();
+      if (!currentSessionId) return;
+      const msgIndex = getMsgIndex(el);
+      if (msgIndex < 0) return;
+      await forkSession(currentSessionId, msgIndex);
+    };
+    menu.appendChild(forkItem);
+
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const wasOpen = menu.classList.contains('open');
+      closeAllMsgActionMenus();
+      if (!wasOpen) {
+        menu.classList.add('open');
+        btn.classList.add('active');
+      }
+    };
+
+    el.appendChild(btn);
+    el.appendChild(menu);
   }
-  if (!btn.classList.contains('copied')) {
-    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+}
+
+function closeAllMsgActionMenus() {
+  document.querySelectorAll('.msg-action-menu.open').forEach(m => m.classList.remove('open'));
+  document.querySelectorAll('.btn-msg-actions.active').forEach(b => b.classList.remove('active'));
+}
+
+// Close action menus when clicking outside
+document.addEventListener('click', () => closeAllMsgActionMenus());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeAllMsgActionMenus();
+});
+
+function getMsgIndex(el) {
+  // Count user + assistant messages before this one (matches server message array indices)
+  const allMsgs = messagesEl.querySelectorAll('.message-user, .message-assistant');
+  for (let i = 0; i < allMsgs.length; i++) {
+    if (allMsgs[i] === el) return i;
   }
-  el.appendChild(btn);
+  return -1;
+}
+
+async function forkSession(sessionId, msgIndex) {
+  try {
+    const res = await fetch(`/api/sessions/${sessionId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIndex: msgIndex }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert('Fork failed: ' + (err.error || 'Unknown error'));
+      return;
+    }
+    const forkedSession = await res.json();
+    await switchSession(forkedSession.id);
+  } catch (err) {
+    console.error('Fork failed:', err);
+    alert('Fork failed: ' + err.message);
+  }
 }
 
 function addTypingIndicator() {
