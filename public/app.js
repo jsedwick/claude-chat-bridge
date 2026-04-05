@@ -1291,7 +1291,6 @@ function addForkDivider(parentName, parentId) {
   const strong = document.createElement('strong');
   strong.textContent = parentName;
   label.appendChild(strong);
-  label.appendChild(document.createTextNode(' \u2014 conversation continues from this point'));
   if (parentId) {
     label.style.cursor = 'pointer';
     label.title = 'Click to open parent session';
@@ -1445,6 +1444,17 @@ function ensureCopyButton(el) {
     };
     menu.appendChild(copyItem);
 
+    // Reference action
+    const refItem = document.createElement('button');
+    refItem.className = 'msg-action-menu-item';
+    refItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Reference';
+    refItem.onclick = (e) => {
+      e.stopPropagation();
+      closeAllMsgActionMenus();
+      setReference(el);
+    };
+    menu.appendChild(refItem);
+
     // Fork action (only if there's an active session and not at max fork depth)
     if (currentForkDepth < 2) {
       const forkItem = document.createElement('button');
@@ -1514,6 +1524,26 @@ async function forkSession(sessionId, msgIndex) {
     console.error('Fork failed:', err);
     alert('Fork failed: ' + err.message);
   }
+}
+
+// --- Message reference state ---
+let pendingReference = null; // { text: string }
+
+function setReference(msgEl) {
+  const { text } = extractMessageContent(msgEl);
+  const truncated = text.length > 200 ? text.slice(0, 200) + '…' : text;
+  pendingReference = { text: truncated };
+  const preview = document.getElementById('reference-preview');
+  const previewText = document.getElementById('reference-preview-text');
+  previewText.textContent = truncated;
+  preview.style.display = 'flex';
+  messageInput.focus();
+}
+
+function clearReference() {
+  pendingReference = null;
+  const preview = document.getElementById('reference-preview');
+  preview.style.display = 'none';
 }
 
 function addTypingIndicator() {
@@ -1999,8 +2029,14 @@ async function cancelStream() {
 // Send message with streaming SSE parsing
 // skipRender: when true, skips rendering user message (already shown from queue)
 async function sendMessage(skipRender = false) {
-  const text = messageInput.value.trim();
+  let text = messageInput.value.trim();
   if ((!text && pendingAttachments.length === 0) || !currentSessionId) return;
+
+  // Prepend reference if set
+  if (pendingReference) {
+    text = `> Re: "${pendingReference.text}"\n\n${text}`;
+    clearReference();
+  }
 
   // If session is busy, queue the message for later
   if (streamingSessions.has(currentSessionId)) {
