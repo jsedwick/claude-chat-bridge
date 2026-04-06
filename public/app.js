@@ -720,6 +720,9 @@ let ttsAutoSpeak = localStorage.getItem('chat-bridge-tts-auto') === 'true';
 let ttsCurrentUtterance = null;
 let ttsSpeakingEl = null; // the assistant message element currently being spoken
 let ttsKeepAlive = null; // Chrome workaround interval
+let ttsAudioEl = null; // Audio element for Google Cloud TTS playback
+let ttsGoogleVoicesCache = null; // cached Google Cloud voice list
+let ttsProvider = localStorage.getItem('chat-bridge-tts-provider') || 'browser'; // 'browser' or 'google-cloud'
 
 function getTTSVoice() {
   const saved = localStorage.getItem('chat-bridge-tts-voice');
@@ -732,18 +735,23 @@ function getTTSVoice() {
 function stripForTTS(text) {
   // Remove code blocks
   let clean = text.replace(/```[\s\S]*?```/g, '(code block omitted)');
-  // Remove inline code
-  clean = clean.replace(/`[^`]+`/g, '');
+  // Strip backticks from inline code but keep the text (e.g. `foo` → foo)
+  clean = clean.replace(/`([^`]+)`/g, '$1');
   // Remove markdown images
   clean = clean.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
   // Remove markdown links but keep text
   clean = clean.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  // Convert list items to sentences (add period before each bullet/number so TTS pauses)
+  clean = clean.replace(/\n\s*[-*+]\s+/g, '.\n');
+  clean = clean.replace(/\n\s*\d+[.)]\s+/g, '.\n');
   // Remove markdown formatting
   clean = clean.replace(/[*_~#>]+/g, '');
   // Remove HTML tags
   clean = clean.replace(/<[^>]+>/g, '');
   // Collapse whitespace
   clean = clean.replace(/\n{2,}/g, '. ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+  // Clean up double periods from list conversion
+  clean = clean.replace(/\.{2,}/g, '.').replace(/^\.\s*/, '');
   return clean;
 }
 
@@ -751,6 +759,102 @@ function stripForTTS(text) {
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 function speakText(text, messageEl) {
+  const clean = stripForTTS(text);
+  if (!clean) { console.warn('[TTS] nothing to speak after stripping'); return; }
+
+  // Route to Google Cloud TTS if configured, with fallback to browser
+  if (ttsProvider === 'google-cloud') {
+    speakTextGoogleCloud(clean, messageEl);
+    return;
+  }
+
+  speakTextBrowser(clean, messageEl);
+}
+
+// Google Cloud TTS playback via server proxy
+let ttsGoogleCancelled = false;
+
+async function speakTextGoogleCloud(clean, messageEl) {
+  // Stop any current playback
+  stopSpeaking();
+  ttsGoogleCancelled = false;
+
+  ttsSpeakingEl = messageEl;
+  if (messageEl) messageEl.classList.add('tts-speaking');
+  const stopBtn = document.getElementById('tts-stop-btn');
+  if (stopBtn) stopBtn.style.display = '';
+
+  const voiceName = localStorage.getItem('chat-bridge-tts-google-voice') || '';
+  const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
+
+  // Split into chunks under 5000 chars at sentence boundaries
+  const sentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [clean];
+  const chunks = [];
+  let current = '';
+  for (const s of sentences) {
+    if ((current + s).length > 4500) {
+      if (current) chunks.push(current.trim());
+      current = s;
+    } else {
+      current += s;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  console.log('[TTS:Google] speaking', chunks.length, 'chunks, voice:', voiceName || 'default');
+
+  let i = 0;
+  async function speakNextChunk() {
+    if (ttsGoogleCancelled || i >= chunks.length) {
+      if (!ttsGoogleCancelled) onSpeakEnd();
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/tts/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: chunks[i],
+          voiceName: voiceName || undefined,
+          speakingRate: rate,
+        }),
+      });
+
+      if (ttsGoogleCancelled) return;
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn('[TTS:Google] API error, falling back to browser TTS:', err.error || resp.statusText);
+        // Fall back to browser TTS for this and remaining chunks
+        const remaining = chunks.slice(i).join(' ');
+        speakTextBrowser(remaining, messageEl);
+        return;
+      }
+
+      const data = await resp.json();
+      const audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
+      ttsAudioEl = audio;
+      audio.playbackRate = 1.0; // rate is already applied server-side
+      audio.onended = () => { if (!ttsGoogleCancelled) { i++; speakNextChunk(); } };
+      audio.onerror = (e) => {
+        if (ttsGoogleCancelled) return;
+        console.warn('[TTS:Google] Audio playback error:', e);
+        onSpeakEnd();
+      };
+      audio.play();
+    } catch (err) {
+      if (ttsGoogleCancelled) return;
+      console.warn('[TTS:Google] Network error, falling back to browser TTS:', err);
+      const remaining = chunks.slice(i).join(' ');
+      speakTextBrowser(remaining, messageEl);
+    }
+  }
+
+  speakNextChunk();
+}
+
+// Browser Web Speech API playback (original implementation)
+function speakTextBrowser(clean, messageEl) {
   if (!window.speechSynthesis) { console.warn('[TTS] speechSynthesis not available'); return; }
 
   // Clean up previous playback state
@@ -761,9 +865,6 @@ function speakText(text, messageEl) {
     ttsSpeakingEl = null;
   }
   ttsCurrentUtterance = null;
-
-  const clean = stripForTTS(text);
-  if (!clean) { console.warn('[TTS] nothing to speak after stripping'); return; }
 
   // Split into chunks at sentence boundaries (utterance length limits vary by browser)
   const sentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [clean];
@@ -832,10 +933,17 @@ function speakText(text, messageEl) {
 }
 
 function stopSpeaking() {
+  ttsGoogleCancelled = true;
   clearInterval(ttsKeepAlive);
   ttsKeepAlive = null;
   if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) {
     speechSynthesis.cancel();
+  }
+  // Stop Google Cloud TTS audio playback
+  if (ttsAudioEl) {
+    ttsAudioEl.pause();
+    ttsAudioEl.src = '';
+    ttsAudioEl = null;
   }
   onSpeakEnd();
 }
@@ -866,7 +974,8 @@ function updateTTSToggleBtn() {
 
 function speakAssistantMessage(el) {
   // If already speaking this message, stop instead
-  if (ttsSpeakingEl === el && speechSynthesis.speaking) {
+  const isSpeaking = (window.speechSynthesis && speechSynthesis.speaking) || (ttsAudioEl && !ttsAudioEl.paused);
+  if (ttsSpeakingEl === el && isSpeaking) {
     stopSpeaking();
     return;
   }
@@ -891,8 +1000,15 @@ function extractTextForTTS(el) {
     const placeholder = document.createTextNode(' (code omitted) ');
     pre.replaceWith(placeholder);
   });
-  // Remove inline code
-  clone.querySelectorAll('code').forEach(c => c.remove());
+  // Unwrap inline <code> — keep the text, just remove the element wrapper
+  clone.querySelectorAll('code').forEach(c => c.replaceWith(c.textContent));
+  // Add periods after list items so TTS pauses between them
+  clone.querySelectorAll('li').forEach(li => {
+    const text = li.textContent.trim();
+    if (text && !/[.!?]$/.test(text)) {
+      li.appendChild(document.createTextNode('.'));
+    }
+  });
   return clone.innerText;
 }
 
@@ -3109,11 +3225,19 @@ function renderAppearanceSettings(container) {
   `;
 }
 
-function renderVoiceSettings(container) {
+async function renderVoiceSettings(container) {
   container.innerHTML = `
     <h2 class="settings-title">Voice</h2>
-    ${buildTTSSettingsHTML()}
+    ${buildTTSProviderHTML()}
+    ${ttsProvider === 'google-cloud' ? buildGoogleTTSKeyHTML() : ''}
+    ${ttsProvider === 'google-cloud' ? '<div id="google-voice-section"></div>' : buildBrowserTTSSettingsHTML()}
+    ${buildTTSSpeedHTML()}
+    ${buildTTSAutoSpeakHTML()}
   `;
+  // Load Google Cloud voices if that provider is selected
+  if (ttsProvider === 'google-cloud') {
+    await renderGoogleVoiceSelector();
+  }
 }
 
 function setHideTools(hide) {
@@ -3124,10 +3248,50 @@ function setHideTools(hide) {
   if (container) renderAppearanceSettings(container);
 }
 
-function buildTTSSettingsHTML() {
+function buildTTSProviderHTML() {
+  return `
+    <div class="settings-section">
+      <div class="settings-section-title">TTS Provider</div>
+      <div class="settings-section-desc">Choose between browser built-in speech or Google Cloud Text-to-Speech for higher-quality voices.</div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${ttsProvider === 'browser' ? 'active' : ''}" onclick="setTTSProvider('browser')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+          Built-in
+        </button>
+        <button class="settings-theme-btn ${ttsProvider === 'google-cloud' ? 'active' : ''}" onclick="setTTSProvider('google-cloud')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 12c0-1.5-.5-2.8-1.3-3.8"/>
+            <path d="M17 8a5 5 0 0 0-10 0c-2.8 0-5 2.2-5 5s2.2 5 5 5h10c2.8 0 5-2.2 5-5 0-1-.3-2-.7-2.8"/>
+          </svg>
+          Google Cloud
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function buildGoogleTTSKeyHTML() {
+  return `
+    <div class="settings-section">
+      <div class="settings-section-title">Google Cloud API Key</div>
+      <div class="settings-section-desc">Enter your Google Cloud Text-to-Speech API key. Stored securely on the server, never sent to the browser.</div>
+      <div class="tts-voice-row">
+        <input type="password" id="google-tts-key-input" class="tts-select" placeholder="Enter API key..." style="font-family: monospace; letter-spacing: 1px;">
+        <button class="tts-preview-btn" onclick="saveGoogleTTSKey()" title="Save API key">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+      </div>
+      <div id="google-tts-key-status" class="settings-section-desc" style="margin-top: 6px;"></div>
+    </div>
+  `;
+}
+
+function buildBrowserTTSSettingsHTML() {
   const voices = window.speechSynthesis ? speechSynthesis.getVoices().filter(v => v.lang.startsWith('en')) : [];
   const savedVoice = localStorage.getItem('chat-bridge-tts-voice') || '';
-  const savedRate = localStorage.getItem('chat-bridge-tts-rate') || '1.0';
 
   if (!window.speechSynthesis) {
     return `
@@ -3138,7 +3302,6 @@ function buildTTSSettingsHTML() {
     `;
   }
 
-  // Group voices by quality tier (iOS puts tier in voiceURI, not name)
   function voiceTier(v) {
     const id = (v.voiceURI || '') + ' ' + v.name;
     if (/premium/i.test(id)) return 'premium';
@@ -3152,8 +3315,6 @@ function buildTTSSettingsHTML() {
   const compact = voices.filter(v => voiceTier(v) === 'compact');
 
   function esc(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
-
-  // Use voiceURI as the unique key since multiple tiers can share the same name
   function voiceKey(v) { return v.voiceURI || v.name; }
 
   function voiceOptions(list, label) {
@@ -3185,6 +3346,12 @@ function buildTTSSettingsHTML() {
         </button>
       </div>
     </div>
+  `;
+}
+
+function buildTTSSpeedHTML() {
+  const savedRate = localStorage.getItem('chat-bridge-tts-rate') || '1.0';
+  return `
     <div class="settings-section">
       <div class="settings-section-title">Speech Speed</div>
       <div class="settings-section-desc">Adjust how fast the voice speaks.</div>
@@ -3193,6 +3360,11 @@ function buildTTSSettingsHTML() {
         <span id="tts-rate-label" class="tts-rate-label">${parseFloat(savedRate).toFixed(1)}x</span>
       </div>
     </div>
+  `;
+}
+
+function buildTTSAutoSpeakHTML() {
+  return `
     <div class="settings-section">
       <div class="settings-section-title">Auto-Speak</div>
       <div class="settings-section-desc">Automatically read new assistant responses aloud when they finish.</div>
@@ -3218,6 +3390,155 @@ function buildTTSSettingsHTML() {
   `;
 }
 
+// Google Cloud voice selector — fetches voices from server and renders dropdown
+async function renderGoogleVoiceSelector() {
+  const section = document.getElementById('google-voice-section');
+  if (!section) return;
+
+  // Show API key status
+  const statusEl = document.getElementById('google-tts-key-status');
+  try {
+    const keyResp = await fetch('/api/tts/api-key');
+    const keyData = await keyResp.json();
+    if (statusEl) {
+      statusEl.textContent = keyData.configured
+        ? `Key configured: ${keyData.maskedKey}`
+        : 'No API key configured yet.';
+      statusEl.style.color = keyData.configured ? 'var(--text-muted)' : 'var(--accent)';
+    }
+    if (!keyData.configured) {
+      section.innerHTML = `
+        <div class="settings-section">
+          <div class="settings-section-title">Google Cloud Voice</div>
+          <div class="settings-section-desc">Save an API key above to load available voices.</div>
+        </div>
+      `;
+      return;
+    }
+  } catch {
+    if (statusEl) statusEl.textContent = 'Could not check API key status.';
+  }
+
+  // Fetch voices (use cache if available)
+  if (!ttsGoogleVoicesCache) {
+    section.innerHTML = `
+      <div class="settings-section">
+        <div class="settings-section-title">Google Cloud Voice</div>
+        <div class="settings-section-desc">Loading voices...</div>
+      </div>
+    `;
+    try {
+      const resp = await fetch('/api/tts/voices');
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        const errMsg = (err.error || 'Unknown error').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        section.innerHTML = `
+          <div class="settings-section">
+            <div class="settings-section-title">Google Cloud Voice</div>
+            <div class="settings-section-desc" style="color: var(--accent);">Failed to load voices: ${errMsg}</div>
+          </div>
+        `;
+        return;
+      }
+      const data = await resp.json();
+      ttsGoogleVoicesCache = data.voices || [];
+    } catch (err) {
+      section.innerHTML = `
+        <div class="settings-section">
+          <div class="settings-section-title">Google Cloud Voice</div>
+          <div class="settings-section-desc" style="color: var(--accent);">Network error loading voices.</div>
+        </div>
+      `;
+      return;
+    }
+  }
+
+  const voices = ttsGoogleVoicesCache;
+  const savedVoice = localStorage.getItem('chat-bridge-tts-google-voice') || '';
+
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+  // Group by tier
+  const tiers = ['Next Gen', 'Studio', 'Journey', 'Neural2', 'Polyglot', 'WaveNet', 'Standard'];
+  const grouped = {};
+  for (const t of tiers) grouped[t] = [];
+  for (const v of voices) {
+    const t = v.tier || 'Standard';
+    if (!grouped[t]) grouped[t] = [];
+    grouped[t].push(v);
+  }
+
+  let optionsHTML = `<option value="" ${!savedVoice ? 'selected' : ''}>Default (en-US)</option>`;
+  for (const tier of tiers) {
+    const list = grouped[tier];
+    if (!list || !list.length) continue;
+    optionsHTML += `<optgroup label="${esc(tier)}">`;
+    for (const v of list) {
+      const genderLabel = v.gender === 'MALE' ? 'M' : v.gender === 'FEMALE' ? 'F' : '?';
+      const displayName = `${v.name} (${genderLabel})`;
+      optionsHTML += `<option value="${esc(v.name)}" ${v.name === savedVoice ? 'selected' : ''}>${esc(displayName)}</option>`;
+    }
+    optionsHTML += `</optgroup>`;
+  }
+
+  section.innerHTML = `
+    <div class="settings-section">
+      <div class="settings-section-title">Google Cloud Voice</div>
+      <div class="settings-section-desc">Higher-tier voices (Studio, Journey) sound more natural. ${voices.length} English voices available.</div>
+      <div class="tts-voice-row">
+        <select id="tts-google-voice-select" class="tts-select" onchange="setGoogleTTSVoice(this.value)">
+          ${optionsHTML}
+        </select>
+        <button class="tts-preview-btn" onclick="previewTTSVoice()" title="Preview voice">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function setTTSProvider(provider) {
+  ttsProvider = provider;
+  localStorage.setItem('chat-bridge-tts-provider', provider);
+  stopSpeaking();
+  const container = document.getElementById('settings-content');
+  if (container && activeSettingsSection === 'voice') renderVoiceSettings(container);
+}
+
+async function saveGoogleTTSKey() {
+  const input = document.getElementById('google-tts-key-input');
+  const statusEl = document.getElementById('google-tts-key-status');
+  if (!input) return;
+
+  const apiKey = input.value.trim();
+  try {
+    const resp = await fetch('/api/tts/api-key', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+    });
+    const data = await resp.json();
+    if (statusEl) {
+      statusEl.textContent = data.configured ? 'API key saved.' : 'API key cleared.';
+      statusEl.style.color = 'var(--text-muted)';
+    }
+    input.value = '';
+    // Clear voice cache and re-render to load voices with new key
+    ttsGoogleVoicesCache = null;
+    const container = document.getElementById('settings-content');
+    if (container && activeSettingsSection === 'voice') renderVoiceSettings(container);
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = 'Failed to save API key.';
+      statusEl.style.color = 'var(--accent)';
+    }
+  }
+}
+
+function setGoogleTTSVoice(name) {
+  localStorage.setItem('chat-bridge-tts-google-voice', name);
+}
+
 function setTTSVoice(name) {
   localStorage.setItem('chat-bridge-tts-voice', name);
 }
@@ -3228,12 +3549,12 @@ function setTTSRate(rate) {
   if (label) label.textContent = parseFloat(rate).toFixed(1) + 'x';
 }
 
-function setTTSAutoSpeak(on) {
+async function setTTSAutoSpeak(on) {
   ttsAutoSpeak = on;
   localStorage.setItem('chat-bridge-tts-auto', on ? 'true' : 'false');
   updateTTSToggleBtn();
   const container = document.getElementById('settings-content');
-  if (container && activeSettingsSection === 'voice') renderVoiceSettings(container);
+  if (container && activeSettingsSection === 'voice') await renderVoiceSettings(container);
 }
 
 function previewTTSVoice() {

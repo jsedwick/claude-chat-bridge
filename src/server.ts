@@ -10,6 +10,7 @@ import sessionRoutes from './routes/sessions';
 import permissionRoutes from './routes/permissions';
 import vaultRoutes from './routes/vault';
 import settingsRoutes from './routes/settings';
+import ttsRoutes from './routes/tts';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
 
@@ -34,6 +35,7 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/vault', vaultRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/tts', ttsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
