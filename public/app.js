@@ -715,6 +715,198 @@ function stopVoiceDictation() {
   messageInput.focus();
 }
 
+// ── Text-to-Speech (TTS) ──────────────────────────────────────────────
+let ttsAutoSpeak = localStorage.getItem('chat-bridge-tts-auto') === 'true';
+let ttsCurrentUtterance = null;
+let ttsSpeakingEl = null; // the assistant message element currently being spoken
+let ttsKeepAlive = null; // Chrome workaround interval
+
+function getTTSVoice() {
+  const saved = localStorage.getItem('chat-bridge-tts-voice');
+  if (!saved) return null; // null = system default (lets iOS use Ava/whatever is set in Accessibility)
+  const voices = speechSynthesis.getVoices();
+  // Match by voiceURI first (unique key), fall back to name
+  return voices.find(v => (v.voiceURI || v.name) === saved) || voices.find(v => v.name === saved) || null;
+}
+
+function stripForTTS(text) {
+  // Remove code blocks
+  let clean = text.replace(/```[\s\S]*?```/g, '(code block omitted)');
+  // Remove inline code
+  clean = clean.replace(/`[^`]+`/g, '');
+  // Remove markdown images
+  clean = clean.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+  // Remove markdown links but keep text
+  clean = clean.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  // Remove markdown formatting
+  clean = clean.replace(/[*_~#>]+/g, '');
+  // Remove HTML tags
+  clean = clean.replace(/<[^>]+>/g, '');
+  // Collapse whitespace
+  clean = clean.replace(/\n{2,}/g, '. ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean;
+}
+
+// Detect iOS Safari (pause/resume workaround breaks speech on iOS)
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+function speakText(text, messageEl) {
+  if (!window.speechSynthesis) { console.warn('[TTS] speechSynthesis not available'); return; }
+
+  // Clean up previous playback state
+  clearInterval(ttsKeepAlive);
+  ttsKeepAlive = null;
+  if (ttsSpeakingEl) {
+    ttsSpeakingEl.classList.remove('tts-speaking');
+    ttsSpeakingEl = null;
+  }
+  ttsCurrentUtterance = null;
+
+  const clean = stripForTTS(text);
+  if (!clean) { console.warn('[TTS] nothing to speak after stripping'); return; }
+
+  // Split into chunks at sentence boundaries (utterance length limits vary by browser)
+  const sentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [clean];
+  const chunks = [];
+  let current = '';
+  for (const s of sentences) {
+    if ((current + s).length > 200) {
+      if (current) chunks.push(current.trim());
+      current = s;
+    } else {
+      current += s;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  console.log('[TTS] speaking', chunks.length, 'chunks, voice:', getTTSVoice()?.name);
+
+  ttsSpeakingEl = messageEl;
+  if (messageEl) messageEl.classList.add('tts-speaking');
+  const stopBtn = document.getElementById('tts-stop-btn');
+  if (stopBtn) stopBtn.style.display = '';
+
+  const voice = getTTSVoice();
+  const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
+
+  let i = 0;
+  function speakNext() {
+    if (i >= chunks.length) {
+      clearInterval(ttsKeepAlive);
+      onSpeakEnd();
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(chunks[i]);
+    utterance.lang = 'en-US';
+    if (voice) utterance.voice = voice;
+    utterance.rate = rate;
+    utterance.onend = () => { i++; speakNext(); };
+    utterance.onerror = (e) => {
+      clearInterval(ttsKeepAlive);
+      if (e.error !== 'canceled') console.warn('TTS error:', e.error);
+      onSpeakEnd();
+    };
+    ttsCurrentUtterance = utterance;
+    speechSynthesis.speak(utterance);
+  }
+
+  // Chrome pauses speech after ~15s; periodic pause/resume keeps it alive.
+  // Skip on iOS — pause()/resume() kills speech permanently on iOS Safari.
+  if (!isIOS) {
+    ttsKeepAlive = setInterval(() => {
+      if (speechSynthesis.speaking) {
+        speechSynthesis.pause();
+        speechSynthesis.resume();
+      }
+    }, 10000);
+  }
+
+  // On iOS, cancel must happen before speak but needs a microtask break
+  // to avoid consuming the user gesture. On other browsers, cancel synchronously.
+  if (isIOS && (speechSynthesis.speaking || speechSynthesis.pending)) {
+    speechSynthesis.cancel();
+    setTimeout(speakNext, 50);
+  } else {
+    if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+    speakNext();
+  }
+}
+
+function stopSpeaking() {
+  clearInterval(ttsKeepAlive);
+  ttsKeepAlive = null;
+  if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) {
+    speechSynthesis.cancel();
+  }
+  onSpeakEnd();
+}
+
+function onSpeakEnd() {
+  if (ttsSpeakingEl) {
+    ttsSpeakingEl.classList.remove('tts-speaking');
+    ttsSpeakingEl = null;
+  }
+  ttsCurrentUtterance = null;
+  const stopBtn = document.getElementById('tts-stop-btn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  updateTTSToggleBtn();
+}
+
+function toggleAutoSpeak() {
+  ttsAutoSpeak = !ttsAutoSpeak;
+  localStorage.setItem('chat-bridge-tts-auto', ttsAutoSpeak);
+  updateTTSToggleBtn();
+}
+
+function updateTTSToggleBtn() {
+  const btn = document.getElementById('tts-toggle-btn');
+  if (!btn) return;
+  btn.classList.toggle('active', ttsAutoSpeak);
+  btn.title = ttsAutoSpeak ? 'Auto-speak ON (click to disable)' : 'Auto-speak OFF (click to enable)';
+}
+
+function speakAssistantMessage(el) {
+  // If already speaking this message, stop instead
+  if (ttsSpeakingEl === el && speechSynthesis.speaking) {
+    stopSpeaking();
+    return;
+  }
+  const text = extractTextForTTS(el);
+  speakText(text, el);
+}
+
+function extractTextForTTS(el) {
+  const clone = el.cloneNode(true);
+  // Remove UI chrome
+  const actionsBtn = clone.querySelector('.btn-msg-actions');
+  if (actionsBtn) actionsBtn.remove();
+  const actionsMenu = clone.querySelector('.msg-action-menu');
+  if (actionsMenu) actionsMenu.remove();
+  // Replace code blocks with a brief placeholder
+  clone.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+    const placeholder = document.createTextNode(' (code block omitted) ');
+    wrapper.replaceWith(placeholder);
+  });
+  // Also strip any bare <pre>/<code> not in wrappers (streaming blocks, etc.)
+  clone.querySelectorAll('pre').forEach(pre => {
+    const placeholder = document.createTextNode(' (code omitted) ');
+    pre.replaceWith(placeholder);
+  });
+  // Remove inline code
+  clone.querySelectorAll('code').forEach(c => c.remove());
+  return clone.innerText;
+}
+
+// Preload voices (some browsers load async)
+if (window.speechSynthesis) {
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => {
+    speechSynthesis.getVoices();
+    // Re-render voice picker if settings panel is showing Voice
+    const container = document.getElementById('settings-content');
+    if (container && activeSettingsSection === 'voice') renderVoiceSettings(container);
+  };
+}
+
 function appendToInput(text) {
   if (!text) return;
   const existing = messageInput.value;
@@ -736,7 +928,7 @@ function setAttachButtonVoiceMode(listening) {
   } else {
     btn.classList.remove('voice-active');
     btn.setAttribute('aria-label', 'Actions menu');
-    btn.onclick = () => toggleActionMenu();
+    btn.onclick = null; // long-press handler manages tap vs hold
     btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <line x1="12" y1="5" x2="12" y2="19"/>
       <line x1="5" y1="12" x2="19" y2="12"/>
@@ -791,6 +983,52 @@ document.addEventListener('click', (e) => {
 // Build menu immediately (script loads after DOM)
 buildActionMenu();
 loadWelcomeSessions();
+
+// Long-press on + button triggers voice dictation directly
+(function initAttachButtonLongPress() {
+  const btn = document.querySelector('.btn-attach');
+  let longPressTimer = null;
+  let didLongPress = false;
+
+  function hasSpeechRecognition() {
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+
+  btn.addEventListener('pointerdown', (e) => {
+    if (voiceIsListening) return; // already listening — let click handler stop it
+    didLongPress = false;
+    longPressTimer = setTimeout(() => {
+      didLongPress = true;
+      if (hasSpeechRecognition()) {
+        closeActionMenu();
+        startVoiceDictation();
+      }
+    }, 400);
+  });
+
+  btn.addEventListener('pointerup', (e) => {
+    clearTimeout(longPressTimer);
+    if (!didLongPress && !voiceIsListening) {
+      toggleActionMenu();
+    }
+  });
+
+  btn.addEventListener('pointercancel', () => {
+    clearTimeout(longPressTimer);
+    didLongPress = false;
+  });
+
+  // Right-click: start dictation on desktop when auto-speak is enabled
+  // Also prevents context menu on long-press (mobile)
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (didLongPress) return; // long-press already handled it
+    if (ttsAutoSpeak && hasSpeechRecognition() && !voiceIsListening) {
+      closeActionMenu();
+      startVoiceDictation();
+    }
+  });
+})();
 
 function switchWelcomeTab(tab) {
   const welcome = document.getElementById('welcome');
@@ -1181,6 +1419,8 @@ async function createNewSession() {
 }
 
 async function switchSession(id) {
+  // Stop any active TTS playback
+  stopSpeaking();
   // Save current input draft before switching
   if (currentSessionId) {
     sessionInputDrafts.set(currentSessionId, messageInput.value);
@@ -1454,6 +1694,19 @@ function ensureCopyButton(el) {
       setReference(el);
     };
     menu.appendChild(refItem);
+
+    // Speak action (TTS)
+    if (window.speechSynthesis) {
+      const speakItem = document.createElement('button');
+      speakItem.className = 'msg-action-menu-item';
+      speakItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> Speak';
+      speakItem.onclick = (e) => {
+        e.stopPropagation();
+        closeAllMsgActionMenus();
+        speakAssistantMessage(el);
+      };
+      menu.appendChild(speakItem);
+    }
 
     // Fork action (only if there's an active session and not at max fork depth)
     if (currentForkDepth < 2) {
@@ -2240,6 +2493,10 @@ async function sendMessage(skipRender = false) {
           deactivateToolGroup();
           addUsageInfo(data);
           streamCompleted = true;
+          // Auto-speak the final assistant message if enabled
+          if (ttsAutoSpeak && assistantEl && currentText) {
+            speakAssistantMessage(assistantEl);
+          }
           scrollToBottom();
           break;
 
@@ -2775,6 +3032,12 @@ function renderSettingsContent() {
     return;
   }
 
+  // Voice section is independent of MCP config
+  if (activeSettingsSection === 'voice') {
+    renderVoiceSettings(container);
+    return;
+  }
+
   // Updates section is independent of MCP config
   if (activeSettingsSection === 'updates') {
     renderUpdatesSettings(container);
@@ -2846,12 +3109,135 @@ function renderAppearanceSettings(container) {
   `;
 }
 
+function renderVoiceSettings(container) {
+  container.innerHTML = `
+    <h2 class="settings-title">Voice</h2>
+    ${buildTTSSettingsHTML()}
+  `;
+}
+
 function setHideTools(hide) {
   localStorage.setItem('chat-bridge-hide-tools', hide ? 'true' : 'false');
   document.documentElement.setAttribute('data-hide-tools', hide ? 'true' : 'false');
   // Re-render to update active states
   const container = document.getElementById('settings-content');
   if (container) renderAppearanceSettings(container);
+}
+
+function buildTTSSettingsHTML() {
+  const voices = window.speechSynthesis ? speechSynthesis.getVoices().filter(v => v.lang.startsWith('en')) : [];
+  const savedVoice = localStorage.getItem('chat-bridge-tts-voice') || '';
+  const savedRate = localStorage.getItem('chat-bridge-tts-rate') || '1.0';
+
+  if (!window.speechSynthesis) {
+    return `
+      <div class="settings-section">
+        <div class="settings-section-title">Text-to-Speech</div>
+        <div class="settings-section-desc">Speech synthesis is not available in this browser.</div>
+      </div>
+    `;
+  }
+
+  // Group voices by quality tier (iOS puts tier in voiceURI, not name)
+  function voiceTier(v) {
+    const id = (v.voiceURI || '') + ' ' + v.name;
+    if (/premium/i.test(id)) return 'premium';
+    if (/enhanced/i.test(id)) return 'enhanced';
+    if (/compact/i.test(id)) return 'compact';
+    return 'standard';
+  }
+  const premium = voices.filter(v => voiceTier(v) === 'premium');
+  const enhanced = voices.filter(v => voiceTier(v) === 'enhanced');
+  const standard = voices.filter(v => voiceTier(v) === 'standard');
+  const compact = voices.filter(v => voiceTier(v) === 'compact');
+
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+  // Use voiceURI as the unique key since multiple tiers can share the same name
+  function voiceKey(v) { return v.voiceURI || v.name; }
+
+  function voiceOptions(list, label) {
+    if (!list.length) return '';
+    return `<optgroup label="${esc(label)}">${list.map(v => {
+      const key = voiceKey(v);
+      const tier = voiceTier(v);
+      const displayName = (tier !== 'standard') ? `${v.name} (${tier})` : v.name;
+      return `<option value="${esc(key)}" ${key === savedVoice ? 'selected' : ''}>${esc(displayName)}</option>`;
+    }).join('')}</optgroup>`;
+  }
+
+  const hasSelected = voices.some(v => voiceKey(v) === savedVoice);
+
+  return `
+    <div class="settings-section">
+      <div class="settings-section-title">Text-to-Speech Voice</div>
+      <div class="settings-section-desc">On iOS, "System Default" uses whatever voice you set in Settings > Accessibility > Read & Speak > Voices > English (e.g. Ava). Enhanced/Premium voices must be downloaded there first. The list below only shows voices the browser exposes directly. (${voices.length} found)</div>
+      <div class="tts-voice-row">
+        <select id="tts-voice-select" class="tts-select" onchange="setTTSVoice(this.value)">
+          <option value="" ${!hasSelected ? 'selected' : ''}>System Default</option>
+          ${voiceOptions(premium, 'Premium')}
+          ${voiceOptions(enhanced, 'Enhanced')}
+          ${voiceOptions(standard, 'Standard')}
+          ${voiceOptions(compact, 'Compact')}
+        </select>
+        <button class="tts-preview-btn" onclick="previewTTSVoice()" title="Preview voice">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Speech Speed</div>
+      <div class="settings-section-desc">Adjust how fast the voice speaks.</div>
+      <div class="tts-speed-row">
+        <input type="range" id="tts-rate-slider" class="tts-slider" min="0.5" max="2.0" step="0.1" value="${savedRate}" oninput="setTTSRate(this.value)">
+        <span id="tts-rate-label" class="tts-rate-label">${parseFloat(savedRate).toFixed(1)}x</span>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Auto-Speak</div>
+      <div class="settings-section-desc">Automatically read new assistant responses aloud when they finish.</div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${ttsAutoSpeak ? 'active' : ''}" onclick="setTTSAutoSpeak(true)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+          </svg>
+          On
+        </button>
+        <button class="settings-theme-btn ${!ttsAutoSpeak ? 'active' : ''}" onclick="setTTSAutoSpeak(false)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <line x1="23" y1="9" x2="17" y2="15"/>
+            <line x1="17" y1="9" x2="23" y2="15"/>
+          </svg>
+          Off
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function setTTSVoice(name) {
+  localStorage.setItem('chat-bridge-tts-voice', name);
+}
+
+function setTTSRate(rate) {
+  localStorage.setItem('chat-bridge-tts-rate', rate);
+  const label = document.getElementById('tts-rate-label');
+  if (label) label.textContent = parseFloat(rate).toFixed(1) + 'x';
+}
+
+function setTTSAutoSpeak(on) {
+  ttsAutoSpeak = on;
+  localStorage.setItem('chat-bridge-tts-auto', on ? 'true' : 'false');
+  updateTTSToggleBtn();
+  const container = document.getElementById('settings-content');
+  if (container && activeSettingsSection === 'voice') renderVoiceSettings(container);
+}
+
+function previewTTSVoice() {
+  speakText('Hey Jesse, this is what I sound like. Not bad for a browser, right?', null);
 }
 
 function setTheme(theme) {
@@ -3399,6 +3785,9 @@ let kbTemplatesCache = null;  // null = not fetched, [] = no templates
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialize TTS toggle button state
+  updateTTSToggleBtn();
+
   const searchInput = document.getElementById('kb-search');
   const clearBtn = document.getElementById('kb-search-clear');
   if (searchInput) {

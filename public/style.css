@@ -3736,3 +3736,134 @@ pre.streaming {
 .persona-btn-save:hover {
   background: var(--accent-hover);
 }
+
+/* ── TTS Settings ───────────────────────────────────────────────── */
+.tts-voice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tts-select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary, #1e1e2e);
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  appearance: auto;
+}
+
+.tts-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tts-preview-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tts-preview-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tts-speed-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tts-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+}
+
+.tts-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+}
+
+.tts-rate-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── TTS Controls ───────────────────────────────────────────────── */
+.btn-tts-toggle,
+.btn-tts-stop {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-tts-toggle:hover,
+.btn-tts-stop:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+.btn-tts-toggle.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-tts-toggle.active:hover {
+  background: var(--accent-hover);
+}
+
+.btn-tts-stop {
+  background: rgba(229, 85, 85, 0.15);
+  color: #e05555;
+}
+
+.btn-tts-stop:hover {
+  background: rgba(229, 85, 85, 0.25);
+}
+
+/* Speaking highlight on assistant message */
+.message-assistant.tts-speaking {
+  border-left: 3px solid var(--accent);
+  padding-left: 13px;
+  animation: tts-pulse 2s ease-in-out infinite;
+}
+
+@keyframes tts-pulse {
+  0%, 100% { border-left-color: var(--accent); }
+  50% { border-left-color: transparent; }
+}
