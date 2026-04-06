@@ -1699,6 +1699,10 @@ pre.streaming {
   justify-content: center;
   flex-shrink: 0;
   transition: color 0.15s, border-color 0.15s;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .btn-attach:hover {

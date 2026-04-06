@@ -654,6 +654,16 @@ async function startVoiceDictation() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) return;
 
+  // Stop any active TTS — iOS won't share audio hardware between speech output and mic input
+  stopSpeaking();
+  // Fully release iOS audio element so the mic can take over
+  if (ttsIOSAudioEl) {
+    ttsIOSAudioEl.pause();
+    ttsIOSAudioEl.src = '';
+    ttsIOSAudioEl.load();
+    ttsIOSAudioEl = null;
+  }
+
   // Acquire mic permission once and hold the stream to avoid re-prompting
   if (!voiceMicStream) {
     try {
@@ -758,6 +768,27 @@ function stripForTTS(text) {
 // Detect iOS Safari (pause/resume workaround breaks speech on iOS)
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// iOS requires a user gesture to unlock speechSynthesis and Audio playback.
+// We prime both during the send-message tap so auto-speak works when the response arrives.
+// For HTMLAudioElement, iOS requires the *same element* to be reused after the gesture unlock.
+let ttsIOSAudioEl = null; // persistent Audio element unlocked by user gesture
+function unlockTTSForIOS() {
+  if (!isIOS) return;
+  // Prime speechSynthesis — must be a non-empty string; iOS ignores empty utterances
+  if (window.speechSynthesis) {
+    const silent = new SpeechSynthesisUtterance(' ');
+    silent.volume = 0.01;
+    silent.rate = 10;
+    speechSynthesis.speak(silent);
+  }
+  // Create & unlock a persistent Audio element — reused for all Google Cloud TTS playback
+  if (!ttsIOSAudioEl) {
+    ttsIOSAudioEl = new Audio();
+    ttsIOSAudioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    ttsIOSAudioEl.play().catch(() => {});
+  }
+}
+
 function speakText(text, messageEl) {
   const clean = stripForTTS(text);
   if (!clean) { console.warn('[TTS] nothing to speak after stripping'); return; }
@@ -832,7 +863,10 @@ async function speakTextGoogleCloud(clean, messageEl) {
       }
 
       const data = await resp.json();
-      const audio = new Audio('data:audio/mp3;base64,' + data.audioContent);
+      // On iOS, reuse the gesture-unlocked Audio element; elsewhere create fresh
+      const audio = ttsIOSAudioEl || new Audio();
+      audio.src = 'data:audio/mp3;base64,' + data.audioContent;
+      audio.load(); // iOS needs explicit load() after src change for onended to fire
       ttsAudioEl = audio;
       audio.playbackRate = 1.0; // rate is already applied server-side
       audio.onended = () => { if (!ttsGoogleCancelled) { i++; speakNextChunk(); } };
@@ -942,7 +976,9 @@ function stopSpeaking() {
   // Stop Google Cloud TTS audio playback
   if (ttsAudioEl) {
     ttsAudioEl.pause();
-    ttsAudioEl.src = '';
+    if (ttsAudioEl !== ttsIOSAudioEl) {
+      ttsAudioEl.src = '';
+    }
     ttsAudioEl = null;
   }
   onSpeakEnd();
@@ -1110,40 +1146,56 @@ loadWelcomeSessions();
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
 
-  btn.addEventListener('pointerdown', (e) => {
-    if (voiceIsListening) return; // already listening — let click handler stop it
-    didLongPress = false;
-    longPressTimer = setTimeout(() => {
-      didLongPress = true;
-      if (hasSpeechRecognition()) {
+  // On iOS, skip long-press dictation — native keyboard dictation is more reliable.
+  // Just use normal click for the action menu.
+  if (isIOS) {
+    btn.addEventListener('click', () => {
+      if (!voiceIsListening) toggleActionMenu();
+    });
+  } else {
+    btn.addEventListener('pointerdown', (e) => {
+      if (voiceIsListening) return; // already listening — let click handler stop it
+      didLongPress = false;
+      longPressTimer = setTimeout(() => {
+        didLongPress = true;
+        if (hasSpeechRecognition()) {
+          closeActionMenu();
+          startVoiceDictation();
+        }
+      }, 400);
+    });
+
+    btn.addEventListener('pointerup', (e) => {
+      clearTimeout(longPressTimer);
+      if (!didLongPress && !voiceIsListening) {
+        toggleActionMenu();
+      }
+    });
+
+    // Swallow the synthetic click that desktop touch devices may fire after pointerup
+    btn.addEventListener('click', (e) => {
+      if (didLongPress) {
+        didLongPress = false;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    });
+
+    btn.addEventListener('pointercancel', () => {
+      clearTimeout(longPressTimer);
+      didLongPress = false;
+    });
+
+    // Right-click: start dictation on desktop when auto-speak is enabled
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (didLongPress) return; // long-press already handled it
+      if (ttsAutoSpeak && hasSpeechRecognition() && !voiceIsListening) {
         closeActionMenu();
         startVoiceDictation();
       }
-    }, 400);
-  });
-
-  btn.addEventListener('pointerup', (e) => {
-    clearTimeout(longPressTimer);
-    if (!didLongPress && !voiceIsListening) {
-      toggleActionMenu();
-    }
-  });
-
-  btn.addEventListener('pointercancel', () => {
-    clearTimeout(longPressTimer);
-    didLongPress = false;
-  });
-
-  // Right-click: start dictation on desktop when auto-speak is enabled
-  // Also prevents context menu on long-press (mobile)
-  btn.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (didLongPress) return; // long-press already handled it
-    if (ttsAutoSpeak && hasSpeechRecognition() && !voiceIsListening) {
-      closeActionMenu();
-      startVoiceDictation();
-    }
-  });
+    });
+  }
 })();
 
 function switchWelcomeTab(tab) {
@@ -2398,6 +2450,9 @@ async function cancelStream() {
 // Send message with streaming SSE parsing
 // skipRender: when true, skips rendering user message (already shown from queue)
 async function sendMessage(skipRender = false) {
+  // Unlock iOS audio on the user's send tap so auto-speak works when the response arrives
+  if (ttsAutoSpeak) unlockTTSForIOS();
+
   let text = messageInput.value.trim();
   if ((!text && pendingAttachments.length === 0) || !currentSessionId) return;
 
