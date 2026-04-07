@@ -10,6 +10,7 @@ const permissionQueue = []; // queue for parallel permission requests
 let pendingPermissionSessionId = null; // which session the current permission dialog is for
 const permissionBlockedSessions = new Set(); // sessions waiting on permission approval
 let versionData = null; // cached version check data
+let serverPollingActive = false; // prevent duplicate health-check polls
 
 // Message history (server-backed)
 async function restoreMessages(sessionId, sessionMeta) {
@@ -1689,6 +1690,46 @@ function addInfoMessage(text) {
   messagesEl.appendChild(el);
 }
 
+function addServerDisconnectedMessage() {
+  if (document.getElementById('server-disconnected-msg')) return;
+  const el = document.createElement('div');
+  el.id = 'server-disconnected-msg';
+  el.className = 'message message-error';
+  el.style.background = 'rgba(255, 165, 0, 0.1)';
+  el.style.border = '1px solid rgba(255, 165, 0, 0.35)';
+  el.style.color = 'var(--text-secondary)';
+  el.textContent = '⚠️ Server disconnected — the bridge may be restarting. Waiting for it to come back…';
+  messagesEl.appendChild(el);
+  scrollToBottom();
+  startServerRecoveryPolling(el);
+}
+
+function startServerRecoveryPolling(disconnectedEl) {
+  if (serverPollingActive) return;
+  serverPollingActive = true;
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        clearInterval(interval);
+        serverPollingActive = false;
+        const resolveServerDown = (el) => {
+          el.style.background = 'rgba(74, 200, 74, 0.1)';
+          el.style.border = '1px solid rgba(74, 200, 74, 0.35)';
+          el.textContent = '✓ Server is back online — you can continue chatting';
+          setTimeout(() => el.remove(), 5000);
+        };
+        resolveServerDown(disconnectedEl);
+        // Also resolve any visible message from a session switch (different element, same id)
+        const current = document.getElementById('server-disconnected-msg');
+        if (current && current !== disconnectedEl) resolveServerDown(current);
+      }
+    } catch {
+      // still down, keep polling
+    }
+  }, 3000);
+}
+
 function addForkDivider(parentName, parentId) {
   const el = document.createElement('div');
   el.className = 'fork-divider';
@@ -2746,10 +2787,15 @@ async function sendMessage(skipRender = false) {
       logSSE('reconnect:after_error', { error: err.message });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
       logSSE('reconnect:error_result', { reconnected, textLen: currentText.length });
-      if (!reconnected && currentSessionId === streamSessionId && !everRenderedText) {
-        logSSE('reconnect:error_fallback_restore', { everRenderedText });
-        await new Promise(r => setTimeout(r, 2000));
-        await restoreMessages(streamSessionId);
+      if (!reconnected && currentSessionId === streamSessionId) {
+        if (err instanceof TypeError) {
+          // Network-level failure — server is likely restarting
+          addServerDisconnectedMessage();
+        } else if (!everRenderedText) {
+          logSSE('reconnect:error_fallback_restore', { everRenderedText });
+          await new Promise(r => setTimeout(r, 2000));
+          await restoreMessages(streamSessionId);
+        }
       }
     } else if (!streamCompleted && currentSessionId === streamSessionId) {
       const errEl = document.createElement('div');
