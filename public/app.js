@@ -753,11 +753,14 @@ function stripForTTS(text) {
   clean = clean.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
   // Convert list items to sentences (add period before each bullet/number so TTS pauses)
   clean = clean.replace(/\n\s*[-*+]\s+/g, '.\n');
-  clean = clean.replace(/\n\s*\d+[.)]\s+/g, '.\n');
+  clean = clean.replace(/\n\s*(\d+)[.)]\s+/g, '. $1: ');
+  // Convert HTML tags to readable form BEFORE markdown formatting removal (which strips '>')
+  // e.g. <ol> → "ol tag", </ol> → "", <br> → "br tag"
+  clean = clean.replace(/<\/\w+>/g, '');
+  clean = clean.replace(/<(\w+)(\s[^>]*)?\/?>/g, '$1 tag ');
+  clean = clean.replace(/<[^>]*>/g, ''); // catch-all for comments, doctype, etc.
   // Remove markdown formatting
   clean = clean.replace(/[*_~#>]+/g, '');
-  // Remove HTML tags
-  clean = clean.replace(/<[^>]+>/g, '');
   // Collapse whitespace
   clean = clean.replace(/\n{2,}/g, '. ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
   // Clean up double periods from list conversion
@@ -1038,10 +1041,18 @@ function extractTextForTTS(el) {
   });
   // Unwrap inline <code> — keep the text, just remove the element wrapper
   clone.querySelectorAll('code').forEach(c => c.replaceWith(c.textContent));
-  // Add periods after list items so TTS pauses between them
-  clone.querySelectorAll('li').forEach(li => {
-    const text = li.textContent.trim();
-    if (text && !/[.!?]$/.test(text)) {
+  // Add periods after list items so TTS pauses between them;
+  // for ordered lists, prepend the item number so it's spoken aloud
+  clone.querySelectorAll('ol').forEach(ol => {
+    Array.from(ol.querySelectorAll(':scope > li')).forEach((li, i) => {
+      li.prepend(document.createTextNode(`${i + 1}: `));
+      if (!/[.!?]\s*$/.test(li.textContent)) {
+        li.appendChild(document.createTextNode('.'));
+      }
+    });
+  });
+  clone.querySelectorAll('ul > li').forEach(li => {
+    if (!/[.!?]\s*$/.test(li.textContent)) {
       li.appendChild(document.createTextNode('.'));
     }
   });
@@ -2502,6 +2513,7 @@ async function sendMessage(skipRender = false) {
   addTypingIndicator();
 
   let assistantEl = null;
+  let lastRenderedAssistantEl = null; // persists across tool_use clears, used for auto-speak
   let currentText = '';
   let thinkingEl = null;
   let lastEventType = '';
@@ -2563,6 +2575,7 @@ async function sendMessage(skipRender = false) {
           if (!assistantEl) {
             logSSE('text:create_el', { dataLen: typeof data === 'string' ? data.length : 0 });
             assistantEl = createAssistantMessage();
+            lastRenderedAssistantEl = assistantEl; // save before tool_use can clear it
             addTypingIndicator(); // keep dots at bottom
           }
           currentText += data;
@@ -2665,8 +2678,11 @@ async function sendMessage(skipRender = false) {
           addUsageInfo(data);
           streamCompleted = true;
           // Auto-speak the final assistant message if enabled
-          if (ttsAutoSpeak && assistantEl && currentText) {
-            speakAssistantMessage(assistantEl);
+          // Use assistantEl if available; fall back to lastRenderedAssistantEl in case
+          // a tool_use event cleared assistantEl after text was already rendered
+          const speakEl = assistantEl || lastRenderedAssistantEl;
+          if (ttsAutoSpeak && speakEl) {
+            speakAssistantMessage(speakEl);
           }
           scrollToBottom();
           break;
