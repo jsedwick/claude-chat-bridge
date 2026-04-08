@@ -11,7 +11,6 @@ export interface PermissionRequest {
 interface PendingPermission {
   request: PermissionRequest;
   resolve: (decision: 'allow' | 'deny') => void;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 // All tools are auto-allowed except specific Bash commands and tools listed below
@@ -33,8 +32,6 @@ function bashNeedsPermission(toolInput: Record<string, unknown>): boolean {
   const command = (toolInput.command as string) || '';
   return BASH_ASK_PATTERNS.some(pattern => pattern.test(command));
 }
-
-const PERMISSION_TIMEOUT_MS = 120_000; // 2 minutes
 
 // Pending permission requests by ID
 const pendingPermissions = new Map<string, PendingPermission>();
@@ -86,12 +83,7 @@ export function createPermissionRequest(
   };
 
   return new Promise<'allow' | 'deny'>((resolve) => {
-    const timer = setTimeout(() => {
-      pendingPermissions.delete(id);
-      resolve('deny');
-    }, PERMISSION_TIMEOUT_MS);
-
-    pendingPermissions.set(id, { request, resolve, timer });
+    pendingPermissions.set(id, { request, resolve });
   });
 }
 
@@ -99,7 +91,6 @@ export function resolvePermission(requestId: string, decision: 'allow' | 'deny',
   const pending = pendingPermissions.get(requestId);
   if (!pending) return false;
 
-  clearTimeout(pending.timer);
   pendingPermissions.delete(requestId);
 
   // If allowAll, remember this tool for the session and auto-resolve other pending requests
@@ -109,7 +100,6 @@ export function resolvePermission(requestId: string, decision: 'allow' | 'deny',
     // Auto-resolve all other pending permission requests for the same session
     for (const [id, other] of pendingPermissions) {
       if (other.request.appSessionId === pending.request.appSessionId) {
-        clearTimeout(other.timer);
         pendingPermissions.delete(id);
         other.resolve('allow');
         console.log(`[permissions] auto-resolved pending request ${id} (allowAll cascade)`);

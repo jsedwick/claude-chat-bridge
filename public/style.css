@@ -1672,6 +1672,8 @@ pre.streaming {
   font-size: 15px;
   font-family: var(--font-sans);
   resize: none;
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: 120px;
   line-height: 1.4;
   outline: none;

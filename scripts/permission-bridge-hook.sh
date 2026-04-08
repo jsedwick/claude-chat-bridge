@@ -24,7 +24,7 @@ fi
 response=$(curl -sk -X POST https://localhost:3456/api/permissions/request \
   -H "Content-Type: application/json" \
   -d "{\"tool_name\": \"$tool_name\", \"tool_input\": $tool_input, \"session_id\": \"$session_id\"}" \
-  --max-time 130 \
+  --max-time 3600 \
   2>/dev/null)
 
 decision=$(echo "$response" | jq -r '.decision // "deny"')
