@@ -873,9 +873,9 @@ async function speakTextGoogleCloud(clean, messageEl) {
       audio.load(); // iOS needs explicit load() after src change for onended to fire
       ttsAudioEl = audio;
       audio.playbackRate = 1.0; // rate is already applied server-side
-      audio.onended = () => { if (!ttsGoogleCancelled) { i++; speakNextChunk(); } };
+      audio.onended = () => { if (ttsAudioEl === audio && !ttsGoogleCancelled) { i++; speakNextChunk(); } };
       audio.onerror = (e) => {
-        if (ttsGoogleCancelled) return;
+        if (ttsAudioEl !== audio || ttsGoogleCancelled) return;
         console.warn('[TTS:Google] Audio playback error:', e);
         onSpeakEnd();
       };
@@ -938,8 +938,9 @@ function speakTextBrowser(clean, messageEl) {
     utterance.lang = 'en-US';
     if (voice) utterance.voice = voice;
     utterance.rate = rate;
-    utterance.onend = () => { i++; speakNext(); };
+    utterance.onend = () => { if (ttsCurrentUtterance !== utterance) return; i++; speakNext(); };
     utterance.onerror = (e) => {
+      if (ttsCurrentUtterance !== utterance) return;
       clearInterval(ttsKeepAlive);
       if (e.error !== 'canceled') console.warn('TTS error:', e.error);
       onSpeakEnd();
