@@ -3209,7 +3209,10 @@ function switchView(view) {
   } else if (view === 'kb') {
     kbView.style.display = '';
     kbPanel.style.display = 'flex';
-    if (!kbTreeLoaded) loadKbTree();
+    if (!kbTreeLoaded) {
+      loadKbTree();
+      if (!kbPrefsLoaded) loadKbPreferences();
+    }
   } else {
     sessionsView.style.display = '';
     sessionsToolbar.style.display = '';
@@ -4217,10 +4220,64 @@ const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
 let kbSearchTimer = null;
 let kbAutosaveTimer = null;
-let kbBookmarks = JSON.parse(localStorage.getItem('kb-bookmarks') || '[]'); // [{path, name}]
+let kbBookmarks = []; // [{path, name}] — loaded from server
 let kbShowingBookmarks = false;
 let kbShowingRecent = false;
 let kbTemplatesCache = null;  // null = not fetched, [] = no templates
+let kbPrefsLoaded = false;    // true once server prefs are fetched
+
+// --- KB Preferences: server-side persistence ---
+
+function saveKbPreferences(partial) {
+  fetch('/api/settings/kb-preferences', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(partial),
+  }).catch(() => {}); // fire-and-forget
+}
+
+async function loadKbPreferences() {
+  try {
+    const resp = await fetch('/api/settings/kb-preferences');
+    const prefs = await resp.json();
+    kbBookmarks = prefs.bookmarks || [];
+    kbPrefsLoaded = true;
+
+    // Migrate localStorage bookmarks if server has none
+    const localBm = localStorage.getItem('kb-bookmarks');
+    if (kbBookmarks.length === 0 && localBm) {
+      try {
+        const parsed = JSON.parse(localBm);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          kbBookmarks = parsed;
+          saveKbPreferences({ bookmarks: kbBookmarks });
+        }
+      } catch {}
+      localStorage.removeItem('kb-bookmarks');
+    } else if (localBm) {
+      // Server has bookmarks — clean up localStorage
+      localStorage.removeItem('kb-bookmarks');
+    }
+
+    // Restore view mode
+    if (prefs.viewMode === 'bookmarks') {
+      toggleKbBookmarksView();
+    } else if (prefs.viewMode === 'recent') {
+      toggleKbRecentView();
+    }
+
+    // Restore last open file
+    if (prefs.currentFile) {
+      loadKbFile(prefs.currentFile, { skipHistory: true });
+    }
+  } catch {
+    // Fallback: try localStorage bookmarks if server is down
+    try {
+      kbBookmarks = JSON.parse(localStorage.getItem('kb-bookmarks') || '[]');
+    } catch { kbBookmarks = []; }
+    kbPrefsLoaded = true;
+  }
+}
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
@@ -4500,7 +4557,7 @@ async function deleteKbFile(filePath, dirPath) {
     const bmIdx = kbBookmarks.findIndex(b => b.path === filePath);
     if (bmIdx !== -1) {
       kbBookmarks.splice(bmIdx, 1);
-      localStorage.setItem('kb-bookmarks', JSON.stringify(kbBookmarks));
+      saveKbBookmarks();
       if (kbShowingBookmarks) renderKbBookmarksList();
     }
     // Refresh tree
@@ -4886,7 +4943,7 @@ function startKbRename(entryPath, nameEl) {
       if (bmIdx !== -1) {
         kbBookmarks[bmIdx].path = data.path;
         kbBookmarks[bmIdx].name = newName;
-        localStorage.setItem('kb-bookmarks', JSON.stringify(kbBookmarks));
+        saveKbBookmarks();
         if (kbShowingBookmarks) renderKbBookmarksList();
       }
       kbTreeCache.delete(dir);
@@ -5411,6 +5468,9 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
 
     // Scroll to top
     document.getElementById('kb-content').scrollTop = 0;
+
+    // Persist current file for cross-device continuity
+    saveKbPreferences({ currentFile: filePath });
   } catch (err) {
     console.error('Failed to load KB file:', err);
   }
@@ -5425,7 +5485,7 @@ function navigateKbBack() {
 // ---- KB Bookmarks ----
 
 function saveKbBookmarks() {
-  localStorage.setItem('kb-bookmarks', JSON.stringify(kbBookmarks));
+  saveKbPreferences({ bookmarks: kbBookmarks });
 }
 
 function isKbBookmarked(filePath) {
@@ -5477,10 +5537,12 @@ function toggleKbBookmarksView() {
     bookmarksList.style.display = '';
     toolbarBtn.classList.add('active');
     renderKbBookmarksList();
+    saveKbPreferences({ viewMode: 'bookmarks' });
   } else {
     bookmarksList.style.display = 'none';
     tree.style.display = '';
     toolbarBtn.classList.remove('active');
+    saveKbPreferences({ viewMode: 'tree' });
   }
 }
 
@@ -5541,18 +5603,22 @@ function collapseAllKbDirs() {
     children.classList.add('collapsed');
   });
   // Exit bookmarks/recent view if active
+  let viewChanged = false;
   if (kbShowingBookmarks) {
     kbShowingBookmarks = false;
     document.getElementById('kb-bookmarks-list').style.display = 'none';
     document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
     tree.style.display = '';
+    viewChanged = true;
   }
   if (kbShowingRecent) {
     kbShowingRecent = false;
     document.getElementById('kb-recent-list').style.display = 'none';
     document.getElementById('kb-toolbar-recent').classList.remove('active');
     tree.style.display = '';
+    viewChanged = true;
   }
+  if (viewChanged) saveKbPreferences({ viewMode: 'tree' });
 }
 
 // ---- KB Recent Files ----
@@ -5579,10 +5645,12 @@ function toggleKbRecentView() {
     recentList.style.display = '';
     toolbarBtn.classList.add('active');
     loadKbRecentFiles();
+    saveKbPreferences({ viewMode: 'recent' });
   } else {
     recentList.style.display = 'none';
     tree.style.display = '';
     toolbarBtn.classList.remove('active');
+    saveKbPreferences({ viewMode: 'tree' });
   }
 }
 

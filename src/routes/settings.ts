@@ -291,6 +291,37 @@ router.post('/version/acknowledge', async (req: Request, res: Response) => {
   res.json({ acknowledged: version });
 });
 
+// --- KB Preferences (persisted cross-device via bridge-config.json) ---
+
+const defaultKbPrefs = { viewMode: 'tree', bookmarks: [], currentFile: null };
+
+// GET /api/settings/kb-preferences
+router.get('/kb-preferences', (_req: Request, res: Response) => {
+  const bridgeConfig = loadBridgeConfig();
+  res.json({ ...defaultKbPrefs, ...bridgeConfig.kbPreferences });
+});
+
+// PUT /api/settings/kb-preferences — merge partial updates
+router.put('/kb-preferences', (req: Request, res: Response) => {
+  const updates = req.body;
+  if (!updates || typeof updates !== 'object') {
+    res.status(400).json({ error: 'Invalid data' });
+    return;
+  }
+  const bridgeConfig = loadBridgeConfig();
+  const current = { ...defaultKbPrefs, ...bridgeConfig.kbPreferences };
+  // Only allow known keys
+  const allowed = ['viewMode', 'bookmarks', 'currentFile'];
+  for (const key of allowed) {
+    if (key in updates) {
+      (current as any)[key] = updates[key];
+    }
+  }
+  bridgeConfig.kbPreferences = current;
+  saveBridgeConfig(bridgeConfig);
+  res.json(current);
+});
+
 // --- Persona (from ~/.claude/CLAUDE.md <persona> tags) ---
 
 const claudeMdPath = path.join(home, '.claude', 'CLAUDE.md');
