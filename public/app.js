@@ -1199,11 +1199,11 @@ loadWelcomeSessions();
       didLongPress = false;
     });
 
-    // Right-click: start dictation on desktop when auto-speak is enabled
+    // Right-click: start dictation on desktop
     btn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (didLongPress) return; // long-press already handled it
-      if (ttsAutoSpeak && hasSpeechRecognition() && !voiceIsListening) {
+      if (hasSpeechRecognition() && !voiceIsListening) {
         closeActionMenu();
         startVoiceDictation();
       }
