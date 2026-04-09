@@ -453,6 +453,7 @@ html, body {
   flex-direction: column;
   height: 100%;
   height: 100dvh;
+  min-width: 0;
 }
 
 .chat-header {
@@ -751,6 +752,7 @@ html, body {
 /* Messages */
 .messages {
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 16px;
   display: flex;
