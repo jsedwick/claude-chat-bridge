@@ -218,6 +218,96 @@ router.get('/:id/file-diff', (req: Request, res: Response) => {
   }
 });
 
+// Get handoff notes for a closed session
+router.get('/:id/handoff', (req: Request, res: Response) => {
+  const session = getSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  if (!session.closedAt) {
+    res.json({ handoff: null, message: 'Session is not closed' });
+    return;
+  }
+
+  // Return stored handoff if available
+  if (session.handoff) {
+    res.json({ handoff: session.handoff });
+    return;
+  }
+
+  // Fallback: try to read from vault session file
+  if (session.sessionFilePath) {
+    try {
+      const content = fs.readFileSync(session.sessionFilePath, 'utf-8');
+      const match = content.match(/## Handoff\n\n([\s\S]*?)(?=\n## |\n---|$)/);
+      if (match && match[1].trim() && match[1].trim() !== '_No handoff notes_') {
+        const handoff = match[1].trim();
+        // Cache it on the session for next time
+        updateSession(req.params.id as string, { handoff });
+        res.json({ handoff });
+        return;
+      }
+    } catch {}
+  }
+
+  // Last resort: scan messages for close_session finalize tool call
+  const messages = getMessages(req.params.id as string);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== 'tool') continue;
+    try {
+      const tool = JSON.parse(messages[i].content);
+      if (tool.name?.includes('close_session') && tool.input?.finalize && tool.input?.handoff) {
+        const handoff = tool.input.handoff;
+        updateSession(req.params.id as string, { handoff, sessionFilePath: tool.input?.session_data?.sessionFile });
+        res.json({ handoff });
+        return;
+      }
+    } catch {}
+  }
+
+  res.json({ handoff: null, message: 'No handoff notes found' });
+});
+
+// Update handoff notes for a closed session
+router.put('/:id/handoff', (req: Request, res: Response) => {
+  const session = getSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  if (!session.closedAt) {
+    res.status(400).json({ error: 'Session is not closed' });
+    return;
+  }
+
+  const { handoff } = req.body || {};
+  if (typeof handoff !== 'string') {
+    res.status(400).json({ error: 'handoff string required' });
+    return;
+  }
+
+  // Update session store
+  updateSession(req.params.id as string, { handoff });
+
+  // Also update the vault session file if we know its path
+  const filePath = session.sessionFilePath;
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      let content = fs.readFileSync(filePath, 'utf-8');
+      // Replace the ## Handoff section content
+      const handoffRegex = /(## Handoff\n\n)([\s\S]*?)(\n## )/;
+      const match = content.match(handoffRegex);
+      if (match) {
+        content = content.replace(handoffRegex, (_m, g1, _g2, g3) => `${g1}${handoff}\n${g3}`);
+        fs.writeFileSync(filePath, content, 'utf-8');
+      }
+    } catch {}
+  }
+
+  res.json({ handoff });
+});
+
 router.post('/:id/fork', (req: Request, res: Response) => {
   const { messageIndex } = req.body || {};
   if (typeof messageIndex !== 'number' || messageIndex < 0) {

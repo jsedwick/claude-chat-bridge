@@ -154,6 +154,23 @@
           </div>
           <div id="code-files-list" class="session-details-list"></div>
         </div>
+        <div id="handoff-section" class="session-details-section" style="display:none">
+          <div class="session-details-section-header" onclick="this.parentElement.classList.toggle('expanded')">
+            <span class="session-details-chevron">&#9654;</span>
+            <span>Handoff Notes</span>
+            <button id="handoff-edit-btn" class="handoff-edit-btn" onclick="event.stopPropagation(); toggleHandoffEdit()">Edit</button>
+          </div>
+          <div id="handoff-content" class="session-details-list">
+            <div id="handoff-display" class="handoff-display"></div>
+            <div id="handoff-editor" class="handoff-editor" style="display:none">
+              <textarea id="handoff-textarea" class="handoff-textarea" rows="6"></textarea>
+              <div class="handoff-editor-actions">
+                <button class="handoff-save-btn" onclick="saveHandoff()">Save</button>
+                <button class="handoff-cancel-btn" onclick="cancelHandoffEdit()">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

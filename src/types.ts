@@ -18,6 +18,8 @@ export interface ChatSession {
   messages: ChatMessage[];
   archived?: boolean;
   closedAt?: string;
+  handoff?: string;
+  sessionFilePath?: string;
   usedCodeFile?: boolean;
   usedVaultDoc?: boolean;
   forkedFrom?: {

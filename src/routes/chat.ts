@@ -95,6 +95,13 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           if (toolData._update) {
             updateToolMessage(sessionId, toolData.id, event.data);
             sendSSE('tool_update', event.data);
+            // Capture handoff + sessionFilePath from close_session finalize _update
+            if (toolData.name?.endsWith('__close_session') && toolData.input?.finalize) {
+              const updates: Record<string, unknown> = {};
+              if (toolData.input.handoff) updates.handoff = toolData.input.handoff;
+              if (toolData.input.session_data?.sessionFile) updates.sessionFilePath = toolData.input.session_data.sessionFile;
+              if (Object.keys(updates).length) updateSession(sessionId, updates);
+            }
             return;
           }
           // Detect close_session MCP tool call — mark session as closed

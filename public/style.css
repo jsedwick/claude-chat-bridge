@@ -871,6 +871,89 @@ html, body {
   word-break: break-word;
 }
 
+/* Handoff notes in session details */
+.handoff-edit-btn {
+  margin-left: auto;
+  padding: 2px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.handoff-edit-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.handoff-display {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  padding: 4px 0;
+}
+
+.handoff-textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 8px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.handoff-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.handoff-editor-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.handoff-save-btn,
+.handoff-cancel-btn {
+  padding: 4px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s;
+}
+
+.handoff-save-btn {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.handoff-save-btn:hover {
+  background: var(--accent-hover, #7bb8ff);
+}
+
+.handoff-cancel-btn {
+  background: none;
+  color: var(--text-muted);
+}
+
+.handoff-cancel-btn:hover {
+  color: var(--text-primary);
+}
+
 /* Mode tabs in sidebar */
 .mode-tabs {
   display: flex;

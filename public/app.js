@@ -170,6 +170,7 @@ function updateModeTabsUI(mode) {
 let currentWorkingDir = '';
 let currentForkDepth = 0;
 let currentSessionCreated = '';
+let currentClosedAt = '';
 const dirPicker = document.getElementById('dir-picker');
 
 // Shared directory browser renderer
@@ -1483,6 +1484,7 @@ async function archiveSessionItem(id) {
     chatTitle.textContent = getAppTitle();
     currentWorkingDir = '';
     currentSessionCreated = '';
+    currentClosedAt = '';
     welcomeEl.style.display = '';
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
@@ -1701,6 +1703,9 @@ function buildSessionFileList() {
           section.classList.add('expanded');
         }
       });
+
+      // Load handoff notes for closed sessions
+      loadHandoffNotes();
     })
     .catch(err => console.error('Failed to load session files:', err));
 }
@@ -1766,6 +1771,78 @@ async function toggleFileDiff(itemEl, filePath) {
   }
 }
 
+// Handoff notes display/editing
+async function loadHandoffNotes() {
+  const section = document.getElementById('handoff-section');
+  const display = document.getElementById('handoff-display');
+  const editor = document.getElementById('handoff-editor');
+
+  // Hide by default
+  section.style.display = 'none';
+  editor.style.display = 'none';
+
+  if (!currentClosedAt || !currentSessionId) return;
+
+  try {
+    const res = await fetch(`/api/sessions/${currentSessionId}/handoff`);
+    const data = await res.json();
+    if (!data.handoff) return;
+
+    display.innerHTML = escapeHtml(data.handoff).replace(/\n/g, '<br>');
+    document.getElementById('handoff-textarea').value = data.handoff;
+    section.style.display = '';
+    section.classList.add('expanded');
+  } catch {}
+}
+
+function toggleHandoffEdit() {
+  const display = document.getElementById('handoff-display');
+  const editor = document.getElementById('handoff-editor');
+  const btn = document.getElementById('handoff-edit-btn');
+
+  if (editor.style.display === 'none') {
+    display.style.display = 'none';
+    editor.style.display = '';
+    btn.textContent = 'Cancel';
+    document.getElementById('handoff-textarea').focus();
+  } else {
+    cancelHandoffEdit();
+  }
+}
+
+function cancelHandoffEdit() {
+  const display = document.getElementById('handoff-display');
+  const editor = document.getElementById('handoff-editor');
+  const btn = document.getElementById('handoff-edit-btn');
+
+  editor.style.display = 'none';
+  display.style.display = '';
+  btn.textContent = 'Edit';
+  // Reset textarea to current display content (innerText preserves <br> → \n)
+  document.getElementById('handoff-textarea').value = display.innerText;
+}
+
+async function saveHandoff() {
+  const textarea = document.getElementById('handoff-textarea');
+  const handoff = textarea.value.trim();
+  if (!currentSessionId) return;
+
+  try {
+    const res = await fetch(`/api/sessions/${currentSessionId}/handoff`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handoff }),
+    });
+    if (!res.ok) throw new Error('Save failed');
+
+    const display = document.getElementById('handoff-display');
+    display.innerHTML = escapeHtml(handoff).replace(/\n/g, '<br>');
+    cancelHandoffEdit();
+  } catch (err) {
+    console.error('Failed to save handoff:', err);
+  }
+}
+
 async function createNewSession() {
   if (!selectedNewChatDir) return;
   try {
@@ -1817,6 +1894,7 @@ async function switchSession(id) {
   currentWorkingDir = session.workingDir || '';
   currentForkDepth = session.forkDepth || 0;
   currentSessionCreated = session.created || '';
+  currentClosedAt = session.closedAt || '';
   // Hide details panel when switching sessions
   document.getElementById('session-details-panel').style.display = 'none';
   // Restore session-specific model selection
@@ -1866,6 +1944,7 @@ async function deleteSessionItem(id) {
     chatTitle.textContent = getAppTitle();
     currentWorkingDir = '';
     currentSessionCreated = '';
+    currentClosedAt = '';
     welcomeEl.style.display = '';
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
@@ -2874,6 +2953,11 @@ async function sendMessage(skipRender = false) {
           try {
             const tool = JSON.parse(data);
             updateToolDetails(tool.id, tool.name, tool.input);
+            // Detect close_session finalize — update closed state for handoff display
+            if (tool.name?.includes('close_session') && tool.input?.finalize) {
+              currentClosedAt = new Date().toISOString();
+              loadSessions();
+            }
           } catch {}
           break;
 
