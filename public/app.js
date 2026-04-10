@@ -577,20 +577,48 @@ async function showFlyout(wrapperEl, type) {
     return;
   }
 
-  // Default flat list rendering for workflows/issues
+  // Default list rendering for workflows/issues (workflows support category grouping)
   const items = data;
   if (!items || items.length === 0) {
     flyoutMenu.innerHTML = '<div class="flyout-empty">None available</div>';
   } else {
-    flyoutMenu.innerHTML = items.map(item => {
-      const slug = item.slug;
-      const label = slug.replace(/-/g, ' ');
-      const subtitle = item.description || (item.priority ? `${item.priority} priority` : '');
-      return `<button class="flyout-item" onclick="fireCommand('${command} ${slug}')">
-        <span class="flyout-item-label">${label}</span>
-        ${subtitle ? `<span class="flyout-item-desc">${subtitle}</span>` : ''}
-      </button>`;
-    }).join('');
+    const hasCategories = items.some(item => item.category);
+    if (hasCategories) {
+      // Group by category — uncategorized items first, then alphabetical categories
+      const groups = {};
+      for (const item of items) {
+        const cat = item.category || '';
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(item);
+      }
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        if (!a) return -1;
+        if (!b) return 1;
+        return a.localeCompare(b);
+      });
+      flyoutMenu.innerHTML = sortedKeys.map(cat => {
+        const header = cat ? `<div class="flyout-group-header">${cat.replace(/-/g, ' ')}</div>` : '';
+        const buttons = groups[cat].map(item => {
+          const label = (item.slug.includes('/') ? item.slug.split('/').pop() : item.slug).replace(/-/g, ' ');
+          const subtitle = item.description || '';
+          return `<button class="flyout-item" onclick="fireCommand('${command} ${item.slug}')">
+            <span class="flyout-item-label">${label}</span>
+            ${subtitle ? `<span class="flyout-item-desc">${subtitle}</span>` : ''}
+          </button>`;
+        }).join('');
+        return header + buttons;
+      }).join('');
+    } else {
+      flyoutMenu.innerHTML = items.map(item => {
+        const slug = item.slug;
+        const label = slug.replace(/-/g, ' ');
+        const subtitle = item.description || (item.priority ? `${item.priority} priority` : '');
+        return `<button class="flyout-item" onclick="fireCommand('${command} ${slug}')">
+          <span class="flyout-item-label">${label}</span>
+          ${subtitle ? `<span class="flyout-item-desc">${subtitle}</span>` : ''}
+        </button>`;
+      }).join('');
+    }
   }
 
   wrapperEl.classList.add('flyout-open');

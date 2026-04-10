@@ -6,30 +6,38 @@ import { getMode, getObsidianRoot, getObsidianVaults, getVaultPath } from '../co
 
 const router = Router();
 
-// List available workflows for the current mode's vault
+// List available workflows for the current mode's vault (supports nested folders as categories)
 router.get('/workflows', (_req: Request, res: Response) => {
   const vaultPath = getVaultPath(getMode());
   const workflowsDir = path.join(vaultPath, 'workflows');
 
   try {
-    const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
-    const workflows = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md'))
-      .map(e => {
-        const slug = e.name.replace(/\.md$/, '');
-        // Read description from frontmatter if available
-        let description = '';
-        try {
-          const content = fs.readFileSync(path.join(workflowsDir, e.name), 'utf-8');
-          const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-          if (fmMatch) {
-            const descMatch = fmMatch[1].match(/description:\s*(.+)/);
-            if (descMatch) description = descMatch[1].replace(/^["']|["']$/g, '').trim();
-          }
-        } catch {}
-        return { slug, description };
-      })
-      .sort((a, b) => a.slug.localeCompare(b.slug));
+    const workflows: { slug: string; description: string; category: string }[] = [];
+
+    function scanDir(dir: string, category: string) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isDirectory()) {
+          scanDir(path.join(dir, e.name), e.name);
+        } else if (e.isFile() && e.name.endsWith('.md')) {
+          const filename = e.name.replace(/\.md$/, '');
+          const slug = category ? `${category}/${filename}` : filename;
+          let description = '';
+          try {
+            const content = fs.readFileSync(path.join(dir, e.name), 'utf-8');
+            const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            if (fmMatch) {
+              const descMatch = fmMatch[1].match(/description:\s*(.+)/);
+              if (descMatch) description = descMatch[1].replace(/^["']|["']$/g, '').trim();
+            }
+          } catch {}
+          workflows.push({ slug, description, category });
+        }
+      }
+    }
+
+    scanDir(workflowsDir, '');
+    workflows.sort((a, b) => a.category.localeCompare(b.category) || a.slug.localeCompare(b.slug));
 
     res.json(workflows);
   } catch {

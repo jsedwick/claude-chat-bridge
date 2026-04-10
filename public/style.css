@@ -1881,6 +1881,11 @@ pre.streaming {
   min-width: 240px;
 }
 
+#flyout-workflows {
+  max-height: 400px;
+  min-width: 240px;
+}
+
 /* On narrow screens, position flyout above instead of to the side */
 @media (max-width: 480px) {
   .flyout-menu {
