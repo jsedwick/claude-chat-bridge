@@ -275,6 +275,17 @@
       </div>
       <div id="kb-rendered" class="kb-rendered" style="display:none"></div>
       <div id="kb-diff" class="kb-diff" style="display:none"></div>
+      <div id="kb-frontmatter-editor" class="kb-frontmatter-editor" style="display:none">
+        <div class="kb-fm-header" onclick="toggleFrontmatterPanel()">
+          <svg class="kb-fm-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          <span class="kb-fm-label">Frontmatter</span>
+        </div>
+        <div class="kb-fm-body">
+          <textarea id="kb-frontmatter-textarea" spellcheck="false" placeholder="key: value"></textarea>
+        </div>
+      </div>
       <div id="kb-editor" class="kb-editor" style="display:none"></div>
     </div>
   </div>

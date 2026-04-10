@@ -5404,11 +5404,12 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     kbIsEditing = false;
     kbShowingDiff = false;
 
-    // Clean up Toast UI Editor if switching files while editing
+    // Clean up Toast UI Editor + frontmatter panel if switching files while editing
     if (kbEditor) {
       kbEditor.destroy();
       kbEditor = null;
       kbFrontmatter = '';
+      hideFrontmatterEditor();
       document.getElementById('kb-editor').innerHTML = '';
     }
 
@@ -5864,6 +5865,61 @@ function renderDiff(rawDiff) {
   return html;
 }
 
+// --- Frontmatter editor panel ---
+
+let kbFmExpanded = false;
+
+function toggleFrontmatterPanel() {
+  const panel = document.getElementById('kb-frontmatter-editor');
+  kbFmExpanded = !kbFmExpanded;
+  panel.classList.toggle('expanded', kbFmExpanded);
+  if (kbFmExpanded) {
+    const ta = document.getElementById('kb-frontmatter-textarea');
+    autoResizeFmTextarea(ta);
+    ta.focus();
+  }
+}
+
+function showFrontmatterEditor(yaml) {
+  const panel = document.getElementById('kb-frontmatter-editor');
+  const ta = document.getElementById('kb-frontmatter-textarea');
+  ta.value = yaml;
+  panel.style.display = '';
+  // Collapse by default when content exists, expand when empty (adding new)
+  kbFmExpanded = !yaml.trim();
+  panel.classList.toggle('expanded', kbFmExpanded);
+  autoResizeFmTextarea(ta);
+  // Hook up autosave + auto-resize on input
+  ta.addEventListener('input', onFmTextareaInput);
+}
+
+function hideFrontmatterEditor() {
+  const panel = document.getElementById('kb-frontmatter-editor');
+  const ta = document.getElementById('kb-frontmatter-textarea');
+  panel.style.display = 'none';
+  panel.classList.remove('expanded');
+  ta.removeEventListener('input', onFmTextareaInput);
+  ta.value = '';
+  kbFmExpanded = false;
+}
+
+function onFmTextareaInput() {
+  autoResizeFmTextarea(this);
+  scheduleKbAutosave();
+}
+
+function autoResizeFmTextarea(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 380) + 'px';
+}
+
+function getCurrentFrontmatter() {
+  const ta = document.getElementById('kb-frontmatter-textarea');
+  const val = ta.value.trim();
+  if (!val) return '';
+  return '---\n' + val + '\n---\n';
+}
+
 async function toggleKbEdit() {
   if (!kbCurrentFile) return;
   kbIsEditing = true;
@@ -5884,14 +5940,17 @@ async function toggleKbEdit() {
     kbEditor = null;
   }
 
-  // Strip YAML frontmatter — editor can't handle it, we'll restore on save
+  // Strip YAML frontmatter — editor can't handle it; show in separate panel
   kbFrontmatter = '';
   let editContent = kbCurrentFile.content;
+  let fmYaml = '';
   const fmMatch = editContent.match(/^---\r?\n([\s\S]*?\r?\n)---\r?\n?/);
   if (fmMatch) {
     kbFrontmatter = fmMatch[0];
+    fmYaml = fmMatch[1];
     editContent = editContent.slice(fmMatch[0].length);
   }
+  showFrontmatterEditor(fmYaml);
 
   // Fetch templates if not cached, then build toolbar
   if (kbTemplatesCache === null) await fetchKbTemplates();
@@ -5955,6 +6014,7 @@ function cancelKbEdit() {
   clearTimeout(kbAutosaveTimer);
   kbIsEditing = false;
   kbFrontmatter = '';
+  hideFrontmatterEditor();
 
   // Destroy Toast UI Editor instance
   if (kbEditor) {
@@ -6078,12 +6138,15 @@ async function applyTemplate(template) {
     const data = await res.json();
     if (data.content == null) return;
 
-    // Separate frontmatter from template body
+    // Separate frontmatter from template body — update the frontmatter panel
     let body = data.content;
     const fmMatch = body.match(/^---\r?\n([\s\S]*?\r?\n)---\r?\n?/);
     if (fmMatch) {
-      kbFrontmatter = fmMatch[0];
       body = body.slice(fmMatch[0].length);
+      // Push template frontmatter into the editor panel
+      const ta = document.getElementById('kb-frontmatter-textarea');
+      ta.value = fmMatch[1];
+      autoResizeFmTextarea(ta);
     }
 
     // Replace editor content with template body
@@ -6113,7 +6176,7 @@ async function kbAutosave() {
   if (!kbEditor || !kbCurrentFile || !kbIsEditing) return;
   const rawContent = kbEditor.getMarkdown();
   const editorContent = cleanToastMarkdown(rawContent);
-  const content = kbFrontmatter + editorContent;
+  const content = getCurrentFrontmatter() + editorContent;
   // Skip save if content hasn't actually changed
   if (content === kbCurrentFile.content) return;
   try {
@@ -6145,7 +6208,7 @@ async function saveKbFile() {
   clearTimeout(kbAutosaveTimer);
   const rawContent = kbEditor ? kbEditor.getMarkdown() : '';
   const editorContent = cleanToastMarkdown(rawContent);
-  const content = kbFrontmatter + editorContent;
+  const content = getCurrentFrontmatter() + editorContent;
   try {
     const res = await fetch('/api/vault/kb/file', {
       method: 'PUT',

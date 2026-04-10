@@ -3317,7 +3317,7 @@ pre.streaming {
   margin: 1.5em 0;
 }
 
-/* Frontmatter block */
+/* Frontmatter block (rendered view) */
 .kb-frontmatter {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -3328,6 +3328,89 @@ pre.streaming {
   font-size: 12px;
   color: var(--text-muted);
   white-space: pre-wrap;
+}
+
+/* Frontmatter editor (edit mode) */
+.kb-frontmatter-editor {
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.kb-fm-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-secondary);
+  transition: background 0.15s;
+}
+
+.kb-fm-header:hover {
+  background: var(--bg-hover, var(--bg-secondary));
+}
+
+.kb-fm-chevron {
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.kb-frontmatter-editor.expanded .kb-fm-chevron {
+  transform: rotate(0deg);
+}
+
+.kb-frontmatter-editor:not(.expanded) .kb-fm-chevron {
+  transform: rotate(-90deg);
+}
+
+.kb-fm-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.kb-fm-body {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.25s ease;
+}
+
+.kb-frontmatter-editor.expanded .kb-fm-body {
+  max-height: 400px;
+}
+
+#kb-frontmatter-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 60px;
+  max-height: 380px;
+  padding: 10px 16px;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  resize: none;
+  overflow-y: auto;
+  outline: none;
+}
+
+#kb-frontmatter-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+#kb-frontmatter-textarea:focus {
+  color: var(--text-primary, var(--text-muted));
 }
 
 /* Wiki-links */
