@@ -37,6 +37,11 @@ router.post('/:sessionId', (req: Request, res: Response) => {
   // Save user message server-side
   addMessage(sessionId, 'user', message);
 
+  // Persist model selection to session (covers legacy sessions without a stored model)
+  if (model && !session.model) {
+    updateSession(sessionId, { model });
+  }
+
   let clientDisconnected = false;
 
   let sseEventCount = 0;

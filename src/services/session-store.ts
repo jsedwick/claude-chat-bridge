@@ -35,11 +35,12 @@ export function getSession(id: string): ChatSession | undefined {
   return sessions.find(s => s.id === id);
 }
 
-export function createSession(name?: string, workingDir?: string): ChatSession {
+export function createSession(name?: string, workingDir?: string, model?: string): ChatSession {
   const session: ChatSession = {
     id: crypto.randomUUID(),
     claudeSessionId: null,
     name: name || `Chat ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+    model: model || undefined,
     mode: getMode(),
     workingDir: workingDir || undefined,
     created: new Date().toISOString(),
@@ -183,6 +184,7 @@ export function forkSession(sourceId: string, messageIndex: number): ChatSession
     id: crypto.randomUUID(),
     claudeSessionId: null,
     name: `${source.name} (fork)`,
+    model: source.model,
     mode: source.mode,
     workingDir: source.workingDir,
     created: new Date().toISOString(),

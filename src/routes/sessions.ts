@@ -44,7 +44,7 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
-  const { name, workingDir } = req.body || {};
+  const { name, workingDir, model } = req.body || {};
   // Validate workingDir — must be an existing directory
   if (workingDir) {
     try {
@@ -58,7 +58,7 @@ router.post('/', (req: Request, res: Response) => {
       return;
     }
   }
-  const session = createSession(name, workingDir || undefined);
+  const session = createSession(name, workingDir || undefined, model || undefined);
   res.status(201).json(session);
 });
 
@@ -212,9 +212,10 @@ router.get('/:id/messages', (req: Request, res: Response) => {
 });
 
 router.patch('/:id', (req: Request, res: Response) => {
-  const { name, workingDir } = req.body || {};
+  const { name, workingDir, model } = req.body || {};
   const updates: Record<string, unknown> = {};
   if (name && typeof name === 'string') updates.name = name.trim();
+  if (model && typeof model === 'string') updates.model = model;
   if (workingDir !== undefined) {
     if (workingDir) {
       try {

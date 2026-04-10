@@ -92,6 +92,14 @@ modelSelect.value = savedModel;
 
 function saveModel(value) {
   localStorage.setItem('chat-bridge-model', value);
+  // Persist to current session
+  if (currentSessionId) {
+    fetch(`/api/sessions/${currentSessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: value }),
+    }).catch(() => {});
+  }
 }
 
 function getSelectedModel() {
@@ -1572,7 +1580,7 @@ async function createNewSession() {
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir: selectedNewChatDir }),
+      body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel() }),
     });
     const session = await res.json();
     currentSessionId = session.id;
@@ -1615,6 +1623,11 @@ async function switchSession(id) {
   chatTitle.textContent = session.name;
   currentWorkingDir = session.workingDir || '';
   currentForkDepth = session.forkDepth || 0;
+  // Restore session-specific model selection
+  if (session.model) {
+    modelSelect.value = session.model;
+    localStorage.setItem('chat-bridge-model', session.model);
+  }
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
   document.querySelector('.dir-picker-wrapper').style.display = '';
