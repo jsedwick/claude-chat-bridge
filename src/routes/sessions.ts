@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -149,6 +150,72 @@ router.post('/mode/current', (req: Request, res: Response) => {
   }
   setMode(mode as Mode);
   res.json({ mode: getMode() });
+});
+
+// Get git diff for a file since a session started
+router.get('/:id/file-diff', (req: Request, res: Response) => {
+  const session = getSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+
+  const filePath = req.query.path as string;
+  if (!filePath) {
+    res.status(400).json({ error: 'path query parameter required' });
+    return;
+  }
+
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    res.json({ diff: null, message: 'File not found' });
+    return;
+  }
+
+  // Find the git repo root for this file
+  let repoDir: string;
+  try {
+    repoDir = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: path.dirname(resolved),
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+  } catch {
+    res.json({ diff: null, message: 'Not a git repository' });
+    return;
+  }
+
+  const relativePath = path.relative(repoDir, resolved);
+  const sessionCreated = session.created;
+
+  try {
+    // Find the last commit before the session started (any commit, not file-specific)
+    const beforeCommit = execFileSync('git', [
+      'log', '--before=' + sessionCreated, '-1', '--format=%H',
+    ], { cwd: repoDir, encoding: 'utf-8', timeout: 5000 }).trim();
+
+    let diff: string;
+    if (beforeCommit) {
+      // Diff from pre-session state to working tree (includes uncommitted changes)
+      diff = execFileSync('git', [
+        'diff', beforeCommit, '--', relativePath,
+      ], { cwd: repoDir, encoding: 'utf-8', timeout: 10000 }).trim();
+    } else {
+      // No commits before session — diff working tree against empty tree
+      diff = execFileSync('git', [
+        'diff', '4b825dc642cb6eb9a060e54bf899d15363d7aa16', '--', relativePath,
+      ], { cwd: repoDir, encoding: 'utf-8', timeout: 10000 }).trim();
+    }
+
+    if (!diff) {
+      res.json({ diff: null, message: 'No changes during this session' });
+      return;
+    }
+
+    res.json({ diff, path: resolved });
+  } catch {
+    res.json({ diff: null, message: 'Failed to retrieve git diff' });
+  }
 });
 
 router.post('/:id/fork', (req: Request, res: Response) => {

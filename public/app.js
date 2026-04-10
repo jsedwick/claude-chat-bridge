@@ -166,9 +166,10 @@ function updateModeTabsUI(mode) {
   });
 }
 
-// Directory browser state
+// Session metadata
 let currentWorkingDir = '';
 let currentForkDepth = 0;
+let currentSessionCreated = '';
 const dirPicker = document.getElementById('dir-picker');
 
 // Shared directory browser renderer
@@ -1481,9 +1482,11 @@ async function archiveSessionItem(id) {
     currentSessionId = null;
     chatTitle.textContent = getAppTitle();
     currentWorkingDir = '';
+    currentSessionCreated = '';
     welcomeEl.style.display = '';
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
+    document.getElementById('session-details-panel').style.display = 'none';
     clearMessages();
   }
   loadSessions();
@@ -1602,6 +1605,167 @@ function startEditing(id, el) {
   };
 }
 
+// Title dropdown menu
+function showTitleMenu(event) {
+  // If no session, open persona modal (same as old double-click behavior)
+  if (!currentSessionId) {
+    renameAppTitle();
+    return;
+  }
+  // If currently editing, don't show menu
+  if (chatTitle.contentEditable === 'true') return;
+
+  event.stopPropagation();
+  const menu = document.getElementById('title-menu');
+  if (menu.style.display !== 'none') {
+    menu.style.display = 'none';
+    return;
+  }
+  menu.style.display = 'block';
+
+  // Close on outside click
+  function closeMenu(e) {
+    if (!menu.contains(e.target) && e.target !== chatTitle) {
+      menu.style.display = 'none';
+      document.removeEventListener('click', closeMenu);
+    }
+  }
+  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+}
+
+function titleMenuRename() {
+  document.getElementById('title-menu').style.display = 'none';
+  renameCurrentSession();
+}
+
+function toggleSessionDetails() {
+  document.getElementById('title-menu').style.display = 'none';
+  const panel = document.getElementById('session-details-panel');
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  buildSessionFileList();
+}
+
+function buildSessionFileList() {
+  const vaultDocs = new Map(); // path -> type info
+  const codeFiles = new Map();
+
+  // Reset sections
+  document.querySelectorAll('.session-details-section').forEach(s => s.classList.remove('expanded'));
+
+  // Scan stored messages for tool calls
+  if (!currentSessionId) return;
+
+  fetch(`/api/sessions/${currentSessionId}/messages`)
+    .then(r => r.json())
+    .then(msgs => {
+      for (const msg of msgs) {
+        if (msg.role !== 'tool') continue;
+        try {
+          const tool = JSON.parse(msg.content);
+          const name = tool.name || '';
+
+          // close_session Phase 2 creates the session document directly
+          if (name.includes('close_session') && tool.input?.session_data?.sessionFile) {
+            const fp = tool.input.session_data.sessionFile;
+            if (!vaultDocs.has(fp)) {
+              vaultDocs.set(fp, { strategy: 'session-close' });
+            }
+            continue;
+          }
+
+          if (!tool.input?.file_path) continue;
+          const fp = tool.input.file_path;
+          if (name.includes('update_document')) {
+            if (!vaultDocs.has(fp)) {
+              vaultDocs.set(fp, { strategy: tool.input.strategy || 'unknown' });
+            }
+          } else if (name.includes('code_file') || name === 'Edit' || name === 'Write') {
+            if (!codeFiles.has(fp)) {
+              codeFiles.set(fp, { operation: tool.input.operation || 'edit' });
+            }
+          }
+        } catch {}
+      }
+
+      renderFileList('vault-docs-list', 'vault-docs-count', vaultDocs);
+      renderFileList('code-files-list', 'code-files-count', codeFiles);
+
+      // Auto-expand sections that have content
+      document.querySelectorAll('.session-details-section').forEach(section => {
+        const list = section.querySelector('.session-details-list');
+        if (list && list.children.length > 0) {
+          section.classList.add('expanded');
+        }
+      });
+    })
+    .catch(err => console.error('Failed to load session files:', err));
+}
+
+function renderFileList(listId, countId, fileMap) {
+  const listEl = document.getElementById(listId);
+  const countEl = document.getElementById(countId);
+  countEl.textContent = `(${fileMap.size})`;
+
+  if (fileMap.size === 0) {
+    listEl.innerHTML = '<div class="session-details-empty">No files edited</div>';
+    return;
+  }
+
+  listEl.innerHTML = '';
+  for (const [filePath] of fileMap) {
+    const item = document.createElement('div');
+    item.className = 'session-file-item';
+    item.dataset.filePath = filePath;
+    const shortPath = filePath.split('/').slice(-2).join('/');
+    const header = document.createElement('div');
+    header.className = 'session-file-header';
+    header.innerHTML = `
+      <span class="session-file-chevron">&#9654;</span>
+      <span class="session-file-name">${escapeHtml(shortPath)}</span>
+    `;
+    header.onclick = (e) => { e.stopPropagation(); toggleFileDiff(item, filePath); };
+    item.appendChild(header);
+    const diffDiv = document.createElement('div');
+    diffDiv.className = 'session-file-diff';
+    item.appendChild(diffDiv);
+    listEl.appendChild(item);
+  }
+}
+
+async function toggleFileDiff(itemEl, filePath) {
+  const diffEl = itemEl.querySelector('.session-file-diff');
+  if (itemEl.classList.contains('diff-open')) {
+    itemEl.classList.remove('diff-open');
+    return;
+  }
+
+  // Check if already loaded
+  if (diffEl.dataset.loaded) {
+    itemEl.classList.add('diff-open');
+    return;
+  }
+
+  diffEl.innerHTML = '<div class="session-details-loading">Loading diff...</div>';
+  itemEl.classList.add('diff-open');
+
+  try {
+    const res = await fetch(`/api/sessions/${currentSessionId}/file-diff?path=${encodeURIComponent(filePath)}`);
+    const data = await res.json();
+    if (data.diff) {
+      diffEl.innerHTML = `<pre class="tool-diff">${renderDiffBlock(data.diff)}</pre>`;
+    } else {
+      diffEl.innerHTML = `<div class="session-details-empty">${escapeHtml(data.message || 'No diff available')}</div>`;
+    }
+    diffEl.dataset.loaded = '1';
+  } catch (err) {
+    diffEl.innerHTML = '<div class="session-details-empty">Failed to load diff</div>';
+  }
+}
+
 async function createNewSession() {
   if (!selectedNewChatDir) return;
   try {
@@ -1614,6 +1778,7 @@ async function createNewSession() {
     currentSessionId = session.id;
     chatTitle.textContent = session.name;
     currentWorkingDir = session.workingDir || '';
+    currentSessionCreated = session.created || '';
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
@@ -1651,6 +1816,9 @@ async function switchSession(id) {
   chatTitle.textContent = session.name;
   currentWorkingDir = session.workingDir || '';
   currentForkDepth = session.forkDepth || 0;
+  currentSessionCreated = session.created || '';
+  // Hide details panel when switching sessions
+  document.getElementById('session-details-panel').style.display = 'none';
   // Restore session-specific model selection
   if (session.model) {
     modelSelect.value = session.model;
@@ -1697,9 +1865,11 @@ async function deleteSessionItem(id) {
     currentSessionId = null;
     chatTitle.textContent = getAppTitle();
     currentWorkingDir = '';
+    currentSessionCreated = '';
     welcomeEl.style.display = '';
     inputArea.style.display = 'none';
     document.querySelector('.dir-picker-wrapper').style.display = 'none';
+    document.getElementById('session-details-panel').style.display = 'none';
     clearMessages();
   }
   loadSessions();
@@ -5311,6 +5481,7 @@ async function startFromTopic() {
     currentSessionId = session.id;
     chatTitle.textContent = session.name;
     currentWorkingDir = session.workingDir || '';
+    currentSessionCreated = session.created || '';
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
@@ -5355,6 +5526,7 @@ async function continueFromSession() {
     currentSessionId = session.id;
     chatTitle.textContent = session.name;
     currentWorkingDir = session.workingDir || '';
+    currentSessionCreated = session.created || '';
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
@@ -5363,8 +5535,8 @@ async function continueFromSession() {
     switchView('sessions');
 
     // Auto-send /work or /personal based on current mode
-    const modeCommand = currentMode === 'personal' ? '/personal' : '/work';
-    messageInput.value = modeCommand;
+    const modeCommand2 = currentMode === 'personal' ? '/personal' : '/work';
+    messageInput.value = modeCommand2;
     await sendMessage();
 
     // Ask Claude to load the session context via MCP tools
