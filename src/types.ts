@@ -18,6 +18,7 @@ export interface ChatSession {
   archived?: boolean;
   closedAt?: string;
   usedCodeFile?: boolean;
+  usedVaultDoc?: boolean;
   forkedFrom?: {
     sessionId: string;
     sessionName: string;

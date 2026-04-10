@@ -100,6 +100,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           if (toolData.name?.endsWith('__code_file')) {
             updateSession(sessionId, { usedCodeFile: true });
           }
+          // Detect update_document MCP tool call — mark session as having vault doc activity
+          if (toolData.name?.endsWith('__update_document')) {
+            updateSession(sessionId, { usedVaultDoc: true });
+          }
         } catch {}
         // Save accumulated text segment before tool call (preserves interleaving)
         if (assistantText) {

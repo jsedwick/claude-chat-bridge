@@ -1357,7 +1357,7 @@ function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, f
          onclick="switchSession('${s.id}')"${indentStyle}>
       ${isFork ? '<span class="session-fork-branch"></span>' : ''}
       ${actions}
-      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : ''}${forkBadge}${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : s.usedVaultDoc ? `<span class="session-doc-badge" title="Vault document edited"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#9998;</span>` : ''}${forkBadge}${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} msgs</span>
@@ -3010,8 +3010,10 @@ function updateSessionBlockedBadge(sessionId, blocked) {
       // Hide existing badges, insert blocked badge
       const closedBadge = nameEl.querySelector('.session-closed-badge');
       const codeBadge = nameEl.querySelector('.session-code-badge');
+      const docBadge = nameEl.querySelector('.session-doc-badge');
       if (closedBadge) closedBadge.style.display = 'none';
       if (codeBadge) codeBadge.style.display = 'none';
+      if (docBadge) docBadge.style.display = 'none';
       const badge = document.createElement('span');
       badge.className = 'session-blocked-badge';
       badge.title = 'Waiting for permission';
@@ -3022,8 +3024,10 @@ function updateSessionBlockedBadge(sessionId, blocked) {
       // Restore hidden badges
       const closedBadge = nameEl.querySelector('.session-closed-badge');
       const codeBadge = nameEl.querySelector('.session-code-badge');
+      const docBadge = nameEl.querySelector('.session-doc-badge');
       if (closedBadge) closedBadge.style.display = '';
       if (codeBadge) codeBadge.style.display = '';
+      if (docBadge) docBadge.style.display = '';
     }
   });
 }

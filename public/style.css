@@ -378,6 +378,13 @@ html, body {
   opacity: 0.8;
 }
 
+.session-doc-badge {
+  color: var(--accent);
+  font-size: 11px;
+  margin-right: 5px;
+  opacity: 0.8;
+}
+
 .session-blocked-badge {
   color: #e8a838;
   font-size: 12px;
