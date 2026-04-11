@@ -249,6 +249,23 @@
               <stop offset="0%" stop-color="#6b3d22"/>
               <stop offset="100%" stop-color="#fef9f0"/>
             </linearGradient>
+            <!-- Head clip path for beard (keeps beard inside face outline) -->
+            <clipPath id="head-clip-light">
+              <ellipse cx="100" cy="105" rx="60" ry="72"/>
+            </clipPath>
+            <!-- Beard gradient: lighter stubble at cheeks, fuller at chin -->
+            <linearGradient id="beard-gradient" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%" stop-color="#7a4828" stop-opacity="0.4"/>
+              <stop offset="40%" stop-color="#5c3318" stop-opacity="0.88"/>
+              <stop offset="100%" stop-color="#4a2810" stop-opacity="1"/>
+            </linearGradient>
+            <!-- Beard skin-fade: skin color fading to transparent, overlaid on top of beard to soften the hard edge -->
+            <linearGradient id="beard-skin-fade" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%" stop-color="#fef9f0" stop-opacity="0.95"/>
+              <stop offset="30%" stop-color="#fef9f0" stop-opacity="0.55"/>
+              <stop offset="55%" stop-color="#fef9f0" stop-opacity="0.15"/>
+              <stop offset="75%" stop-color="#fef9f0" stop-opacity="0"/>
+            </linearGradient>
           </defs>
           <!-- Outer glow ring (circle) -->
           <circle class="tts-face-glow" cx="100" cy="100" r="94" fill="none"/>
@@ -263,9 +280,9 @@
           <path class="tts-face-hair" d="M 50,68 C 46,54 50,32 68,22 C 79,17 90,15 100,17 C 112,15 126,21 138,29 C 150,38 155,54 152,68 C 148,63 140,59 128,56 Q 100,52 72,56 C 60,59 54,63 50,68 Z"/>
           <path class="tts-face-hair-sheen" d="M 83,19 C 95,17 112,22 130,34 C 140,41 146,50 147,60"/>
           <path class="tts-face-hair-part" d="M 84,23 C 84,32 85,42 87,54"/>
-          <!-- Eyebrows: friendly arched (up at outside) -->
-          <path class="tts-face-brow" d="M63,70 Q76,60 90,68"/>
-          <path class="tts-face-brow" d="M110,68 Q124,60 137,70"/>
+          <!-- Eyebrows: natural masculine arch, not too dramatic -->
+          <path class="tts-face-brow" d="M62,71 Q76,65 91,69"/>
+          <path class="tts-face-brow" d="M109,69 Q124,65 138,71"/>
           <!-- Eyes: round (grouped for movement) -->
           <g class="tts-face-eye-group">
             <!-- Left eye -->
@@ -281,9 +298,12 @@
               <circle class="tts-face-highlight" cx="129" cy="86" r="3"/>
             </g>
           </g>
-          <!-- Cheeks: subtle blush -->
-          <circle class="tts-face-cheek" cx="58" cy="116" r="13"/>
-          <circle class="tts-face-cheek" cx="142" cy="116" r="13"/>
+          <!-- Beard + mustache: unified single shape, clipped to head outline -->
+          <path class="tts-face-beard" clip-path="url(#head-clip-light)" style="fill: url(#beard-gradient)" d="M 40,118 C 33,133 32,153 45,168 C 52,177 65,183 80,185 Q 100,188 120,185 C 135,183 148,177 155,168 C 168,153 167,133 160,118 C 152,124 138,128 124,130 C 116,131 110,132 106,133 Q 100,134 94,133 C 90,132 84,131 76,130 C 62,128 48,124 40,118 Z"/>
+          <!-- Skin-to-beard fade: same shape as beard, overlaid with skin gradient to dissolve the hard top edge -->
+          <path clip-path="url(#head-clip-light)" style="fill: url(#beard-skin-fade)" d="M 40,118 C 33,133 32,153 45,168 C 52,177 65,183 80,185 Q 100,188 120,185 C 135,183 148,177 155,168 C 168,153 167,133 160,118 C 152,124 138,128 124,130 C 116,131 110,132 106,133 Q 100,134 94,133 C 90,132 84,131 76,130 C 62,128 48,124 40,118 Z"/>
+          <!-- Nose hint: simple bottom arc suggesting nostrils -->
+          <path class="tts-face-nose" d="M 94,116 C 92,121 91,124 93,127 Q 97,130 100,129 Q 103,130 107,127 C 109,124 108,121 106,116"/>
           <!-- Mouth: smile (animated via JS) -->
           <path id="tts-face-mouth-light" class="tts-face-mouth" d="M72 148 Q100 163, 128 148"/>
         </svg>
