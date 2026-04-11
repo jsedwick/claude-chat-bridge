@@ -2526,11 +2526,144 @@ function renderToolOutput(content) {
   return `<pre><code>${linked}</code></pre>${truncated ? '<div class="tool-meta">… output truncated</div>' : ''}`;
 }
 
+// Structured output renderers for MCP tools with outputSchema
+const STRUCTURED_RENDERERS = {
+  'mcp__obsidian-context-manager__search_vault': renderSearchVaultStructured,
+  'mcp__obsidian-context-manager__get_memory_base': renderMemoryBaseStructured,
+  'mcp__obsidian-context-manager__close_session': renderCloseSessionStructured,
+};
+
+function tryRenderStructured(toolName, content) {
+  if (!toolName || typeof content !== 'string') return null;
+  const renderer = STRUCTURED_RENDERERS[toolName];
+  if (!renderer) return null;
+  try {
+    const data = JSON.parse(content);
+    if (typeof data !== 'object' || data === null) return null;
+    return renderer(data);
+  } catch {
+    return null;
+  }
+}
+
+function renderSearchVaultStructured(data) {
+  if (!data.results || !Array.isArray(data.results)) return null;
+  const parts = [];
+  parts.push(`<div class="struct-header">Search: <span class="struct-query">${escapeHtml(data.query || '')}</span></div>`);
+  parts.push(`<div class="struct-meta">${data.showing || 0} of ${data.total_count || 0} results · ${escapeHtml(data.detail_level || 'summary')}</div>`);
+  for (const r of data.results) {
+    const score = r.semantic_score != null ? `<span class="struct-badge">${(r.semantic_score * 100).toFixed(0)}%</span>` : '';
+    const vault = r.vault ? `<span class="struct-badge struct-badge-muted">${escapeHtml(r.vault)}</span>` : '';
+    const filePath = escapeHtml(r.file || '');
+    const fileName = filePath.split('/').pop();
+    parts.push(`<div class="struct-result-card">`);
+    parts.push(`  <div class="struct-result-header">${score}${vault}<span class="struct-file-path" title="${filePath}">${escapeHtml(fileName)}</span></div>`);
+    if (r.snippets && r.snippets.length > 0) {
+      const snippetText = r.snippets.slice(0, 3).map(s => escapeHtml(s)).join('<br>');
+      parts.push(`  <div class="struct-snippets">${snippetText}</div>`);
+    }
+    parts.push(`</div>`);
+  }
+  if (data.retry && data.retry.results && data.retry.results.length > 0) {
+    parts.push(`<div class="struct-retry-label">Retry (${escapeHtml(data.retry.reason || 'broadened')}): ${data.retry.results.length} results</div>`);
+  }
+  return parts.join('\n');
+}
+
+function renderMemoryBaseStructured(data) {
+  if (data.has_user_reference == null) return null;
+  const parts = [];
+  parts.push(`<div class="struct-header">Memory Base</div>`);
+  parts.push(`<div class="struct-meta">${data.section_count || 0} sections loaded${data.session_start_time ? ' · ' + escapeHtml(data.session_start_time) : ''}</div>`);
+  if (data.handoffs && data.handoffs.length > 0) {
+    parts.push(`<div class="struct-section-label">Handoffs (${data.handoffs.length})</div>`);
+    for (const h of data.handoffs) {
+      parts.push(`<div class="struct-result-card"><div class="struct-result-header"><span class="struct-badge struct-badge-muted">${escapeHtml(h.session_id || '')}</span></div>`);
+      const preview = (h.content || '').slice(0, 200);
+      parts.push(`<div class="struct-snippets">${escapeHtml(preview)}${h.content && h.content.length > 200 ? '…' : ''}</div></div>`);
+    }
+  }
+  if (data.correction_rules && data.correction_rules.length > 0) {
+    parts.push(`<div class="struct-section-label">Corrections (${data.correction_rules.length})</div>`);
+    for (const c of data.correction_rules) {
+      parts.push(`<div class="struct-result-card"><div class="struct-result-header"><span class="struct-file-path">${escapeHtml(c.title || '')}</span></div></div>`);
+    }
+  }
+  if (data.persistent_issues && data.persistent_issues.length > 0) {
+    parts.push(`<div class="struct-section-label">Issues (${data.persistent_issues.length})</div>`);
+    for (const i of data.persistent_issues) {
+      const prioClass = i.priority === 'high' ? 'struct-badge-high' : i.priority === 'medium' ? 'struct-badge-med' : '';
+      parts.push(`<div class="struct-result-card"><div class="struct-result-header"><span class="struct-badge ${prioClass}">${escapeHtml(i.priority || '')}</span><span class="struct-file-path">${escapeHtml(i.slug || '')}</span></div></div>`);
+    }
+  }
+  return parts.join('\n');
+}
+
+function renderCloseSessionStructured(data) {
+  if (data.phase == null) return null;
+  const parts = [];
+  if (data.phase === 1) {
+    parts.push(`<div class="struct-header">Session Analysis <span class="struct-badge">Phase 1</span></div>`);
+    parts.push(`<div class="struct-meta">${escapeHtml(data.session_id || '')}</div>`);
+    if (data.detected_repo) {
+      parts.push(`<div class="struct-meta">Repo: ${escapeHtml(data.detected_repo.name)}${data.detected_repo.branch ? ' (' + escapeHtml(data.detected_repo.branch) + ')' : ''}</div>`);
+    }
+    if (data.commit_count > 0) {
+      parts.push(`<div class="struct-section-label">Commits (${data.commit_count})</div>`);
+      for (const c of (data.commits || [])) {
+        const topicCount = (c.related_topics || []).length;
+        const decCount = (c.related_decisions || []).length;
+        const badges = [];
+        if (topicCount > 0) badges.push(`${topicCount} topic${topicCount > 1 ? 's' : ''}`);
+        if (decCount > 0) badges.push(`${decCount} decision${decCount > 1 ? 's' : ''}`);
+        parts.push(`<div class="struct-result-card"><div class="struct-result-header"><code>${escapeHtml(c.hash || '')}</code>${badges.length ? ' <span class="struct-badge struct-badge-muted">' + escapeHtml(badges.join(', ')) + '</span>' : ''}</div></div>`);
+      }
+    }
+    if (data.topics_for_review && data.topics_for_review.length > 0) {
+      parts.push(`<div class="struct-section-label">Topics for Review (${data.topics_for_review.length})</div>`);
+      for (const t of data.topics_for_review) {
+        parts.push(`<div class="struct-result-card"><div class="struct-result-header"><span class="struct-badge">${escapeHtml(t.source || '')}</span><span class="struct-file-path">${escapeHtml(t.title || '')}</span></div></div>`);
+      }
+    }
+    if (data.semantic_topics_for_review && data.semantic_topics_for_review.length > 0) {
+      parts.push(`<div class="struct-section-label">Semantic Topics (${data.semantic_topics_for_review.length})</div>`);
+      for (const t of data.semantic_topics_for_review) {
+        parts.push(`<div class="struct-result-card"><div class="struct-result-header"><span class="struct-badge struct-badge-muted">semantic</span><span class="struct-file-path">${escapeHtml(t.title || '')}</span></div></div>`);
+      }
+    }
+  } else if (data.phase === 2) {
+    parts.push(`<div class="struct-header">Session Finalized <span class="struct-badge">Phase 2</span></div>`);
+    parts.push(`<div class="struct-meta">${escapeHtml(data.session_id || '')}</div>`);
+    const linked = [];
+    if (data.topics_linked && data.topics_linked.length > 0) linked.push(`${data.topics_linked.length} topics`);
+    if (data.decisions_linked && data.decisions_linked.length > 0) linked.push(`${data.decisions_linked.length} decisions`);
+    if (data.projects_linked && data.projects_linked.length > 0) linked.push(`${data.projects_linked.length} projects`);
+    if (linked.length > 0) {
+      parts.push(`<div class="struct-meta">Linked: ${escapeHtml(linked.join(', '))}</div>`);
+    }
+    if (data.files_accessed_count) {
+      parts.push(`<div class="struct-meta">Files accessed: ${data.files_accessed_count}</div>`);
+    }
+    if (data.validation_warnings && data.validation_warnings.length > 0) {
+      parts.push(`<div class="struct-section-label struct-warn">Warnings (${data.validation_warnings.length})</div>`);
+      for (const w of data.validation_warnings) {
+        parts.push(`<div class="struct-result-card"><div class="struct-snippets">${escapeHtml(w)}</div></div>`);
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
 function addToolOutput(toolUseId, content) {
   const item = document.getElementById(`tool-${toolUseId}`);
   if (!item) return;
 
-  const outputHtml = renderToolOutput(content);
+  // Try structured rendering first — look up tool name from the DOM element
+  const nameEl = item.querySelector('.tool-item-name');
+  const toolName = nameEl ? nameEl.textContent : '';
+  const structuredHtml = tryRenderStructured(toolName, content);
+
+  const outputHtml = structuredHtml || renderToolOutput(content);
   if (!outputHtml) return;
 
   // Ensure chevron exists for expandability

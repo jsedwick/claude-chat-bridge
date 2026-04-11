@@ -1789,7 +1789,111 @@ pre.streaming {
   margin-bottom: 4px;
 }
 
-/* Tool results are saved server-side but not displayed */
+/* Structured output cards for MCP tools with outputSchema */
+.struct-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.struct-query {
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.struct-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.struct-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin: 8px 0 4px 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.struct-section-label.struct-warn {
+  color: #e8a838;
+}
+
+.struct-result-card {
+  padding: 4px 6px;
+  margin: 2px 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+}
+
+.struct-result-card:hover {
+  border-color: var(--border);
+}
+
+.struct-result-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.struct-file-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.struct-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.struct-badge-muted {
+  background: var(--border);
+  color: var(--text-muted);
+}
+
+.struct-badge-high {
+  background: #dc3545;
+}
+
+.struct-badge-med {
+  background: #e8a838;
+  color: #1a1a2e;
+}
+
+.struct-snippets {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.4;
+  overflow: hidden;
+  max-height: 60px;
+}
+
+.struct-retry-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
 
 /* Thinking */
 .thinking-indicator {
