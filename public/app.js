@@ -829,18 +829,22 @@ function ttsFaceSetActivity(activity) {
 }
 
 function ttsFaceSetStaticMouth(state) {
-  const mouth = document.getElementById('tts-face-mouth');
-  if (!mouth) return;
+  const darkMouth = document.getElementById('tts-face-mouth');
+  const lightMouth = document.getElementById('tts-face-mouth-light');
   if (state === 'thinking') {
-    mouth.setAttribute('d', 'M82 127 Q98 131, 118 126'); // contemplative hmm
+    if (darkMouth) darkMouth.setAttribute('d', 'M78 150 Q100 152, 122 150'); // grim tight line
+    if (lightMouth) lightMouth.setAttribute('d', 'M76 148 Q100 152, 124 148'); // neutral, reduced smile
   } else if (state === 'tool-working') {
-    mouth.setAttribute('d', 'M85 124 Q100 131, 115 124'); // focused slight open
+    if (darkMouth) darkMouth.setAttribute('d', 'M74 148 Q100 156, 126 148'); // focused, slightly open
+    if (lightMouth) lightMouth.setAttribute('d', 'M74 148 Q100 158, 126 148'); // focused but still friendly
   }
 }
 
 function ttsFaceResetMouth() {
-  const mouth = document.getElementById('tts-face-mouth');
-  if (mouth) mouth.setAttribute('d', 'M75 125 Q100 135, 125 125');
+  const darkMouth = document.getElementById('tts-face-mouth');
+  const lightMouth = document.getElementById('tts-face-mouth-light');
+  if (darkMouth) darkMouth.setAttribute('d', 'M72 148 Q100 151, 128 148');
+  if (lightMouth) lightMouth.setAttribute('d', 'M72 148 Q100 163, 128 148');
 }
 
 function ttsFaceScheduleFadeOut() {
@@ -954,8 +958,10 @@ function ttsFaceConnectAudio(audioEl) {
 
 function ttsFaceStartAnalysis() {
   if (ttsFaceAnimFrame) return; // already running
-  const mouth = document.getElementById('tts-face-mouth');
-  if (!mouth || !ttsFaceAnalyser) return;
+  const darkMouth = document.getElementById('tts-face-mouth');
+  const lightMouth = document.getElementById('tts-face-mouth-light');
+  if (!ttsFaceAnalyser) return;
+  if (!darkMouth && !lightMouth) return;
 
   const dataArray = new Uint8Array(ttsFaceAnalyser.frequencyBinCount);
 
@@ -969,17 +975,11 @@ function ttsFaceStartAnalysis() {
     for (let i = 0; i < voiceBins; i++) sum += dataArray[i];
     const avg = sum / voiceBins / 255; // 0..1
 
-    // Map amplitude to mouth openness
+    // Map amplitude to mouth openness (MCP: fixed-width slit, opens vertically only)
     const openAmount = Math.pow(avg, 0.6) * 20; // 0..~20px vertical displacement
-    const smileWidth = 2 + avg * 8; // subtle smile variation
 
-    // Mouth path: quadratic bezier from left corner to right corner
-    // Resting: slight smile. Speaking: opens proportionally.
-    const y1 = 125; // mouth corners Y
-    const yCtrl = 135 + openAmount; // control point drops = mouth opens
-    const x1 = 75 + smileWidth;
-    const x2 = 125 - smileWidth;
-    mouth.setAttribute('d', `M${x1} ${y1} Q100 ${yCtrl}, ${x2} ${y1}`);
+    if (darkMouth) darkMouth.setAttribute('d', `M72 148 Q100 ${153 + openAmount}, 128 148`);
+    if (lightMouth) lightMouth.setAttribute('d', `M72 148 Q100 ${163 + openAmount}, 128 148`);
   }
   animate();
 }
@@ -1015,18 +1015,17 @@ function ttsFaceBrowserStart() {
   if (ttsFaceBrowserInterval) return; // already running
   ttsFaceShow();
   // Animate mouth with pseudo-random movement since we can't analyze audio
-  const mouth = document.getElementById('tts-face-mouth');
-  if (!mouth) return;
+  const darkMouth = document.getElementById('tts-face-mouth');
+  const lightMouth = document.getElementById('tts-face-mouth-light');
+  if (!darkMouth && !lightMouth) return;
   let phase = 0;
   ttsFaceBrowserInterval = setInterval(() => {
     phase += 0.3;
     // Combine two sine waves for more natural-looking movement
     const open = Math.abs(Math.sin(phase) * 0.7 + Math.sin(phase * 2.3) * 0.3);
     const openAmount = open * 16;
-    const smileWidth = 2 + open * 6;
-    const x1 = 75 + smileWidth;
-    const x2 = 125 - smileWidth;
-    mouth.setAttribute('d', `M${x1} 125 Q100 ${135 + openAmount}, ${x2} 125`);
+    if (darkMouth) darkMouth.setAttribute('d', `M72 148 Q100 ${153 + openAmount}, 128 148`);
+    if (lightMouth) lightMouth.setAttribute('d', `M72 148 Q100 ${163 + openAmount}, 128 148`);
   }, 50); // 20fps is enough for the sine-wave approach
 }
 

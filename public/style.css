@@ -4421,7 +4421,7 @@ pre.streaming {
 }
 
 /* ============================================================
-   TTS Speaking Face Overlay
+   TTS Speaking Face Overlay — MCP / Tron
    ============================================================ */
 
 .tts-face-overlay {
@@ -4445,64 +4445,97 @@ pre.streaming {
 .tts-face-svg {
   width: 240px;
   height: 240px;
-  filter: drop-shadow(0 0 30px color-mix(in srgb, var(--accent) 15%, transparent));
 }
 
-/* Face colors adapt to theme */
+/* MCP head: dark red-black fill, orange-red angular stroke */
 .tts-face-head {
-  fill: var(--bg-secondary);
-  stroke: var(--border);
-  stroke-width: 1.5;
+  fill: #0d0000;
+  stroke: #cc3300;
+  stroke-width: 2;
 }
 
+/* Circuit grid pattern overlaid on head */
+.tts-face-grid {
+  fill: url(#mcp-grid);
+  opacity: 0.6;
+}
+
+/* Corner circuit trace details */
+.tts-face-circuit {
+  fill: none;
+  stroke: #550000;
+  stroke-width: 1;
+}
+
+/* Scanlines overlaid on face */
+.tts-face-scanlines {
+  fill: url(#mcp-scanlines);
+  pointer-events: none;
+}
+
+/* Eyes: neon orange-red parallelogram slits */
 .tts-face-eye {
-  fill: var(--text-primary);
+  fill: #ff4400;
+  filter: url(#mcp-neon);
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
+/* Mouth: glowing angular slit */
 .tts-face-mouth {
   fill: none;
-  stroke: var(--text-primary);
-  stroke-width: 2;
-  stroke-linecap: round;
+  stroke: #ff4400;
+  stroke-width: 3;
+  stroke-linecap: square;
+  filter: url(#mcp-neon);
 }
 
+/* Brows: sharp angular lines */
 .tts-face-brow {
   fill: none;
-  stroke: var(--text-primary);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-}
-
-/* Blink animation — on individual eyes so eye-group can handle position */
-@keyframes face-blink {
-  0%, 90%, 100% { transform: scaleY(1); }
-  95% { transform: scaleY(0.1); }
-}
-
-.tts-face-eye {
-  animation: face-blink 3.5s ease-in-out infinite;
-  transform-origin: center;
+  stroke: #cc3300;
+  stroke-width: 2;
+  stroke-linecap: butt;
+  transition: transform 0.5s ease;
 }
 
 .tts-face-eye-group {
   transition: transform 0.5s ease;
 }
 
-.tts-face-brow {
-  transition: transform 0.5s ease;
+/* Robotic blink — quick double-flash */
+@keyframes face-blink {
+  0%, 88%, 94%, 100% { transform: scaleY(1); }
+  90%, 92% { transform: scaleY(0.05); }
 }
 
-/* Subtle idle bob */
+.tts-face-eye {
+  animation: face-blink 4s ease-in-out infinite;
+}
+
+/* Subtle idle bob + CRT flicker */
 @keyframes face-bob {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
 }
 
-.tts-face-overlay.visible .tts-face-svg {
+@keyframes mcp-flicker {
+  0%, 91%, 100% { opacity: 1; }
+  92% { opacity: 0.80; }
+  94% { opacity: 0.93; }
+  95% { opacity: 0.75; }
+  97% { opacity: 0.97; }
+}
+
+.tts-face-overlay.visible .tts-face-svg-dark {
+  animation: face-bob 4s ease-in-out infinite, mcp-flicker 7s linear infinite;
+}
+
+.tts-face-overlay.visible .tts-face-svg-light {
   animation: face-bob 4s ease-in-out infinite;
 }
 
-/* ── Thinking state: eyes drift up, contemplative ── */
+/* ── Thinking state: eyes drift up-left, contemplative ── */
 
 @keyframes face-think-look {
   0%, 100% { transform: translate(-2px, -4px); }
@@ -4544,33 +4577,92 @@ pre.streaming {
 
 .tts-face-glow {
   fill: none;
-  stroke: var(--accent);
-  stroke-width: 1;
+  stroke: #ff6600;
+  stroke-width: 1.5;
   opacity: 0;
   transition: opacity 0.3s ease;
 }
 
 .tts-face-overlay.speaking .tts-face-glow {
   opacity: 0.4;
-  animation: face-glow-pulse 2s ease-in-out infinite;
+  animation: face-glow-pulse 1.8s ease-in-out infinite;
 }
 
 .tts-face-overlay.thinking .tts-face-glow {
-  opacity: 0.2;
+  opacity: 0.15;
   animation: face-glow-slow 4s ease-in-out infinite;
 }
 
 .tts-face-overlay.tool-working .tts-face-glow {
   opacity: 0.3;
-  animation: face-glow-pulse 1.5s ease-in-out infinite;
+  animation: face-glow-pulse 1.2s ease-in-out infinite;
 }
 
 @keyframes face-glow-slow {
-  0%, 100% { opacity: 0.1; stroke-width: 1; }
-  50% { opacity: 0.25; stroke-width: 1.5; }
+  0%, 100% { opacity: 0.08; stroke-width: 1; }
+  50% { opacity: 0.2; stroke-width: 2; }
 }
 
 @keyframes face-glow-pulse {
-  0%, 100% { opacity: 0.2; stroke-width: 1; }
-  50% { opacity: 0.5; stroke-width: 2; }
+  0%, 100% { opacity: 0.15; stroke-width: 1; }
+  50% { opacity: 0.55; stroke-width: 3; }
+}
+
+/* ── Theme-aware SVG show/hide ── */
+
+.tts-face-svg-light { display: none; }
+[data-theme="light"] .tts-face-svg-dark { display: none; }
+[data-theme="light"] .tts-face-svg-light { display: block; }
+
+/* ── Light face: friendly element classes ── */
+
+.tts-face-eye-light {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: face-blink 4s ease-in-out infinite;
+}
+
+.tts-face-eye-white {
+  fill: #ffffff;
+  stroke: #cbd5e1;
+  stroke-width: 1;
+}
+
+.tts-face-pupil {
+  fill: #3b82f6;
+  filter: url(#friendly-glow);
+}
+
+.tts-face-highlight {
+  fill: #ffffff;
+}
+
+.tts-face-cheek {
+  fill: #fda4af;
+  opacity: 0.4;
+}
+
+/* ── Light theme overrides for shared face classes ── */
+
+[data-theme="light"] .tts-face-head {
+  fill: #fef9f0;
+  stroke: #93c5fd;
+  stroke-width: 2;
+}
+
+[data-theme="light"] .tts-face-brow {
+  stroke: #475569;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+[data-theme="light"] .tts-face-glow {
+  stroke: #3b82f6;
+}
+
+[data-theme="light"] .tts-face-mouth {
+  stroke: #374151;
+  stroke-linecap: round;
+  stroke-width: 2.5;
+  filter: none;
 }

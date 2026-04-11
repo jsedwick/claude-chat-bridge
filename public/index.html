@@ -176,21 +176,96 @@
 
     <div class="messages-container">
       <div id="tts-face-overlay" class="tts-face-overlay">
-        <svg class="tts-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-          <!-- Glow ring -->
-          <circle class="tts-face-glow" cx="100" cy="100" r="90"/>
-          <!-- Head -->
-          <circle class="tts-face-head" cx="100" cy="100" r="80"/>
-          <!-- Eyebrows -->
-          <path class="tts-face-brow" d="M62 72 Q72 65, 82 72"/>
-          <path class="tts-face-brow" d="M118 72 Q128 65, 138 72"/>
-          <!-- Eyes (grouped for blink) -->
-          <g class="tts-face-eye-group">
-            <ellipse class="tts-face-eye" cx="75" cy="85" rx="6" ry="7"/>
-            <ellipse class="tts-face-eye" cx="125" cy="85" rx="6" ry="7"/>
+        <svg class="tts-face-svg tts-face-svg-dark" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <!-- Neon glow filter -->
+            <filter id="mcp-neon" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+            <!-- Circuit grid pattern -->
+            <pattern id="mcp-grid" x="0" y="0" width="15" height="15" patternUnits="userSpaceOnUse">
+              <path d="M15 0 L0 0 0 15" fill="none" stroke="#440000" stroke-width="0.5"/>
+            </pattern>
+            <!-- Scanline pattern -->
+            <pattern id="mcp-scanlines" x="0" y="0" width="2" height="4" patternUnits="userSpaceOnUse">
+              <rect x="0" y="2" width="2" height="2" fill="rgba(0,0,0,0.35)"/>
+            </pattern>
+            <!-- Clip to head polygon -->
+            <clipPath id="mcp-face-clip">
+              <polygon points="70,20 130,20 160,55 160,150 130,180 70,180 40,150 40,55"/>
+            </clipPath>
+          </defs>
+          <!-- Outer energy ring (animated glow) -->
+          <polygon class="tts-face-glow" points="100,4 168,28 192,100 168,172 100,196 32,172 8,100 32,28"/>
+          <!-- Head: angular octagonal shape -->
+          <polygon class="tts-face-head" points="70,20 130,20 160,55 160,150 130,180 70,180 40,150 40,55"/>
+          <!-- Circuit grid overlaid on head -->
+          <rect class="tts-face-grid" x="40" y="20" width="120" height="160" clip-path="url(#mcp-face-clip)"/>
+          <!-- Corner circuit trace details -->
+          <g class="tts-face-circuit">
+            <path d="M70,20 L54,20 M40,55 L40,37"/>
+            <path d="M130,20 L146,20 M160,55 L160,37"/>
+            <path d="M70,180 L54,180 M40,150 L40,168"/>
+            <path d="M130,180 L146,180 M160,150 L160,168"/>
           </g>
-          <!-- Mouth (animated via JS) -->
-          <path id="tts-face-mouth" class="tts-face-mouth" d="M75 125 Q100 135, 125 125"/>
+          <!-- Eyebrows: sharp angular lines angled toward nose (menacing) -->
+          <path class="tts-face-brow" d="M52,72 L87,80"/>
+          <path class="tts-face-brow" d="M113,80 L148,72"/>
+          <!-- Eyes: angular parallelogram slits (grouped for movement) -->
+          <g class="tts-face-eye-group">
+            <polygon class="tts-face-eye" points="53,86 87,92 87,98 53,98"/>
+            <polygon class="tts-face-eye" points="113,92 147,86 147,98 113,98"/>
+          </g>
+          <!-- Scanlines overlaid on face -->
+          <rect class="tts-face-scanlines" x="40" y="20" width="120" height="160" clip-path="url(#mcp-face-clip)"/>
+          <!-- Mouth: angular slit (animated via JS) -->
+          <path id="tts-face-mouth" class="tts-face-mouth" d="M72 148 Q100 151, 128 148"/>
+        </svg>
+
+        <!-- Light theme face: friendly, rounded -->
+        <svg class="tts-face-svg tts-face-svg-light" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <!-- Soft glow filter for pupils -->
+            <filter id="friendly-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          <!-- Outer glow ring (circle) -->
+          <circle class="tts-face-glow" cx="100" cy="100" r="94" fill="none"/>
+          <!-- Head: friendly oval -->
+          <ellipse class="tts-face-head" cx="100" cy="105" rx="60" ry="72"/>
+          <!-- Eyebrows: friendly arched (up at outside) -->
+          <path class="tts-face-brow" d="M63,70 Q76,60 90,68"/>
+          <path class="tts-face-brow" d="M110,68 Q124,60 137,70"/>
+          <!-- Eyes: round (grouped for movement) -->
+          <g class="tts-face-eye-group">
+            <!-- Left eye -->
+            <g class="tts-face-eye-light">
+              <circle class="tts-face-eye-white" cx="76" cy="90" r="14"/>
+              <circle class="tts-face-pupil" cx="78" cy="91" r="8"/>
+              <circle class="tts-face-highlight" cx="81" cy="86" r="3"/>
+            </g>
+            <!-- Right eye -->
+            <g class="tts-face-eye-light">
+              <circle class="tts-face-eye-white" cx="124" cy="90" r="14"/>
+              <circle class="tts-face-pupil" cx="126" cy="91" r="8"/>
+              <circle class="tts-face-highlight" cx="129" cy="86" r="3"/>
+            </g>
+          </g>
+          <!-- Cheeks: subtle blush -->
+          <circle class="tts-face-cheek" cx="58" cy="116" r="13"/>
+          <circle class="tts-face-cheek" cx="142" cy="116" r="13"/>
+          <!-- Mouth: smile (animated via JS) -->
+          <path id="tts-face-mouth-light" class="tts-face-mouth" d="M72 148 Q100 163, 128 148"/>
         </svg>
       </div>
       <div id="messages" class="messages">
