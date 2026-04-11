@@ -2400,8 +2400,11 @@ async function createNewSession() {
 }
 
 async function switchSession(id) {
-  // Stop any active TTS playback
+  // Stop any active TTS playback and force-hide face regardless of response state
   stopSpeaking();
+  ttsFaceActivity = 'idle';
+  ttsFaceResponseActive = false;
+  ttsFaceHideImmediate();
   // Save current input draft before switching
   if (currentSessionId) {
     sessionInputDrafts.set(currentSessionId, messageInput.value);
