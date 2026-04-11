@@ -1739,6 +1739,7 @@ loadWelcomeSessions();
 
     btn.addEventListener('pointerup', (e) => {
       clearTimeout(longPressTimer);
+      if (e.button !== 0) return; // right-click handled by contextmenu — don't toggle menu
       if (!didLongPress && !voiceIsListening) {
         toggleActionMenu();
       }
