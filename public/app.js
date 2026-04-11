@@ -992,12 +992,27 @@ function ttsFaceStopAnalysis() {
   // Mouth shape is managed by callers (ttsFaceResetMouth / ttsFaceSetStaticMouth)
 }
 
+function ttsFacePauseMouth() {
+  // Pause speaking animation but keep face visible with current activity expression
+  const overlay = document.getElementById('tts-face-overlay');
+  if (overlay) overlay.classList.remove('speaking');
+  ttsFaceStopAnalysis();
+  clearInterval(ttsFaceBrowserInterval);
+  ttsFaceBrowserInterval = null;
+  if (ttsFaceActivity !== 'idle') {
+    ttsFaceSetStaticMouth(ttsFaceActivity);
+  } else {
+    ttsFaceResetMouth();
+  }
+}
+
 // For browser TTS (speechSynthesis) — no Audio element to analyze,
 // so we fake it using utterance boundary events + timer-based open/close
 let ttsFaceBrowserInterval = null;
 
 function ttsFaceBrowserStart() {
   if (!ttsFaceEnabled || !ttsAutoSpeak) return;
+  if (ttsFaceBrowserInterval) return; // already running
   ttsFaceShow();
   // Animate mouth with pseudo-random movement since we can't analyze audio
   const mouth = document.getElementById('tts-face-mouth');
@@ -1317,8 +1332,17 @@ function toggleAutoSpeak() {
   ttsAutoSpeak = !ttsAutoSpeak;
   localStorage.setItem('chat-bridge-tts-auto', ttsAutoSpeak);
   updateTTSToggleBtn();
-  // Toggling off mid-speech: stop audio and hide face immediately
-  if (!ttsAutoSpeak) stopSpeaking();
+  if (!ttsAutoSpeak) {
+    // Toggling off mid-speech: stop audio and hide face immediately
+    stopSpeaking();
+    ttsFaceActivity = 'idle';
+    ttsFaceResponseActive = false;
+    ttsFaceHideImmediate();
+  } else if (streamingSessions.has(currentSessionId)) {
+    // Toggling on mid-response: restore face and allow new text to be spoken
+    ttsFaceResponseStart();
+    ttsStreamStarted = false; // next text delta will call ttsStreamStart
+  }
 }
 
 function updateTTSToggleBtn() {
@@ -1490,6 +1514,9 @@ async function ttsStreamConsumeNext() {
     if (ttsStreamDone) {
       console.log('[TTS:Stream] playback complete');
       onSpeakEnd();
+    } else {
+      // Queue drained but more text may come — pause mouth, keep face visible
+      ttsFacePauseMouth();
     }
     return;
   }
@@ -1500,6 +1527,8 @@ async function ttsStreamConsumeNext() {
   if (ttsProvider === 'google-cloud') {
     await ttsStreamSpeakGoogle(sentence);
   } else {
+    // Restart mouth animation for this sentence (may have been paused between batches)
+    if (!ttsFaceBrowserInterval) ttsFaceBrowserStart();
     await ttsStreamSpeakBrowser(sentence);
   }
 
@@ -2360,6 +2389,7 @@ async function createNewSession() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
+    document.getElementById('session-details-panel').style.display = 'none';
     clearMessages();
     loadSessions();
     // Reset sidebar dir picker for next time
@@ -4293,6 +4323,8 @@ function showSettingsSection(section) {
     btn.classList.toggle('active', btn.dataset.section === section);
   });
   renderSettingsContent();
+  // On mobile, close sidebar so the settings content is visible
+  if (sidebar.classList.contains('open')) toggleSidebar();
 }
 
 async function loadSettings() {
@@ -6384,6 +6416,7 @@ async function startFromTopic() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
+    document.getElementById('session-details-panel').style.display = 'none';
     clearMessages();
     loadSessions();
     switchView('sessions');
@@ -6429,6 +6462,7 @@ async function continueFromSession() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
+    document.getElementById('session-details-panel').style.display = 'none';
     clearMessages();
     loadSessions();
     switchView('sessions');
