@@ -116,6 +116,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           if (toolData.name?.endsWith('__update_document')) {
             updateSession(sessionId, { usedVaultDoc: true });
           }
+          // Detect Agent tool call — mark session as having subagent activity
+          if (toolData.name === 'Agent') {
+            updateSession(sessionId, { usedAgent: true });
+          }
         } catch {}
         // Save accumulated text segment before tool call (preserves interleaving)
         if (assistantText) {

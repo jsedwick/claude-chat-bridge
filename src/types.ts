@@ -22,6 +22,7 @@ export interface ChatSession {
   sessionFilePath?: string;
   usedCodeFile?: boolean;
   usedVaultDoc?: boolean;
+  usedAgent?: boolean;
   forkedFrom?: {
     sessionId: string;
     sessionName: string;

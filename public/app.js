@@ -365,6 +365,8 @@ document.addEventListener('click', (e) => {
 
 // Track which sessions are actively working (polled from backend)
 let activeSessionIds = new Set();
+// Track active Agent (subagent) tool calls for in-chat indicators
+let pendingAgentToolIds = new Set();
 
 // Apply saved theme and tool visibility before first paint
 (function() {
@@ -1395,7 +1397,7 @@ function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, f
          onclick="switchSession('${s.id}')"${indentStyle}>
       ${isFork ? '<span class="session-fork-branch"></span>' : ''}
       ${actions}
-      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : s.usedVaultDoc ? `<span class="session-doc-badge" title="Vault document edited"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#9998;</span>` : ''}${forkBadge}${escapeHtml(s.name)}</div>
+      <div class="session-item-name" ondblclick="event.stopPropagation(); renameSession('${s.id}', this)">${permissionBlockedSessions.has(s.id) ? '<span class="session-blocked-badge" title="Waiting for permission">!</span>' : ''}${s.closedAt ? `<span class="session-closed-badge" title="Session closed"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#10003;</span>` : s.usedCodeFile ? `<span class="session-code-badge" title="Code changes made"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&lt;/&gt;</span>` : s.usedAgent ? `<span class="session-agent-badge" title="Used subagents"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#9889;</span>` : s.usedVaultDoc ? `<span class="session-doc-badge" title="Vault document edited"${permissionBlockedSessions.has(s.id) ? ' style="display:none"' : ''}>&#9998;</span>` : ''}${forkBadge}${escapeHtml(s.name)}</div>
       ${s.lastMessage ? `<div class="session-item-preview">${escapeHtml(s.lastMessage)}</div>` : ''}
       <div class="session-item-meta">
         <span>${s.messageCount} msgs</span>
@@ -2363,11 +2365,36 @@ function updateToolGroupCount(group) {
   if (countEl) countEl.textContent = `(${count})`;
 }
 
+function updateAgentIndicator() {
+  // Remove all existing agent badges
+  document.querySelectorAll('.tool-agent-badge').forEach(b => b.remove());
+  if (pendingAgentToolIds.size === 0) return;
+  // Group pending agents by their parent tool-group
+  const groupCounts = new Map();
+  for (const id of pendingAgentToolIds) {
+    const item = document.getElementById(`tool-${id}`);
+    if (!item) continue;
+    const group = item.closest('.tool-group');
+    if (!group) continue;
+    groupCounts.set(group, (groupCounts.get(group) || 0) + 1);
+  }
+  // Add badge to each group with active agents
+  for (const [group, count] of groupCounts) {
+    const header = group.querySelector('.tool-group-header');
+    if (!header) continue;
+    const badge = document.createElement('span');
+    badge.className = 'tool-agent-badge';
+    badge.textContent = `\u26A1 ${count} agent${count > 1 ? 's' : ''}`;
+    header.appendChild(badge);
+  }
+}
+
 function addToolIndicator(name, id, input) {
   const group = getOrCreateToolGroup();
   const list = group.querySelector('.tool-group-list');
   const item = document.createElement('div');
-  item.className = 'tool-item';
+  const isAgent = name === 'Agent';
+  item.className = `tool-item${isAgent ? ' tool-agent' : ''}`;
   item.id = `tool-${id}`;
 
   let detailHtml = '';
@@ -2375,10 +2402,13 @@ function addToolIndicator(name, id, input) {
     detailHtml = renderToolInput(name, input);
   }
 
+  const icon = isAgent ? '&#9889;' : '&#9881;'; // ⚡ vs ⚙
+  const displayName = isAgent && input?.description ? `Agent: ${input.description}` : name;
+
   item.innerHTML = `
     <div class="tool-item-header" onclick="event.stopPropagation(); this.parentElement.classList.toggle('tool-detail-open')">
-      <span class="tool-item-icon">&#9881;</span>
-      <span class="tool-item-name">${escapeHtml(name)}</span>
+      <span class="tool-item-icon">${icon}</span>
+      <span class="tool-item-name">${escapeHtml(displayName)}</span>
       ${detailHtml ? '<span class="tool-detail-chevron">&#9654;</span>' : ''}
     </div>
     ${detailHtml ? `<div class="tool-item-detail">${detailHtml}</div>` : ''}
@@ -2391,6 +2421,19 @@ function addToolIndicator(name, id, input) {
 function updateToolDetails(id, name, input) {
   const item = document.getElementById(`tool-${id}`);
   if (!item || !input) return;
+
+  // For Agent tools, update the displayed name to include description
+  if (name === 'Agent' && input.description) {
+    const nameEl = item.querySelector('.tool-item-name');
+    if (nameEl) nameEl.textContent = `Agent: ${input.description}`;
+    // Add tool-agent class if not already present (initial event had no input)
+    if (!item.classList.contains('tool-agent')) {
+      item.classList.add('tool-agent');
+      const iconEl = item.querySelector('.tool-item-icon');
+      if (iconEl) iconEl.innerHTML = '&#9889;'; // ⚡
+    }
+  }
+
   const detailHtml = renderToolInput(name, input);
   if (!detailHtml) return;
 
@@ -2458,6 +2501,15 @@ function renderToolInput(toolName, input) {
   // search_vault — show query
   if (name.includes('search_vault') && input.query) {
     return `<div class="tool-meta">Query: ${escapeHtml(input.query)}</div>`;
+  }
+
+  // Agent — show subagent type, model, background status
+  if (name === 'agent') {
+    const parts = [];
+    if (input.subagent_type) parts.push(`<div class="tool-meta">Type: ${escapeHtml(input.subagent_type)}</div>`);
+    if (input.model) parts.push(`<div class="tool-meta">Model: ${escapeHtml(input.model)}</div>`);
+    if (input.run_in_background) parts.push(`<div class="tool-meta">Running in background</div>`);
+    return parts.join('');
   }
 
   // Write — show file path + content
@@ -3072,6 +3124,11 @@ async function sendMessage(skipRender = false) {
           try {
             const tool = JSON.parse(data);
             addToolIndicator(tool.name, tool.id, tool.input);
+            // Track active Agent (subagent) calls
+            if (tool.name === 'Agent') {
+              pendingAgentToolIds.add(tool.id);
+              updateAgentIndicator();
+            }
           } catch {
             addToolIndicator(data, 'unknown');
           }
@@ -3098,6 +3155,11 @@ async function sendMessage(skipRender = false) {
           try {
             const result = JSON.parse(data);
             addToolOutput(result.tool_use_id, result.content);
+            // Clear completed Agent from active tracking
+            if (pendingAgentToolIds.has(result.tool_use_id)) {
+              pendingAgentToolIds.delete(result.tool_use_id);
+              updateAgentIndicator();
+            }
           } catch {}
           break;
 
@@ -3145,6 +3207,7 @@ async function sendMessage(skipRender = false) {
           } catch {}
           removeTypingIndicator();
           deactivateToolGroup();
+          pendingAgentToolIds.clear();
           addUsageInfo(data);
           streamCompleted = true;
           // Auto-speak the final assistant message if enabled
@@ -3244,6 +3307,7 @@ async function sendMessage(skipRender = false) {
       messageInput.placeholder = 'Type a message...';
       removeTypingIndicator();
       deactivateToolGroup();
+      pendingAgentToolIds.clear();
       if (thinkingEl) {
         const label = thinkingEl.childNodes[0];
         if (label && label.nodeType === Node.TEXT_NODE) {
@@ -3438,9 +3502,11 @@ function updateSessionBlockedBadge(sessionId, blocked) {
       // Hide existing badges, insert blocked badge
       const closedBadge = nameEl.querySelector('.session-closed-badge');
       const codeBadge = nameEl.querySelector('.session-code-badge');
+      const agentBadge = nameEl.querySelector('.session-agent-badge');
       const docBadge = nameEl.querySelector('.session-doc-badge');
       if (closedBadge) closedBadge.style.display = 'none';
       if (codeBadge) codeBadge.style.display = 'none';
+      if (agentBadge) agentBadge.style.display = 'none';
       if (docBadge) docBadge.style.display = 'none';
       const badge = document.createElement('span');
       badge.className = 'session-blocked-badge';
@@ -3452,9 +3518,11 @@ function updateSessionBlockedBadge(sessionId, blocked) {
       // Restore hidden badges
       const closedBadge = nameEl.querySelector('.session-closed-badge');
       const codeBadge = nameEl.querySelector('.session-code-badge');
+      const agentBadge = nameEl.querySelector('.session-agent-badge');
       const docBadge = nameEl.querySelector('.session-doc-badge');
       if (closedBadge) closedBadge.style.display = '';
       if (codeBadge) codeBadge.style.display = '';
+      if (agentBadge) agentBadge.style.display = '';
       if (docBadge) docBadge.style.display = '';
     }
   });
