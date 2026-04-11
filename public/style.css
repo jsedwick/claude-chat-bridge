@@ -4368,8 +4368,7 @@ pre.streaming {
 }
 
 /* ── TTS Controls ───────────────────────────────────────────────── */
-.btn-tts-toggle,
-.btn-tts-stop {
+.btn-tts-toggle {
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -4384,8 +4383,7 @@ pre.streaming {
   transition: background 0.15s, color 0.15s;
 }
 
-.btn-tts-toggle:hover,
-.btn-tts-stop:hover {
+.btn-tts-toggle:hover {
   background: rgba(255, 255, 255, 0.12);
   color: var(--text);
 }
@@ -4397,15 +4395,6 @@ pre.streaming {
 
 .btn-tts-toggle.active:hover {
   background: var(--accent-hover);
-}
-
-.btn-tts-stop {
-  background: rgba(229, 85, 85, 0.15);
-  color: #e05555;
-}
-
-.btn-tts-stop:hover {
-  background: rgba(229, 85, 85, 0.25);
 }
 
 /* Speaking highlight on assistant message */

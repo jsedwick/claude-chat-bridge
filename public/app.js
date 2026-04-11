@@ -786,7 +786,7 @@ const TTS_FACE_SMOOTHING = 0.35; // analyser smoothing
 // It fades out only after the response completes (and TTS finishes if active).
 
 function ttsFaceResponseStart() {
-  if (!ttsFaceEnabled) return;
+  if (!ttsFaceEnabled || !ttsAutoSpeak) return;
   ttsFaceResponseActive = true;
   ttsFaceActivity = 'idle';
   const overlay = document.getElementById('tts-face-overlay');
@@ -812,7 +812,7 @@ function ttsFaceResponseEnd() {
 // ── Face activity states (thinking, tool-working) ──
 
 function ttsFaceSetActivity(activity) {
-  if (!ttsFaceEnabled) return;
+  if (!ttsFaceEnabled || !ttsAutoSpeak) return;
   if (activity === ttsFaceActivity) return;
   const overlay = document.getElementById('tts-face-overlay');
   if (!overlay) return;
@@ -1134,8 +1134,6 @@ async function speakTextGoogleCloud(clean, messageEl) {
 
   ttsSpeakingEl = messageEl;
   if (messageEl) messageEl.classList.add('tts-speaking');
-  const stopBtn = document.getElementById('tts-stop-btn');
-  if (stopBtn) stopBtn.style.display = '';
 
   const voiceName = localStorage.getItem('chat-bridge-tts-google-voice') || '';
   const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
@@ -1240,8 +1238,6 @@ function speakTextBrowser(clean, messageEl) {
 
   ttsSpeakingEl = messageEl;
   if (messageEl) messageEl.classList.add('tts-speaking');
-  const stopBtn = document.getElementById('tts-stop-btn');
-  if (stopBtn) stopBtn.style.display = '';
   ttsFaceBrowserStart();
 
   const voice = getTTSVoice();
@@ -1320,8 +1316,6 @@ function onSpeakEnd() {
     ttsSpeakingEl = null;
   }
   ttsCurrentUtterance = null;
-  const stopBtn = document.getElementById('tts-stop-btn');
-  if (stopBtn) stopBtn.style.display = 'none';
   updateTTSToggleBtn();
   ttsFaceBrowserStop();
   ttsFaceHide();
@@ -1421,8 +1415,6 @@ function ttsStreamStart(messageEl) {
   // Set up speaking indicators
   ttsSpeakingEl = messageEl;
   if (messageEl) messageEl.classList.add('tts-speaking');
-  const stopBtn = document.getElementById('tts-stop-btn');
-  if (stopBtn) stopBtn.style.display = '';
   // Start face animation for browser TTS (Google Cloud hooks in per-chunk via ttsFaceConnectAudio)
   if (ttsProvider !== 'google-cloud') ttsFaceBrowserStart();
   // Start Chrome keepalive for browser TTS
