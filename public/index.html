@@ -175,6 +175,24 @@
     </div>
 
     <div id="messages" class="messages">
+      <div id="tts-face-overlay" class="tts-face-overlay">
+        <svg class="tts-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <!-- Glow ring -->
+          <circle class="tts-face-glow" cx="100" cy="100" r="90"/>
+          <!-- Head -->
+          <circle class="tts-face-head" cx="100" cy="100" r="80"/>
+          <!-- Eyebrows -->
+          <path class="tts-face-brow" d="M62 72 Q72 65, 82 72"/>
+          <path class="tts-face-brow" d="M118 72 Q128 65, 138 72"/>
+          <!-- Eyes (grouped for blink) -->
+          <g class="tts-face-eye-group">
+            <ellipse class="tts-face-eye" cx="75" cy="85" rx="6" ry="7"/>
+            <ellipse class="tts-face-eye" cx="125" cy="85" rx="6" ry="7"/>
+          </g>
+          <!-- Mouth (animated via JS) -->
+          <path id="tts-face-mouth" class="tts-face-mouth" d="M75 125 Q100 135, 125 125"/>
+        </svg>
+      </div>
       <div id="welcome" class="welcome-message">
         <div class="welcome-tabs">
           <button class="welcome-tab active" data-tab="sessions" onclick="switchWelcomeTab('sessions')">Sessions</button>

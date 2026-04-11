@@ -766,6 +766,166 @@ function stopVoiceDictation() {
   messageInput.focus();
 }
 
+// ── TTS Speaking Face ──────────────────────────────────────────────────
+let ttsFaceEnabled = localStorage.getItem('chat-bridge-tts-face') !== 'false'; // on by default
+let ttsFaceAudioCtx = null;
+let ttsFaceAnalyser = null;
+let ttsFaceSource = null; // current MediaElementSource
+let ttsFaceSourceEl = null; // the audio element currently connected
+let ttsFaceAnimFrame = null;
+let ttsFaceSilenceTimer = null;
+const TTS_FACE_SILENCE_DELAY = 2000; // ms of silence before fade-out
+const TTS_FACE_SMOOTHING = 0.35; // analyser smoothing
+
+function ttsFaceShow() {
+  if (!ttsFaceEnabled || !ttsAutoSpeak) return;
+  const overlay = document.getElementById('tts-face-overlay');
+  if (!overlay) return;
+  clearTimeout(ttsFaceSilenceTimer);
+  ttsFaceSilenceTimer = null;
+  // Size overlay to the messages viewport (not scroll height)
+  const messagesEl = document.getElementById('messages');
+  if (messagesEl) overlay.style.height = messagesEl.clientHeight + 'px';
+  overlay.classList.add('visible');
+  overlay.classList.add('speaking');
+}
+
+function ttsFaceHide() {
+  const overlay = document.getElementById('tts-face-overlay');
+  if (!overlay || !overlay.classList.contains('visible')) return;
+  overlay.classList.remove('speaking');
+  // Fade out after silence delay
+  clearTimeout(ttsFaceSilenceTimer);
+  ttsFaceSilenceTimer = setTimeout(() => {
+    overlay.classList.remove('visible');
+    overlay.style.height = '';
+    ttsFaceStopAnalysis();
+  }, TTS_FACE_SILENCE_DELAY);
+}
+
+function ttsFaceHideImmediate() {
+  clearTimeout(ttsFaceSilenceTimer);
+  ttsFaceSilenceTimer = null;
+  const overlay = document.getElementById('tts-face-overlay');
+  if (overlay) {
+    overlay.classList.remove('visible', 'speaking');
+    overlay.style.height = '';
+  }
+  ttsFaceStopAnalysis();
+}
+
+function ttsFaceConnectAudio(audioEl) {
+  if (!ttsFaceEnabled || !ttsAutoSpeak || !audioEl) return;
+  // On iOS, MediaElementSource reroutes audio through AudioContext which may
+  // not have a user-gesture unlock — fall back to browser-style sine animation
+  if (isIOS) {
+    ttsFaceBrowserStart();
+    return;
+  }
+  // Lazy-init AudioContext
+  if (!ttsFaceAudioCtx) {
+    try {
+      ttsFaceAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      ttsFaceAnalyser = ttsFaceAudioCtx.createAnalyser();
+      ttsFaceAnalyser.fftSize = 256;
+      ttsFaceAnalyser.smoothingTimeConstant = TTS_FACE_SMOOTHING;
+      ttsFaceAnalyser.connect(ttsFaceAudioCtx.destination);
+    } catch (e) {
+      console.warn('[Face] AudioContext init failed, using fallback animation:', e);
+      ttsFaceBrowserStart();
+      return;
+    }
+  }
+  if (ttsFaceAudioCtx.state === 'suspended') {
+    ttsFaceAudioCtx.resume();
+  }
+  // Only create a new source if this is a different element
+  if (ttsFaceSourceEl !== audioEl) {
+    // Don't disconnect old source — MediaElementSource is permanent per element
+    try {
+      ttsFaceSource = ttsFaceAudioCtx.createMediaElementSource(audioEl);
+      ttsFaceSource.connect(ttsFaceAnalyser);
+      ttsFaceSourceEl = audioEl;
+    } catch (e) {
+      // Already connected (InvalidStateError) — reuse existing source
+      console.log('[Face] audio element already connected, reusing');
+    }
+  }
+  ttsFaceShow();
+  ttsFaceStartAnalysis();
+}
+
+function ttsFaceStartAnalysis() {
+  if (ttsFaceAnimFrame) return; // already running
+  const mouth = document.getElementById('tts-face-mouth');
+  if (!mouth || !ttsFaceAnalyser) return;
+
+  const dataArray = new Uint8Array(ttsFaceAnalyser.frequencyBinCount);
+
+  function animate() {
+    ttsFaceAnimFrame = requestAnimationFrame(animate);
+    ttsFaceAnalyser.getByteFrequencyData(dataArray);
+
+    // Average amplitude across lower frequencies (voice range ~80-400Hz)
+    const voiceBins = Math.min(32, dataArray.length);
+    let sum = 0;
+    for (let i = 0; i < voiceBins; i++) sum += dataArray[i];
+    const avg = sum / voiceBins / 255; // 0..1
+
+    // Map amplitude to mouth openness
+    const openAmount = Math.pow(avg, 0.6) * 20; // 0..~20px vertical displacement
+    const smileWidth = 2 + avg * 8; // subtle smile variation
+
+    // Mouth path: quadratic bezier from left corner to right corner
+    // Resting: slight smile. Speaking: opens proportionally.
+    const y1 = 125; // mouth corners Y
+    const yCtrl = 135 + openAmount; // control point drops = mouth opens
+    const x1 = 75 + smileWidth;
+    const x2 = 125 - smileWidth;
+    mouth.setAttribute('d', `M${x1} ${y1} Q100 ${yCtrl}, ${x2} ${y1}`);
+  }
+  animate();
+}
+
+function ttsFaceStopAnalysis() {
+  if (ttsFaceAnimFrame) {
+    cancelAnimationFrame(ttsFaceAnimFrame);
+    ttsFaceAnimFrame = null;
+  }
+  // Reset mouth to resting smile
+  const mouth = document.getElementById('tts-face-mouth');
+  if (mouth) mouth.setAttribute('d', 'M75 125 Q100 135, 125 125');
+}
+
+// For browser TTS (speechSynthesis) — no Audio element to analyze,
+// so we fake it using utterance boundary events + timer-based open/close
+let ttsFaceBrowserInterval = null;
+
+function ttsFaceBrowserStart() {
+  if (!ttsFaceEnabled || !ttsAutoSpeak) return;
+  ttsFaceShow();
+  // Animate mouth with pseudo-random movement since we can't analyze audio
+  const mouth = document.getElementById('tts-face-mouth');
+  if (!mouth) return;
+  let phase = 0;
+  ttsFaceBrowserInterval = setInterval(() => {
+    phase += 0.3;
+    // Combine two sine waves for more natural-looking movement
+    const open = Math.abs(Math.sin(phase) * 0.7 + Math.sin(phase * 2.3) * 0.3);
+    const openAmount = open * 16;
+    const smileWidth = 2 + open * 6;
+    const x1 = 75 + smileWidth;
+    const x2 = 125 - smileWidth;
+    mouth.setAttribute('d', `M${x1} 125 Q100 ${135 + openAmount}, ${x2} 125`);
+  }, 50); // 20fps is enough for the sine-wave approach
+}
+
+function ttsFaceBrowserStop() {
+  clearInterval(ttsFaceBrowserInterval);
+  ttsFaceBrowserInterval = null;
+  ttsFaceHide();
+}
+
 // ── Text-to-Speech (TTS) ──────────────────────────────────────────────
 let ttsAutoSpeak = localStorage.getItem('chat-bridge-tts-auto') === 'true';
 let ttsCurrentUtterance = null;
@@ -774,6 +934,15 @@ let ttsKeepAlive = null; // Chrome workaround interval
 let ttsAudioEl = null; // Audio element for Google Cloud TTS playback
 let ttsGoogleVoicesCache = null; // cached Google Cloud voice list
 let ttsProvider = localStorage.getItem('chat-bridge-tts-provider') || 'browser'; // 'browser' or 'google-cloud'
+
+// Streaming TTS state — progressive sentence-by-sentence playback during response streaming
+let ttsStreamQueue = [];        // sentences waiting to be spoken
+let ttsStreamRawText = '';      // accumulated raw markdown from text deltas
+let ttsStreamSentCount = 0;     // number of sentences already queued from accumulated text
+let ttsStreamActive = false;    // is streaming TTS currently accepting new text
+let ttsStreamConsuming = false; // is the consumer currently playing audio
+let ttsStreamDone = false;      // has flush been called (no more sentences coming)
+let ttsStreamStarted = false;   // was streaming TTS activated for current response
 
 function getTTSVoice() {
   const saved = localStorage.getItem('chat-bridge-tts-voice');
@@ -919,6 +1088,7 @@ async function speakTextGoogleCloud(clean, messageEl) {
         console.warn('[TTS:Google] Audio playback error:', e);
         onSpeakEnd();
       };
+      ttsFaceConnectAudio(audio);
       audio.play();
     } catch (err) {
       if (ttsGoogleCancelled) return;
@@ -963,6 +1133,7 @@ function speakTextBrowser(clean, messageEl) {
   if (messageEl) messageEl.classList.add('tts-speaking');
   const stopBtn = document.getElementById('tts-stop-btn');
   if (stopBtn) stopBtn.style.display = '';
+  ttsFaceBrowserStart();
 
   const voice = getTTSVoice();
   const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
@@ -1013,6 +1184,9 @@ function speakTextBrowser(clean, messageEl) {
 
 function stopSpeaking() {
   ttsGoogleCancelled = true;
+  // Reset streaming TTS state
+  ttsStreamReset();
+  ttsStreamDone = true; // prevent consumer from calling onSpeakEnd again
   clearInterval(ttsKeepAlive);
   ttsKeepAlive = null;
   if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) {
@@ -1026,6 +1200,8 @@ function stopSpeaking() {
     }
     ttsAudioEl = null;
   }
+  ttsFaceHideImmediate();
+  ttsFaceBrowserStop();
   onSpeakEnd();
 }
 
@@ -1038,6 +1214,8 @@ function onSpeakEnd() {
   const stopBtn = document.getElementById('tts-stop-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   updateTTSToggleBtn();
+  ttsFaceBrowserStop();
+  ttsFaceHide();
 }
 
 function toggleAutoSpeak() {
@@ -1099,6 +1277,230 @@ function extractTextForTTS(el) {
     }
   });
   return clone.innerText;
+}
+
+// === Streaming TTS: progressive sentence-by-sentence playback during response streaming ===
+
+function ttsStreamReset() {
+  ttsStreamQueue = [];
+  ttsStreamRawText = '';
+  ttsStreamSentCount = 0;
+  ttsStreamActive = false;
+  ttsStreamConsuming = false;
+  ttsStreamDone = false;
+}
+
+function ttsStreamStart(messageEl) {
+  // Stop any existing playback FIRST (stopSpeaking calls ttsStreamReset internally)
+  stopSpeaking();
+  // Now set up fresh streaming TTS state
+  ttsStreamReset();
+  ttsStreamActive = true;
+  ttsStreamStarted = true;
+  ttsGoogleCancelled = false;
+  // Set up speaking indicators
+  ttsSpeakingEl = messageEl;
+  if (messageEl) messageEl.classList.add('tts-speaking');
+  const stopBtn = document.getElementById('tts-stop-btn');
+  if (stopBtn) stopBtn.style.display = '';
+  // Start face animation for browser TTS (Google Cloud hooks in per-chunk via ttsFaceConnectAudio)
+  if (ttsProvider !== 'google-cloud') ttsFaceBrowserStart();
+  // Start Chrome keepalive for browser TTS
+  if (ttsProvider !== 'google-cloud' && !isIOS) {
+    ttsKeepAlive = setInterval(() => {
+      if (speechSynthesis.speaking) {
+        speechSynthesis.pause();
+        speechSynthesis.resume();
+      }
+    }, 10000);
+  }
+  console.log('[TTS:Stream] started progressive playback');
+}
+
+function ttsStreamAppend(delta) {
+  if (!ttsStreamActive) return;
+  ttsStreamRawText += delta;
+
+  // Don't process while inside an unclosed code block — content would be spoken as text
+  // and sentence count would shift when the block closes, causing skipped sentences
+  const fences = ttsStreamRawText.match(/```/g);
+  if (fences && fences.length % 2 !== 0) return;
+
+  const clean = stripForTTS(ttsStreamRawText);
+  // Only extract COMPLETE sentences (with terminal punctuation)
+  const completeSentences = clean.match(/[^.!?]+[.!?]+/g) || [];
+
+  // Queue any new complete sentences
+  while (ttsStreamSentCount < completeSentences.length) {
+    const sentence = completeSentences[ttsStreamSentCount].trim();
+    if (sentence) {
+      ttsStreamQueue.push(sentence);
+      console.log('[TTS:Stream] queued sentence', ttsStreamSentCount, `(${sentence.length} chars)`);
+    }
+    ttsStreamSentCount++;
+  }
+
+  // Start consumer if not already running
+  if (ttsStreamQueue.length > 0 && !ttsStreamConsuming) {
+    ttsStreamConsumeNext();
+  }
+}
+
+function ttsStreamFlush() {
+  if (!ttsStreamActive && !ttsStreamStarted) return;
+  if (ttsStreamDone) return; // already flushed or stopped
+
+  const clean = stripForTTS(ttsStreamRawText);
+  // Include the final fragment (no terminal punctuation)
+  const allSentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+
+  while (ttsStreamSentCount < allSentences.length) {
+    const sentence = allSentences[ttsStreamSentCount].trim();
+    if (sentence) {
+      ttsStreamQueue.push(sentence);
+      console.log('[TTS:Stream] flush queued sentence', ttsStreamSentCount, `(${sentence.length} chars)`);
+    }
+    ttsStreamSentCount++;
+  }
+
+  ttsStreamDone = true;
+  ttsStreamActive = false;
+  console.log('[TTS:Stream] flushed, queue:', ttsStreamQueue.length, 'consuming:', ttsStreamConsuming);
+
+  // Start consumer if not already running
+  if (ttsStreamQueue.length > 0 && !ttsStreamConsuming) {
+    ttsStreamConsumeNext();
+  } else if (ttsStreamQueue.length === 0 && !ttsStreamConsuming) {
+    onSpeakEnd();
+  }
+}
+
+function ttsStreamToolUse() {
+  // Text buffer was cleared by tool_use — reset tracking
+  // Already-queued sentences continue playing
+  ttsStreamRawText = '';
+  ttsStreamSentCount = 0;
+}
+
+async function ttsStreamConsumeNext() {
+  if (ttsGoogleCancelled) {
+    ttsStreamConsuming = false;
+    return;
+  }
+
+  if (ttsStreamQueue.length === 0) {
+    ttsStreamConsuming = false;
+    if (ttsStreamDone) {
+      console.log('[TTS:Stream] playback complete');
+      onSpeakEnd();
+    }
+    return;
+  }
+
+  ttsStreamConsuming = true;
+  const sentence = ttsStreamQueue.shift();
+
+  if (ttsProvider === 'google-cloud') {
+    await ttsStreamSpeakGoogle(sentence);
+  } else {
+    await ttsStreamSpeakBrowser(sentence);
+  }
+
+  // Continue to next sentence
+  ttsStreamConsumeNext();
+}
+
+function ttsStreamSpeakGoogle(text) {
+  return new Promise(async (resolve) => {
+    if (ttsGoogleCancelled) { resolve(); return; }
+
+    const voiceName = localStorage.getItem('chat-bridge-tts-google-voice') || '';
+    const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
+
+    try {
+      const resp = await fetch('/api/tts/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          voiceName: voiceName || undefined,
+          speakingRate: rate,
+        }),
+      });
+
+      if (ttsGoogleCancelled) { resolve(); return; }
+
+      if (!resp.ok) {
+        console.warn('[TTS:Stream] Google API error, falling back to browser');
+        await ttsStreamSpeakBrowser(text);
+        resolve();
+        return;
+      }
+
+      const data = await resp.json();
+      const audio = ttsIOSAudioEl || new Audio();
+      audio.src = 'data:audio/mp3;base64,' + data.audioContent;
+      audio.load();
+      ttsAudioEl = audio;
+      audio.playbackRate = 1.0;
+      audio.onended = () => resolve();
+      audio.onerror = (e) => {
+        console.warn('[TTS:Stream] Audio playback error:', e);
+        resolve();
+      };
+      ttsFaceConnectAudio(audio);
+      audio.play().catch(() => resolve());
+    } catch (err) {
+      console.warn('[TTS:Stream] Network error:', err);
+      resolve();
+    }
+  });
+}
+
+function ttsStreamSpeakBrowser(text) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) { resolve(); return; }
+
+    const voice = getTTSVoice();
+    const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
+
+    // Split into sub-chunks if needed (browser utterance limit ~200 chars)
+    const subSentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+    const chunks = [];
+    let current = '';
+    for (const s of subSentences) {
+      if ((current + s).length > 200) {
+        if (current) chunks.push(current.trim());
+        current = s;
+      } else {
+        current += s;
+      }
+    }
+    if (current.trim()) chunks.push(current.trim());
+
+    let i = 0;
+    function speakNextChunk() {
+      if (i >= chunks.length) { resolve(); return; }
+      const utterance = new SpeechSynthesisUtterance(chunks[i]);
+      utterance.lang = 'en-US';
+      if (voice) utterance.voice = voice;
+      utterance.rate = rate;
+      utterance.onend = () => { i++; speakNextChunk(); };
+      utterance.onerror = (e) => {
+        if (e.error !== 'canceled') console.warn('[TTS:Stream] Browser error:', e.error);
+        resolve();
+      };
+      ttsCurrentUtterance = utterance;
+      speechSynthesis.speak(utterance);
+    }
+
+    if (isIOS && (speechSynthesis.speaking || speechSynthesis.pending)) {
+      speechSynthesis.cancel();
+      setTimeout(speakNextChunk, 50);
+    } else {
+      speakNextChunk();
+    }
+  });
 }
 
 // Preload voices (some browsers load async)
@@ -3024,6 +3426,8 @@ async function cancelStream() {
 async function sendMessage(skipRender = false) {
   // Unlock iOS audio on the user's send tap so auto-speak works when the response arrives
   if (ttsAutoSpeak) unlockTTSForIOS();
+  // Reset streaming TTS state for new response
+  ttsStreamStarted = false;
 
   let text = messageInput.value.trim();
   if ((!text && pendingAttachments.length === 0) || !currentSessionId) return;
@@ -3144,6 +3548,18 @@ async function sendMessage(skipRender = false) {
           assistantEl.innerHTML = renderMarkdown(currentText);
           ensureCopyButton(assistantEl);
           scrollToBottom();
+          // Progressive TTS: feed sentence buffer during streaming
+          if (ttsAutoSpeak) {
+            if (!ttsStreamStarted) {
+              ttsStreamStart(assistantEl);
+            } else if (ttsSpeakingEl !== assistantEl) {
+              // assistantEl changed (e.g. after tool_use created new element) — update indicator
+              if (ttsSpeakingEl) ttsSpeakingEl.classList.remove('tts-speaking');
+              ttsSpeakingEl = assistantEl;
+              assistantEl.classList.add('tts-speaking');
+            }
+            ttsStreamAppend(data);
+          }
           break;
 
         case 'thinking':
@@ -3164,6 +3580,8 @@ async function sendMessage(skipRender = false) {
           if (assistantEl && currentText) {
             assistantEl = null;
             currentText = '';
+            // Reset streaming TTS text buffer (tool_use clears the text segment)
+            if (ttsStreamStarted) ttsStreamToolUse();
           }
           try {
             const tool = JSON.parse(data);
@@ -3254,12 +3672,14 @@ async function sendMessage(skipRender = false) {
           pendingAgentToolIds.clear();
           addUsageInfo(data);
           streamCompleted = true;
-          // Auto-speak the final assistant message if enabled
-          // Use assistantEl if available; fall back to lastRenderedAssistantEl in case
-          // a tool_use event cleared assistantEl after text was already rendered
-          const speakEl = assistantEl || lastRenderedAssistantEl;
-          if (ttsAutoSpeak && speakEl) {
-            speakAssistantMessage(speakEl);
+          // Auto-speak: flush streaming TTS if active, else fall back to full-message speak
+          if (ttsStreamStarted) {
+            ttsStreamFlush();
+          } else {
+            const speakEl = assistantEl || lastRenderedAssistantEl;
+            if (ttsAutoSpeak && speakEl) {
+              speakAssistantMessage(speakEl);
+            }
           }
           scrollToBottom();
           break;
@@ -3890,6 +4310,44 @@ function renderAppearanceSettings(container) {
   `;
 }
 
+function setTTSFace(enabled) {
+  ttsFaceEnabled = enabled;
+  localStorage.setItem('chat-bridge-tts-face', enabled ? 'true' : 'false');
+  if (!enabled) ttsFaceHideImmediate();
+  // Re-render to update active states
+  const container = document.getElementById('settings-content');
+  if (container) renderVoiceSettings(container);
+}
+
+function buildTTSFaceHTML() {
+  const onClass = ttsFaceEnabled ? 'active' : '';
+  const offClass = !ttsFaceEnabled ? 'active' : '';
+  return '<div class="settings-section">' +
+    '<div class="settings-section-title">Speaking Face</div>' +
+    '<div class="settings-section-desc">Show an animated face in the chat area during auto-speak playback.</div>' +
+    '<div class="settings-theme-toggle">' +
+      '<button class="settings-theme-btn ' + onClass + '" onclick="setTTSFace(true)">' +
+        '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<circle cx="12" cy="12" r="10"/>' +
+          '<path d="M8 14s1.5 2 4 2 4-2 4-2"/>' +
+          '<line x1="9" y1="9" x2="9.01" y2="9"/>' +
+          '<line x1="15" y1="9" x2="15.01" y2="9"/>' +
+        '</svg>' +
+        ' On' +
+      '</button>' +
+      '<button class="settings-theme-btn ' + offClass + '" onclick="setTTSFace(false)">' +
+        '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<circle cx="12" cy="12" r="10"/>' +
+          '<line x1="8" y1="15" x2="16" y2="15"/>' +
+          '<line x1="9" y1="9" x2="9.01" y2="9"/>' +
+          '<line x1="15" y1="9" x2="15.01" y2="9"/>' +
+        '</svg>' +
+        ' Off' +
+      '</button>' +
+    '</div>' +
+  '</div>';
+}
+
 async function renderVoiceSettings(container) {
   container.innerHTML = `
     <h2 class="settings-title">Voice</h2>
@@ -3898,6 +4356,7 @@ async function renderVoiceSettings(container) {
     ${ttsProvider === 'google-cloud' ? '<div id="google-voice-section"></div>' : buildBrowserTTSSettingsHTML()}
     ${buildTTSSpeedHTML()}
     ${buildTTSAutoSpeakHTML()}
+    ${buildTTSFaceHTML()}
   `;
   // Load Google Cloud voices if that provider is selected
   if (ttsProvider === 'google-cloud') {
@@ -4165,7 +4624,11 @@ async function renderGoogleVoiceSelector() {
 function setTTSProvider(provider) {
   ttsProvider = provider;
   localStorage.setItem('chat-bridge-tts-provider', provider);
-  stopSpeaking();
+  // Don't kill streaming TTS on provider switch — the consumer reads ttsProvider
+  // dynamically, so the new provider kicks in on the next sentence automatically
+  if (!ttsStreamActive && !ttsStreamConsuming) {
+    stopSpeaking();
+  }
   const container = document.getElementById('settings-content');
   if (container && activeSettingsSection === 'voice') renderVoiceSettings(container);
 }
