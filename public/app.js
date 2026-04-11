@@ -2433,7 +2433,7 @@ async function switchSession(id) {
   if (streamingSessions.has(id)) {
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'flex';
-    messageInput.placeholder = 'Type a message to queue...';
+    messageInput.placeholder = 'Queue a message...';
   } else {
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
@@ -3579,7 +3579,7 @@ async function sendMessage(skipRender = false) {
   streamingSessions.add(streamSessionId);
   sendBtn.style.display = 'flex';
   stopBtn.style.display = 'flex';
-  messageInput.placeholder = 'Type a message to queue...';
+  messageInput.placeholder = 'Queue a message...';
   messageInput.value = '';
   messageInput.style.height = 'auto';
 
