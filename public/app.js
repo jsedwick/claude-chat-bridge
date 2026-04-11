@@ -433,7 +433,8 @@ function showVersionBanner(data) {
     </span>
   `;
 
-  messages.parentNode.insertBefore(banner, messages);
+  const container = messages.closest('.messages-container') || messages;
+  container.parentNode.insertBefore(banner, container);
 }
 
 async function dismissVersionBanner() {
@@ -774,8 +775,87 @@ let ttsFaceSource = null; // current MediaElementSource
 let ttsFaceSourceEl = null; // the audio element currently connected
 let ttsFaceAnimFrame = null;
 let ttsFaceSilenceTimer = null;
+let ttsFaceActivity = 'idle'; // idle | thinking | tool-working
+let ttsFaceResponseActive = false; // true while AI is responding
 const TTS_FACE_SILENCE_DELAY = 2000; // ms of silence before fade-out
 const TTS_FACE_SMOOTHING = 0.35; // analyser smoothing
+
+// ── Face response lifecycle ──
+// Face appears when user sends a message and stays visible for the entire
+// response, showing different expressions for thinking / tool use / speaking.
+// It fades out only after the response completes (and TTS finishes if active).
+
+function ttsFaceResponseStart() {
+  if (!ttsFaceEnabled) return;
+  ttsFaceResponseActive = true;
+  ttsFaceActivity = 'idle';
+  const overlay = document.getElementById('tts-face-overlay');
+  if (!overlay) return;
+  clearTimeout(ttsFaceSilenceTimer);
+  ttsFaceSilenceTimer = null;
+  overlay.classList.remove('thinking', 'tool-working', 'speaking');
+  overlay.classList.add('visible');
+  ttsFaceResetMouth();
+}
+
+function ttsFaceResponseEnd() {
+  ttsFaceResponseActive = false;
+  ttsFaceActivity = 'idle';
+  const overlay = document.getElementById('tts-face-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('thinking', 'tool-working');
+  // If TTS is still speaking, let ttsFaceHide handle final removal
+  if (overlay.classList.contains('speaking')) return;
+  ttsFaceScheduleFadeOut();
+}
+
+// ── Face activity states (thinking, tool-working) ──
+
+function ttsFaceSetActivity(activity) {
+  if (!ttsFaceEnabled) return;
+  if (activity === ttsFaceActivity) return;
+  const overlay = document.getElementById('tts-face-overlay');
+  if (!overlay) return;
+  ttsFaceActivity = activity;
+  overlay.classList.remove('thinking', 'tool-working');
+  if (activity !== 'idle') {
+    overlay.classList.add(activity);
+    if (!overlay.classList.contains('speaking')) {
+      ttsFaceSetStaticMouth(activity);
+    }
+  } else if (!overlay.classList.contains('speaking')) {
+    ttsFaceResetMouth();
+  }
+}
+
+function ttsFaceSetStaticMouth(state) {
+  const mouth = document.getElementById('tts-face-mouth');
+  if (!mouth) return;
+  if (state === 'thinking') {
+    mouth.setAttribute('d', 'M82 127 Q98 131, 118 126'); // contemplative hmm
+  } else if (state === 'tool-working') {
+    mouth.setAttribute('d', 'M85 124 Q100 131, 115 124'); // focused slight open
+  }
+}
+
+function ttsFaceResetMouth() {
+  const mouth = document.getElementById('tts-face-mouth');
+  if (mouth) mouth.setAttribute('d', 'M75 125 Q100 135, 125 125');
+}
+
+function ttsFaceScheduleFadeOut() {
+  clearTimeout(ttsFaceSilenceTimer);
+  ttsFaceSilenceTimer = setTimeout(() => {
+    const overlay = document.getElementById('tts-face-overlay');
+    if (overlay && !ttsFaceResponseActive && ttsFaceActivity === 'idle' && !overlay.classList.contains('speaking')) {
+      overlay.classList.remove('visible');
+      ttsFaceStopAnalysis();
+      ttsFaceResetMouth();
+    }
+  }, 800);
+}
+
+// ── Face speaking state (TTS audio) ──
 
 function ttsFaceShow() {
   if (!ttsFaceEnabled || !ttsAutoSpeak) return;
@@ -783,22 +863,32 @@ function ttsFaceShow() {
   if (!overlay) return;
   clearTimeout(ttsFaceSilenceTimer);
   ttsFaceSilenceTimer = null;
-  // Size overlay to the messages viewport (not scroll height)
-  const messagesEl = document.getElementById('messages');
-  if (messagesEl) overlay.style.height = messagesEl.clientHeight + 'px';
-  overlay.classList.add('visible');
-  overlay.classList.add('speaking');
+  overlay.classList.add('visible', 'speaking');
 }
 
 function ttsFaceHide() {
   const overlay = document.getElementById('tts-face-overlay');
-  if (!overlay || !overlay.classList.contains('visible')) return;
+  if (!overlay || !overlay.classList.contains('speaking')) return;
   overlay.classList.remove('speaking');
-  // Fade out after silence delay
+  // If still in an activity state, restore that expression
+  if (ttsFaceActivity !== 'idle') {
+    ttsFaceSetStaticMouth(ttsFaceActivity);
+    ttsFaceStopAnalysis();
+    return;
+  }
+  // If response is still active, stay visible with neutral expression
+  if (ttsFaceResponseActive) {
+    ttsFaceResetMouth();
+    ttsFaceStopAnalysis();
+    return;
+  }
+  // Response over, no activity — fade out
   clearTimeout(ttsFaceSilenceTimer);
   ttsFaceSilenceTimer = setTimeout(() => {
-    overlay.classList.remove('visible');
-    overlay.style.height = '';
+    if (ttsFaceActivity === 'idle' && !ttsFaceResponseActive) {
+      overlay.classList.remove('visible');
+      ttsFaceResetMouth();
+    }
     ttsFaceStopAnalysis();
   }, TTS_FACE_SILENCE_DELAY);
 }
@@ -808,8 +898,15 @@ function ttsFaceHideImmediate() {
   ttsFaceSilenceTimer = null;
   const overlay = document.getElementById('tts-face-overlay');
   if (overlay) {
-    overlay.classList.remove('visible', 'speaking');
-    overlay.style.height = '';
+    overlay.classList.remove('speaking');
+    if (ttsFaceActivity !== 'idle') {
+      ttsFaceSetStaticMouth(ttsFaceActivity);
+    } else if (ttsFaceResponseActive) {
+      ttsFaceResetMouth();
+    } else {
+      overlay.classList.remove('visible');
+      ttsFaceResetMouth();
+    }
   }
   ttsFaceStopAnalysis();
 }
@@ -892,9 +989,7 @@ function ttsFaceStopAnalysis() {
     cancelAnimationFrame(ttsFaceAnimFrame);
     ttsFaceAnimFrame = null;
   }
-  // Reset mouth to resting smile
-  const mouth = document.getElementById('tts-face-mouth');
-  if (mouth) mouth.setAttribute('d', 'M75 125 Q100 135, 125 125');
+  // Mouth shape is managed by callers (ttsFaceResetMouth / ttsFaceSetStaticMouth)
 }
 
 // For browser TTS (speechSynthesis) — no Audio element to analyze,
@@ -3476,6 +3571,7 @@ async function sendMessage(skipRender = false) {
   }
   clearAttachments();
   addTypingIndicator();
+  ttsFaceResponseStart();
 
   let assistantEl = null;
   let lastRenderedAssistantEl = null; // persists across tool_use clears, used for auto-speak
@@ -3536,6 +3632,7 @@ async function sendMessage(skipRender = false) {
 
         case 'text':
           clearSlowApi();
+          ttsFaceSetActivity('idle');
           deactivateToolGroup();
           if (!assistantEl) {
             logSSE('text:create_el', { dataLen: typeof data === 'string' ? data.length : 0 });
@@ -3564,6 +3661,7 @@ async function sendMessage(skipRender = false) {
 
         case 'thinking':
           clearSlowApi();
+          ttsFaceSetActivity('thinking');
           if (!thinkingEl) {
             thinkingEl = addThinkingIndicator();
             addTypingIndicator(); // keep dots at bottom
@@ -3576,6 +3674,7 @@ async function sendMessage(skipRender = false) {
 
         case 'tool_use':
           clearSlowApi();
+          ttsFaceSetActivity('tool-working');
           logSSE('tool_use:clear', { hadText: currentText.length, hadEl: !!assistantEl, data: typeof data === 'string' ? data.substring(0, 100) : '' });
           if (assistantEl && currentText) {
             assistantEl = null;
@@ -3651,6 +3750,7 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'done':
+          ttsFaceResponseEnd();
           logSSE('done', { textLen: currentText.length, streamCompleted });
           // Safety net: recover text from result if text_delta events were lost
           try {
@@ -3762,6 +3862,7 @@ async function sendMessage(skipRender = false) {
     }
   } finally {
     clearSlowApi();
+    if (ttsFaceResponseActive && currentSessionId === streamSessionId) ttsFaceResponseEnd();
     streamingSessions.delete(streamSessionId);
     updateSessionBlockedBadge(streamSessionId, false);
     // Only update DOM if we're still viewing the session that finished
@@ -4313,7 +4414,11 @@ function renderAppearanceSettings(container) {
 function setTTSFace(enabled) {
   ttsFaceEnabled = enabled;
   localStorage.setItem('chat-bridge-tts-face', enabled ? 'true' : 'false');
-  if (!enabled) ttsFaceHideImmediate();
+  if (!enabled) {
+    ttsFaceActivity = 'idle';
+    ttsFaceResponseActive = false;
+    ttsFaceHideImmediate();
+  }
   // Re-render to update active states
   const container = document.getElementById('settings-content');
   if (container) renderVoiceSettings(container);
@@ -4324,7 +4429,7 @@ function buildTTSFaceHTML() {
   const offClass = !ttsFaceEnabled ? 'active' : '';
   return '<div class="settings-section">' +
     '<div class="settings-section-title">Speaking Face</div>' +
-    '<div class="settings-section-desc">Show an animated face in the chat area during auto-speak playback.</div>' +
+    '<div class="settings-section-desc">Show an animated face that thinks, watches tools work, and speaks during TTS.</div>' +
     '<div class="settings-theme-toggle">' +
       '<button class="settings-theme-btn ' + onClass + '" onclick="setTTSFace(true)">' +
         '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +

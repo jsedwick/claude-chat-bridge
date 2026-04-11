@@ -1024,8 +1024,15 @@ html, body {
 
 
 /* Messages */
-.messages {
+.messages-container {
+  position: relative;
   flex: 1;
+  min-height: 0;
+}
+
+.messages {
+  position: absolute;
+  inset: 0;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 16px;
@@ -4418,8 +4425,8 @@ pre.streaming {
    ============================================================ */
 
 .tts-face-overlay {
-  position: sticky;
-  top: 0;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4466,15 +4473,23 @@ pre.streaming {
   stroke-linecap: round;
 }
 
-/* Blink animation */
+/* Blink animation — on individual eyes so eye-group can handle position */
 @keyframes face-blink {
   0%, 90%, 100% { transform: scaleY(1); }
   95% { transform: scaleY(0.1); }
 }
 
-.tts-face-eye-group {
+.tts-face-eye {
   animation: face-blink 3.5s ease-in-out infinite;
   transform-origin: center;
+}
+
+.tts-face-eye-group {
+  transition: transform 0.5s ease;
+}
+
+.tts-face-brow {
+  transition: transform 0.5s ease;
 }
 
 /* Subtle idle bob */
@@ -4487,7 +4502,46 @@ pre.streaming {
   animation: face-bob 4s ease-in-out infinite;
 }
 
-/* Accent glow ring around face when speaking */
+/* ── Thinking state: eyes drift up, contemplative ── */
+
+@keyframes face-think-look {
+  0%, 100% { transform: translate(-2px, -4px); }
+  35% { transform: translate(-4px, -5px); }
+  65% { transform: translate(1px, -3px); }
+}
+
+.tts-face-overlay.thinking .tts-face-eye-group {
+  animation: face-think-look 5s ease-in-out infinite;
+}
+
+.tts-face-overlay.thinking .tts-face-brow {
+  transform: translateY(-2px);
+}
+
+/* ── Tool-working state: eyes dart around, scanning ── */
+
+@keyframes face-look-around {
+  0%, 100% { transform: translate(0, 0); }
+  12% { transform: translate(5px, -2px); }
+  24% { transform: translate(5px, -2px); }
+  32% { transform: translate(-4px, 1px); }
+  48% { transform: translate(-4px, 1px); }
+  56% { transform: translate(3px, -3px); }
+  68% { transform: translate(3px, -3px); }
+  76% { transform: translate(-2px, 2px); }
+  88% { transform: translate(-2px, 2px); }
+}
+
+.tts-face-overlay.tool-working .tts-face-eye-group {
+  animation: face-look-around 2.5s ease-in-out infinite;
+}
+
+.tts-face-overlay.tool-working .tts-face-brow {
+  transform: translateY(1px);
+}
+
+/* ── Glow ring per state ── */
+
 .tts-face-glow {
   fill: none;
   stroke: var(--accent);
@@ -4499,6 +4553,21 @@ pre.streaming {
 .tts-face-overlay.speaking .tts-face-glow {
   opacity: 0.4;
   animation: face-glow-pulse 2s ease-in-out infinite;
+}
+
+.tts-face-overlay.thinking .tts-face-glow {
+  opacity: 0.2;
+  animation: face-glow-slow 4s ease-in-out infinite;
+}
+
+.tts-face-overlay.tool-working .tts-face-glow {
+  opacity: 0.3;
+  animation: face-glow-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes face-glow-slow {
+  0%, 100% { opacity: 0.1; stroke-width: 1; }
+  50% { opacity: 0.25; stroke-width: 1.5; }
 }
 
 @keyframes face-glow-pulse {

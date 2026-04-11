@@ -174,7 +174,7 @@
       </div>
     </div>
 
-    <div id="messages" class="messages">
+    <div class="messages-container">
       <div id="tts-face-overlay" class="tts-face-overlay">
         <svg class="tts-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <!-- Glow ring -->
@@ -193,13 +193,15 @@
           <path id="tts-face-mouth" class="tts-face-mouth" d="M75 125 Q100 135, 125 125"/>
         </svg>
       </div>
-      <div id="welcome" class="welcome-message">
+      <div id="messages" class="messages">
+        <div id="welcome" class="welcome-message">
         <div class="welcome-tabs">
           <button class="welcome-tab active" data-tab="sessions" onclick="switchWelcomeTab('sessions')">Sessions</button>
           <button class="welcome-tab" data-tab="topics" onclick="switchWelcomeTab('topics')">Topics</button>
         </div>
         <div id="welcome-sessions" class="welcome-sessions welcome-tab-content active"></div>
         <div id="welcome-topics" class="welcome-topics welcome-tab-content" style="display:none"></div>
+      </div>
       </div>
     </div>
 
