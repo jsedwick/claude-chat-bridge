@@ -1915,6 +1915,48 @@ pre.streaming {
   max-height: 60px;
 }
 
+.struct-body {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  overflow: auto;
+  max-height: 400px;
+}
+
+.struct-body h1, .struct-body h2, .struct-body h3, .struct-body h4 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 8px 0 4px 0;
+}
+
+.struct-body p {
+  margin: 4px 0;
+}
+
+.struct-body ul, .struct-body ol {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.struct-body code {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.struct-body pre {
+  font-size: 11px;
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
 .struct-retry-label {
   font-size: 11px;
   color: var(--text-muted);

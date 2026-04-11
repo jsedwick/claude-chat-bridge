@@ -2583,6 +2583,8 @@ const STRUCTURED_RENDERERS = {
   'mcp__obsidian-context-manager__search_vault': renderSearchVaultStructured,
   'mcp__obsidian-context-manager__get_memory_base': renderMemoryBaseStructured,
   'mcp__obsidian-context-manager__close_session': renderCloseSessionStructured,
+  'mcp__obsidian-context-manager__get_session_context': renderSessionContextStructured,
+  'mcp__obsidian-context-manager__get_topic_context': renderTopicContextStructured,
 };
 
 function tryRenderStructured(toolName, content) {
@@ -2702,6 +2704,48 @@ function renderCloseSessionStructured(data) {
         parts.push(`<div class="struct-result-card"><div class="struct-snippets">${escapeHtml(w)}</div></div>`);
       }
     }
+  }
+  return parts.join('\n');
+}
+
+function renderSessionContextStructured(data) {
+  if (!data.session_id) return null;
+  const parts = [];
+  parts.push(`<div class="struct-header">Session: <span class="struct-query">${escapeHtml(data.session_id)}</span></div>`);
+  const meta = [];
+  if (data.date) meta.push(escapeHtml(data.date));
+  if (data.status) {
+    const cls = data.status === 'active' ? 'struct-badge-high' : 'struct-badge-muted';
+    meta.push(`<span class="struct-badge ${cls}">${escapeHtml(data.status)}</span>`);
+  }
+  if (data.working_directory) meta.push(escapeHtml(data.working_directory));
+  if (meta.length > 0) parts.push(`<div class="struct-meta">${meta.join(' · ')}</div>`);
+  if (data.topics && data.topics.length > 0) {
+    parts.push(`<div class="struct-meta">${data.topics.map(t => `<span class="struct-badge">${escapeHtml(t)}</span>`).join(' ')}</div>`);
+  }
+  if (data.decisions && data.decisions.length > 0) {
+    parts.push(`<div class="struct-meta">${data.decisions.map(d => `<span class="struct-badge struct-badge-muted">${escapeHtml(d)}</span>`).join(' ')}</div>`);
+  }
+  if (data.body) {
+    parts.push(`<div class="struct-body">${renderMarkdown(data.body)}</div>`);
+  }
+  return parts.join('\n');
+}
+
+function renderTopicContextStructured(data) {
+  if (!data.title) return null;
+  const parts = [];
+  parts.push(`<div class="struct-header">${escapeHtml(data.title)}</div>`);
+  const meta = [];
+  if (data.category) meta.push(`<span class="struct-badge">${escapeHtml(data.category)}</span>`);
+  if (data.review_count != null) meta.push(`${data.review_count} review${data.review_count !== 1 ? 's' : ''}`);
+  if (data.last_reviewed) meta.push(`reviewed ${escapeHtml(data.last_reviewed)}`);
+  if (meta.length > 0) parts.push(`<div class="struct-meta">${meta.join(' · ')}</div>`);
+  if (data.tags && data.tags.length > 0) {
+    parts.push(`<div class="struct-meta">${data.tags.map(t => `<span class="struct-badge struct-badge-muted">${escapeHtml(t)}</span>`).join(' ')}</div>`);
+  }
+  if (data.body) {
+    parts.push(`<div class="struct-body">${renderMarkdown(data.body)}</div>`);
   }
   return parts.join('\n');
 }
