@@ -1317,6 +1317,8 @@ function toggleAutoSpeak() {
   ttsAutoSpeak = !ttsAutoSpeak;
   localStorage.setItem('chat-bridge-tts-auto', ttsAutoSpeak);
   updateTTSToggleBtn();
+  // Toggling off mid-speech: stop audio and hide face immediately
+  if (!ttsAutoSpeak) stopSpeaking();
 }
 
 function updateTTSToggleBtn() {
