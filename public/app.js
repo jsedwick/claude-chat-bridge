@@ -6689,6 +6689,7 @@ function toggleKbBookmarksView() {
     toolbarBtn.classList.remove('active');
     saveKbPreferences({ viewMode: 'tree' });
   }
+  updateKbClearFiltersBtn();
 }
 
 function renderKbBookmarksList() {
@@ -6764,6 +6765,7 @@ function collapseAllKbDirs() {
     viewChanged = true;
   }
   if (viewChanged) saveKbPreferences({ viewMode: 'tree' });
+  updateKbClearFiltersBtn();
 }
 
 // ---- KB Recent Files ----
@@ -6797,6 +6799,32 @@ function toggleKbRecentView() {
     toolbarBtn.classList.remove('active');
     saveKbPreferences({ viewMode: 'tree' });
   }
+  updateKbClearFiltersBtn();
+}
+
+function clearKbFilters() {
+  const tree = document.getElementById('kb-tree');
+
+  if (kbShowingBookmarks) {
+    kbShowingBookmarks = false;
+    document.getElementById('kb-bookmarks-list').style.display = 'none';
+    document.getElementById('kb-toolbar-bookmarks').classList.remove('active');
+  }
+  if (kbShowingRecent) {
+    kbShowingRecent = false;
+    document.getElementById('kb-recent-list').style.display = 'none';
+    document.getElementById('kb-toolbar-recent').classList.remove('active');
+  }
+
+  tree.style.display = '';
+  saveKbPreferences({ viewMode: 'tree' });
+  updateKbClearFiltersBtn();
+}
+
+function updateKbClearFiltersBtn() {
+  const btn = document.getElementById('kb-toolbar-clear-filters');
+  if (!btn) return;
+  btn.style.display = (kbShowingBookmarks || kbShowingRecent) ? '' : 'none';
 }
 
 async function loadKbRecentFiles() {
