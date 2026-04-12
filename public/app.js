@@ -415,22 +415,15 @@ function showVersionBanner(data) {
   banner.id = 'version-banner';
   banner.className = 'version-banner';
 
-  let text = '';
-  if (data.versionChanged && data.updateAvailable) {
-    text = `Claude Code CLI updated to <strong>${data.currentVersion}</strong> — a newer version <strong>${data.latestVersion}</strong> is also available.`;
-  } else if (data.updateAvailable) {
-    text = `Claude Code CLI update available: <strong>${data.currentVersion}</strong> → <strong>${data.latestVersion}</strong>`;
-  } else if (data.versionChanged) {
-    text = `Claude Code CLI updated to <strong>${data.currentVersion}</strong> (previously ${data.lastSeenVersion}).`;
-  }
+  const label = (data.versionChanged && data.updateAvailable)
+    ? 'Claude CLI updated — newer version available'
+    : data.updateAvailable
+      ? 'Claude CLI update available'
+      : 'Claude CLI updated';
 
   banner.innerHTML = `
-    <span class="version-banner-text">${text}</span>
-    <span class="version-banner-actions">
-      ${data.updateAvailable ? `<button class="version-banner-btn" onclick="window.open('https://github.com/anthropics/claude-code/releases', '_blank')">Release Notes</button>` : ''}
-      <button class="version-banner-btn" onclick="showSettingsSection('updates'); switchView('settings')">View Details</button>
-      <button class="version-banner-dismiss" onclick="dismissVersionBanner()" aria-label="Dismiss">&times;</button>
-    </span>
+    <a class="version-banner-link" onclick="showSettingsSection('updates'); switchView('settings')">${label}</a>
+    <button class="version-banner-dismiss" onclick="dismissVersionBanner()" aria-label="Dismiss">&times;</button>
   `;
 
   const container = messages.closest('.messages-container') || messages;

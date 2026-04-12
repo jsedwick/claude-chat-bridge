@@ -3151,45 +3151,28 @@ pre.streaming {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 8px;
+  padding: 6px 12px;
   margin: 0 16px 8px;
   background: rgba(210, 153, 34, 0.1);
   border: 1px solid rgba(210, 153, 34, 0.3);
   border-radius: 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.version-banner-text {
-  flex: 1;
-}
-
-.version-banner-text strong {
-  color: #d29922;
-}
-
-.version-banner-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.version-banner-btn {
-  padding: 4px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
   font-size: 12px;
-  font-family: var(--font-sans);
-  cursor: pointer;
   white-space: nowrap;
 }
 
-.version-banner-btn:hover {
-  background: var(--bg-primary);
-  border-color: var(--accent);
+.version-banner-link {
+  color: #d29922;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.version-banner-link:hover {
+  text-decoration: underline;
 }
 
 .version-banner-dismiss {
@@ -3197,9 +3180,10 @@ pre.streaming {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 4px;
+  padding: 2px 4px;
   font-size: 16px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .version-banner-dismiss:hover {
@@ -4447,6 +4431,12 @@ pre.streaming {
 .tts-face-grid {
   fill: url(#mcp-grid);
   opacity: 0.6;
+  animation: grid-pulse 3.5s ease-in-out infinite;
+}
+
+@keyframes grid-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
 }
 
 /* Corner circuit trace details */
