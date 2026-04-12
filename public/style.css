@@ -4636,6 +4636,11 @@ pre.streaming {
   opacity: 0.5;
 }
 
+/* Side hair: behind-head ellipse for temple/side coverage */
+.tts-face-side-hair {
+  fill: #6b3d22;
+}
+
 /* Hair: clean side-part style for light theme face */
 .tts-face-hair {
   fill: #6b3d22;
