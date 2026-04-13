@@ -824,20 +824,30 @@ function ttsFaceSetActivity(activity) {
 function ttsFaceSetStaticMouth(state) {
   const darkMouth = document.getElementById('tts-face-mouth');
   const lightMouth = document.getElementById('tts-face-mouth-light');
+  const lightAbove = document.getElementById('tts-face-mouth-light-above');
+  const lightBelow = document.getElementById('tts-face-mouth-light-below');
   if (state === 'thinking') {
     if (darkMouth) darkMouth.setAttribute('d', 'M78 150 Q100 152, 122 150'); // grim tight line
     if (lightMouth) lightMouth.setAttribute('d', 'M76 148 Q100 152, 124 148'); // neutral, reduced smile
+    if (lightAbove) lightAbove.setAttribute('d', 'M76 145 Q100 149, 124 145');
+    if (lightBelow) lightBelow.setAttribute('d', 'M76 151 Q100 155, 124 151');
   } else if (state === 'tool-working') {
     if (darkMouth) darkMouth.setAttribute('d', 'M74 148 Q100 156, 126 148'); // focused, slightly open
     if (lightMouth) lightMouth.setAttribute('d', 'M74 148 Q100 158, 126 148'); // focused but still friendly
+    if (lightAbove) lightAbove.setAttribute('d', 'M74 145 Q100 155, 126 145');
+    if (lightBelow) lightBelow.setAttribute('d', 'M74 151 Q100 161, 126 151');
   }
 }
 
 function ttsFaceResetMouth() {
   const darkMouth = document.getElementById('tts-face-mouth');
   const lightMouth = document.getElementById('tts-face-mouth-light');
+  const lightAbove = document.getElementById('tts-face-mouth-light-above');
+  const lightBelow = document.getElementById('tts-face-mouth-light-below');
   if (darkMouth) darkMouth.setAttribute('d', 'M72 148 Q100 151, 128 148');
   if (lightMouth) lightMouth.setAttribute('d', 'M72 148 Q100 163, 128 148');
+  if (lightAbove) lightAbove.setAttribute('d', 'M72 145 Q100 160, 128 145');
+  if (lightBelow) lightBelow.setAttribute('d', 'M72 151 Q100 166, 128 151');
 }
 
 function ttsFaceScheduleFadeOut() {
@@ -956,6 +966,8 @@ function ttsFaceStartAnalysis() {
   if (!ttsFaceAnalyser) return;
   if (!darkMouth && !lightMouth) return;
 
+  const lightAbove = document.getElementById('tts-face-mouth-light-above');
+  const lightBelow = document.getElementById('tts-face-mouth-light-below');
   const dataArray = new Uint8Array(ttsFaceAnalyser.frequencyBinCount);
 
   function animate() {
@@ -973,6 +985,8 @@ function ttsFaceStartAnalysis() {
 
     if (darkMouth) darkMouth.setAttribute('d', `M72 148 Q100 ${153 + openAmount}, 128 148`);
     if (lightMouth) lightMouth.setAttribute('d', `M72 148 Q100 ${163 + openAmount}, 128 148`);
+    if (lightAbove) lightAbove.setAttribute('d', `M72 145 Q100 ${160 + openAmount}, 128 145`);
+    if (lightBelow) lightBelow.setAttribute('d', `M72 151 Q100 ${166 + openAmount}, 128 151`);
   }
   animate();
 }
@@ -1010,6 +1024,8 @@ function ttsFaceBrowserStart() {
   // Animate mouth with pseudo-random movement since we can't analyze audio
   const darkMouth = document.getElementById('tts-face-mouth');
   const lightMouth = document.getElementById('tts-face-mouth-light');
+  const lightAbove = document.getElementById('tts-face-mouth-light-above');
+  const lightBelow = document.getElementById('tts-face-mouth-light-below');
   if (!darkMouth && !lightMouth) return;
   let phase = 0;
   ttsFaceBrowserInterval = setInterval(() => {
@@ -1019,6 +1035,8 @@ function ttsFaceBrowserStart() {
     const openAmount = open * 16;
     if (darkMouth) darkMouth.setAttribute('d', `M72 148 Q100 ${153 + openAmount}, 128 148`);
     if (lightMouth) lightMouth.setAttribute('d', `M72 148 Q100 ${163 + openAmount}, 128 148`);
+    if (lightAbove) lightAbove.setAttribute('d', `M72 145 Q100 ${160 + openAmount}, 128 145`);
+    if (lightBelow) lightBelow.setAttribute('d', `M72 151 Q100 ${166 + openAmount}, 128 151`);
   }, 50); // 20fps is enough for the sine-wave approach
 }
 
