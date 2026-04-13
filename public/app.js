@@ -12,12 +12,33 @@ const permissionBlockedSessions = new Set(); // sessions waiting on permission a
 let versionData = null; // cached version check data
 let serverPollingActive = false; // prevent duplicate health-check polls
 
+// Resilient fetch with timeout, response validation, and optional retry
+async function fetchWithRetry(url, options = {}, { timeout = 10000, retries = 0, backoff = 1000 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      return res;
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt)));
+      }
+    }
+  }
+  throw lastError;
+}
+
 // Message history (server-backed)
 async function restoreMessages(sessionId, sessionMeta) {
   console.log('[SSE] restoreMessages called', sessionId, new Error().stack?.split('\n').slice(1,4).join(' <- '));
   clearMessages();
   try {
-    const res = await fetch(`/api/sessions/${sessionId}/messages`);
+    const res = await fetchWithRetry(`/api/sessions/${sessionId}/messages`, {}, { retries: 1 });
     const messages = await res.json();
     for (const msg of messages) {
       if (msg.role === 'user') {
@@ -109,7 +130,7 @@ function getSelectedModel() {
 // Mode management
 async function loadMode() {
   try {
-    const res = await fetch('/api/sessions/mode/current');
+    const res = await fetchWithRetry('/api/sessions/mode/current', {}, { retries: 1 });
     const { mode } = await res.json();
     currentMode = mode;
     updateModeTabsUI(mode);
@@ -118,12 +139,15 @@ async function loadMode() {
 
 async function setMode(mode) {
   if (mode === currentMode) return;
+  // Show loading state on mode tabs
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.add('switching'));
+  sessionListEl.innerHTML = '<div class="sidebar-loading">Loading sessions…</div>';
   try {
-    const res = await fetch('/api/sessions/mode/current', {
+    const res = await fetchWithRetry('/api/sessions/mode/current', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode }),
-    });
+    }, { retries: 1 });
     const result = await res.json();
     currentMode = result.mode;
     updateModeTabsUI(result.mode);
@@ -131,7 +155,7 @@ async function setMode(mode) {
     // Deselect current chat if it doesn't belong to this mode
     if (currentSessionId) {
       try {
-        const s = await fetch(`/api/sessions/${currentSessionId}`).then(r => r.json());
+        const s = await (await fetchWithRetry(`/api/sessions/${currentSessionId}`)).json();
         if ((s.mode || 'work') !== result.mode) {
           currentSessionId = null;
           chatTitle.textContent = getAppTitle();
@@ -145,8 +169,7 @@ async function setMode(mode) {
     }
 
     // Reload sidebar and welcome screen with filtered sessions/topics
-    loadSessions();
-    loadWelcomeSessions();
+    await Promise.all([loadSessions(), loadWelcomeSessions()]);
     // Reset topics loaded flags so they re-fetch for the new mode
     ['welcome-topics', 'kb-welcome-topics'].forEach(id => {
       const el = document.getElementById(id);
@@ -157,6 +180,11 @@ async function setMode(mode) {
     if (activeTopicsTab) loadWelcomeTopics();
   } catch (err) {
     console.error('Failed to switch mode:', err);
+    // Revert to previous mode tab on failure
+    updateModeTabsUI(currentMode);
+    await loadSessions();
+  } finally {
+    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('switching'));
   }
 }
 
@@ -449,7 +477,7 @@ async function dismissVersionBanner() {
 function startActiveSessionPolling() {
   async function poll() {
     try {
-      const res = await fetch('/api/sessions/active');
+      const res = await fetchWithRetry('/api/sessions/active', {}, { timeout: 5000 });
       const ids = await res.json();
       const newSet = new Set(ids);
       // Only update DOM if the set changed
@@ -462,7 +490,7 @@ function startActiveSessionPolling() {
           }
         });
       }
-    } catch {}
+    } catch {} // polling — silently skip failed ticks
   }
   poll();
   setInterval(poll, 2000);
@@ -1812,8 +1840,11 @@ async function loadWelcomeSessions() {
     document.getElementById('kb-welcome-sessions'),
   ].filter(Boolean);
   if (containers.length === 0) return;
+  containers.forEach(c => {
+    if (!c.children.length) c.innerHTML = '<div class="welcome-loading">Loading sessions…</div>';
+  });
   try {
-    const res = await fetch(`/api/vault/sessions?currentDir=${encodeURIComponent(currentWorkingDir)}`);
+    const res = await fetchWithRetry(`/api/vault/sessions?currentDir=${encodeURIComponent(currentWorkingDir)}`, {}, { retries: 1 });
     const data = await res.json();
     const groups = data && data.groups;
     if (!groups || groups.length === 0) {
@@ -1843,8 +1874,11 @@ async function loadWelcomeTopics() {
     document.getElementById('kb-welcome-topics'),
   ].filter(Boolean);
   if (containers.length === 0) return;
+  containers.forEach(c => {
+    if (!c.children.length || !c.dataset.loaded) c.innerHTML = '<div class="welcome-loading">Loading topics…</div>';
+  });
   try {
-    const res = await fetch('/api/vault/topics');
+    const res = await fetchWithRetry('/api/vault/topics', {}, { retries: 1 });
     const data = await res.json();
     const topics = data && data.topics;
     if (!topics || topics.length === 0) {
@@ -1885,10 +1919,14 @@ function handleKeydown(e) {
 
 // Sessions
 async function loadSessions() {
+  // Show loading if sidebar is empty
+  if (!sessionListEl.children.length) {
+    sessionListEl.innerHTML = '<div class="sidebar-loading">Loading sessions…</div>';
+  }
   try {
     const [activeRes, archivedRes] = await Promise.all([
-      fetch(`/api/sessions?mode=${currentMode}`),
-      fetch(`/api/sessions?mode=${currentMode}&archived=true`),
+      fetchWithRetry(`/api/sessions?mode=${currentMode}`, {}, { retries: 2 }),
+      fetchWithRetry(`/api/sessions?mode=${currentMode}&archived=true`, {}, { retries: 2 }),
     ]);
     const activeSessions = await activeRes.json();
     const allSessions = await archivedRes.json();
@@ -1897,6 +1935,10 @@ async function loadSessions() {
     renderArchiveList(archivedSessions);
   } catch (err) {
     console.error('Failed to load sessions:', err);
+    // Keep existing content if available, otherwise show error
+    if (!sessionListEl.querySelector('.session-item')) {
+      sessionListEl.innerHTML = '<div class="sidebar-loading">Failed to load sessions</div>';
+    }
   }
 }
 
@@ -2011,25 +2053,33 @@ function toggleArchiveSection() {
 }
 
 async function archiveSessionItem(id) {
-  await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
-  if (currentSessionId === id) {
-    currentSessionId = null;
-    chatTitle.textContent = getAppTitle();
-    currentWorkingDir = '';
-    currentSessionCreated = '';
-    currentClosedAt = '';
-    welcomeEl.style.display = '';
-    inputArea.style.display = 'none';
-    document.querySelector('.dir-picker-wrapper').style.display = 'none';
-    document.getElementById('session-details-panel').style.display = 'none';
-    clearMessages();
+  try {
+    await fetchWithRetry(`/api/sessions/${id}/archive`, { method: 'POST' });
+    if (currentSessionId === id) {
+      currentSessionId = null;
+      chatTitle.textContent = getAppTitle();
+      currentWorkingDir = '';
+      currentSessionCreated = '';
+      currentClosedAt = '';
+      welcomeEl.style.display = '';
+      inputArea.style.display = 'none';
+      document.querySelector('.dir-picker-wrapper').style.display = 'none';
+      document.getElementById('session-details-panel').style.display = 'none';
+      clearMessages();
+    }
+    loadSessions();
+  } catch (err) {
+    console.error('Failed to archive session:', err);
   }
-  loadSessions();
 }
 
 async function unarchiveSessionItem(id) {
-  await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
-  loadSessions();
+  try {
+    await fetchWithRetry(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+    loadSessions();
+  } catch (err) {
+    console.error('Failed to unarchive session:', err);
+  }
 }
 
 // Rename via header title double-click
@@ -2474,21 +2524,25 @@ async function switchSession(id) {
 
 async function deleteSessionItem(id) {
   if (!confirm('Delete this session?')) return;
-  await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
-  sessionInputDrafts.delete(id);
-  if (currentSessionId === id) {
-    currentSessionId = null;
-    chatTitle.textContent = getAppTitle();
-    currentWorkingDir = '';
-    currentSessionCreated = '';
-    currentClosedAt = '';
-    welcomeEl.style.display = '';
-    inputArea.style.display = 'none';
-    document.querySelector('.dir-picker-wrapper').style.display = 'none';
-    document.getElementById('session-details-panel').style.display = 'none';
-    clearMessages();
+  try {
+    await fetchWithRetry(`/api/sessions/${id}`, { method: 'DELETE' });
+    sessionInputDrafts.delete(id);
+    if (currentSessionId === id) {
+      currentSessionId = null;
+      chatTitle.textContent = getAppTitle();
+      currentWorkingDir = '';
+      currentSessionCreated = '';
+      currentClosedAt = '';
+      welcomeEl.style.display = '';
+      inputArea.style.display = 'none';
+      document.querySelector('.dir-picker-wrapper').style.display = 'none';
+      document.getElementById('session-details-panel').style.display = 'none';
+      clearMessages();
+    }
+    loadSessions();
+  } catch (err) {
+    console.error('Failed to delete session:', err);
   }
-  loadSessions();
 }
 
 // Messages
@@ -4138,11 +4192,7 @@ function startPermissionPolling() {
   permissionPollInterval = setInterval(async () => {
     if (pendingPermissionId || !currentSessionId) return;
     try {
-      const res = await fetch(`/api/permissions/pending/${currentSessionId}`);
-      if (!res.ok) {
-        console.warn('[permission-poll] HTTP error:', res.status);
-        return;
-      }
+      const res = await fetchWithRetry(`/api/permissions/pending/${currentSessionId}`, {}, { timeout: 5000 });
       const pending = await res.json();
       if (pending && pending.id && !pendingPermissionId) {
         console.log('[permission-poll] found pending request:', pending);

@@ -1005,6 +1005,32 @@ html, body {
   background: rgba(37, 99, 235, 0.08);
 }
 
+.mode-tab.switching {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.sidebar-loading {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 24px 12px;
+  animation: loading-pulse 1.5s ease-in-out infinite;
+}
+
+.welcome-loading {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 16px 12px;
+  animation: loading-pulse 1.5s ease-in-out infinite;
+}
+
 .model-select {
   background: var(--bg-primary);
   color: var(--text-secondary);
