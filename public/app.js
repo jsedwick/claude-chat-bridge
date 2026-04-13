@@ -1899,6 +1899,7 @@ async function loadWelcomeTopics() {
 }
 
 function openSessionInKb(vaultPath) {
+  kbPendingNavigation = vaultPath;
   switchView('kb');
   loadKbFile(vaultPath);
 }
@@ -2611,6 +2612,30 @@ function startServerRecoveryPolling(disconnectedEl) {
     }
   }, 3000);
 }
+
+/* ===== Server Heartbeat ===== */
+// Periodically pings /api/health so we detect restarts even when idle (no active SSE stream).
+// Skips checks while recovery polling is already active or the tab is hidden.
+(function initServerHeartbeat() {
+  let consecutiveFails = 0;
+  const INTERVAL = 15000; // 15 seconds
+  const FAIL_THRESHOLD = 2; // require 2 consecutive failures to avoid false positives
+
+  setInterval(async () => {
+    if (serverPollingActive || document.hidden) return;
+    try {
+      const res = await fetch('/api/health', { signal: AbortSignal.timeout(5000) });
+      if (res.ok) { consecutiveFails = 0; return; }
+      consecutiveFails++;
+    } catch {
+      consecutiveFails++;
+    }
+    if (consecutiveFails >= FAIL_THRESHOLD) {
+      consecutiveFails = 0;
+      addServerDisconnectedMessage();
+    }
+  }, INTERVAL);
+})();
 
 function addForkDivider(parentName, parentId) {
   const el = document.createElement('div');
@@ -5427,6 +5452,7 @@ let kbShowingBookmarks = false;
 let kbShowingRecent = false;
 let kbTemplatesCache = null;  // null = not fetched, [] = no templates
 let kbPrefsLoaded = false;    // true once server prefs are fetched
+let kbPendingNavigation = null; // set by navigateToKbFile/openSessionInKb to prevent prefs from clobbering
 
 // --- KB Preferences: server-side persistence ---
 
@@ -5468,8 +5494,8 @@ async function loadKbPreferences() {
       toggleKbRecentView();
     }
 
-    // Restore last open file
-    if (prefs.currentFile) {
+    // Restore last open file — skip if a link navigation is already targeting a specific file
+    if (prefs.currentFile && !kbPendingNavigation) {
       loadKbFile(prefs.currentFile, { skipHistory: true });
     }
   } catch {
@@ -5627,8 +5653,10 @@ function resolveVaultPath(filePath) {
 }
 
 function navigateToKbFile(filePath) {
+  const resolved = resolveVaultPath(filePath);
+  kbPendingNavigation = resolved;
   switchView('kb');
-  loadKbFile(resolveVaultPath(filePath));
+  loadKbFile(resolved);
 }
 
 function renderVaultFileLabel(filePath) {
@@ -6677,6 +6705,7 @@ async function expandKbPathTo(filePath) {
 }
 
 async function loadKbFile(filePath, { skipHistory = false } = {}) {
+  kbPendingNavigation = null;
   try {
     const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
@@ -7544,3 +7573,60 @@ async function saveKbFile() {
     alert('Save failed: ' + err.message);
   }
 }
+
+/* ===== Sidebar Resize (Desktop Only) ===== */
+(function initSidebarResize() {
+  const sidebar = document.getElementById('sidebar');
+  const handle = document.getElementById('sidebar-resize-handle');
+  if (!handle) return;
+
+  const STORAGE_KEY = 'sidebar-width';
+  const MIN_WIDTH = 220;
+  const MAX_WIDTH = 500;
+
+  // Restore saved width on desktop
+  function applySavedWidth() {
+    if (window.innerWidth < 768) return;
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const w = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, parseInt(saved, 10)));
+      sidebar.style.width = w + 'px';
+    }
+  }
+  applySavedWidth();
+
+  let dragging = false;
+
+  handle.addEventListener('mousedown', function (e) {
+    if (window.innerWidth < 768) return;
+    e.preventDefault();
+    dragging = true;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, e.clientX));
+    sidebar.style.width = newWidth + 'px';
+  });
+
+  document.addEventListener('mouseup', function () {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem(STORAGE_KEY, parseInt(sidebar.style.width, 10));
+  });
+
+  // Reset to default width on mobile resize
+  window.addEventListener('resize', function () {
+    if (window.innerWidth < 768) {
+      sidebar.style.width = '';
+    } else {
+      applySavedWidth();
+    }
+  });
+})();
