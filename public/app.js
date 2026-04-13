@@ -5945,6 +5945,7 @@ function showKbContextMenu(x, y, entry, depth) {
 
   if (!isDir) {
     items.push({ label: 'Duplicate', action: () => duplicateKbFile(entry.path) });
+    items.push({ label: 'Export', action: () => showKbExportModal(entry.path, entry.name) });
   }
 
   items.push({ label: 'Copy Path', action: () => {
@@ -5984,6 +5985,86 @@ function showKbContextMenu(x, y, entry, depth) {
   const vh = window.innerHeight;
   menu.style.left = (x + menuRect.width > vw ? vw - menuRect.width - 4 : x) + 'px';
   menu.style.top = (y + menuRect.height > vh ? vh - menuRect.height - 4 : y) + 'px';
+}
+
+// KB Export
+let kbExportCurrentFile = null;
+
+function showKbExportModal(filePath, fileName) {
+  kbExportCurrentFile = { path: filePath, name: fileName };
+  document.getElementById('kb-export-filename').textContent = fileName;
+  document.getElementById('kb-export-overlay').style.display = '';
+}
+
+function dismissKbExportModal() {
+  document.getElementById('kb-export-overlay').style.display = 'none';
+  kbExportCurrentFile = null;
+}
+
+async function exportKbFileToPdf() {
+  if (!kbExportCurrentFile) return;
+  const { path: filePath, name: fileName } = kbExportCurrentFile;
+  dismissKbExportModal();
+
+  // Open window synchronously within the click handler to avoid popup blockers
+  const printWin = window.open('', '_blank');
+  if (!printWin) {
+    alert('Popup blocked — please allow popups for this page to export.');
+    return;
+  }
+  printWin.document.write('<html><body style="font-family:sans-serif;padding:24px">Preparing export…</body></html>');
+
+  try {
+    const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
+    const data = await res.json();
+    if (data.error) { printWin.close(); alert('Export failed: ' + data.error); return; }
+
+    const html = renderKbMarkdown(data.content);
+    const isIOS = /iPad|iPhone|iPod/i.test(navigator.userAgent);
+    const hint = isIOS
+      ? 'Tap the <strong>Share</strong> button ↑, then tap <strong>Print</strong> to save as PDF to Files.'
+      : 'In the print dialog, choose <strong>Save as PDF</strong> to select where to save.';
+
+    printWin.document.open();
+    printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(fileName)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; color: #111; margin: 0; padding: 24px 40px; max-width: 800px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    h2 { font-size: 18px; } h3 { font-size: 16px; }
+    h1, h2, h3, h4 { line-height: 1.3; margin-top: 1.4em; }
+    code { font-family: 'Courier New', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 0.88em; }
+    pre { background: #f4f4f4; padding: 12px 16px; border-radius: 4px; overflow-x: auto; }
+    pre code { background: none; padding: 0; }
+    blockquote { border-left: 3px solid #ccc; margin: 0 0 0 4px; padding-left: 14px; color: #555; }
+    table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+    th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+    th { background: #f0f0f0; }
+    a { color: #0070f3; }
+    img { max-width: 100%; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 1.5em 0; }
+    .kb-frontmatter { display: none; }
+    .wiki-link { color: #0070f3; }
+    .export-hint { background: #fff8e1; border: 1px solid #ffe082; border-radius: 4px; padding: 8px 12px; font-size: 13px; color: #5d4037; margin-bottom: 20px; }
+    @media print { .export-hint { display: none; } }
+  </style>
+</head>
+<body>
+  <p class="export-hint">${hint}</p>
+  <h1>${escapeHtml(fileName)}</h1>
+  ${html}
+  <script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`);
+    printWin.document.close();
+  } catch (err) {
+    printWin.close();
+    alert('Export failed: ' + err.message);
+  }
 }
 
 // Duplicate a file: copy content to "Name (copy).md" and enter rename mode

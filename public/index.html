@@ -494,6 +494,22 @@
     </div>
   </div>
 
+  <!-- KB Export Modal -->
+  <div id="kb-export-overlay" class="kb-export-overlay" style="display:none" onclick="if(event.target===this)dismissKbExportModal()">
+    <div class="kb-export-dialog">
+      <div class="kb-export-header">Export</div>
+      <div class="kb-export-body">
+        <div class="kb-export-filename" id="kb-export-filename"></div>
+        <button class="kb-export-option" onclick="exportKbFileToPdf()">
+          <span class="kb-export-option-icon">&#8595;</span> Export to PDF
+        </button>
+      </div>
+      <div class="kb-export-actions">
+        <button class="kb-export-cancel" onclick="dismissKbExportModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Permission Request Dialog -->
   <div id="permission-overlay" class="permission-overlay" style="display:none">
     <div class="permission-dialog">
