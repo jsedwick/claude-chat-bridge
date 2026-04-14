@@ -507,11 +507,11 @@ const ACTION_MENU_ITEMS = [
   { label: 'Attach Image', icon: 'image', action: 'image' },
   { label: 'Voice Dictation', icon: 'mic', action: 'voice', desktopOnly: true },
   { divider: true },
-  { label: 'Workflow', icon: 'play', command: '/workflow', flyout: 'workflows' },
-  { label: 'Close Session', icon: 'check-circle', command: '/close', flyout: 'close' },
+  { label: 'Workflow', icon: 'play', command: '/vault:workflow', flyout: 'workflows' },
+  { label: 'Close Session', icon: 'check-circle', command: '/vault:close', flyout: 'close' },
   { divider: true },
-  { label: 'Tasks', icon: 'check-square', command: '/tasks', flyout: 'tasks' },
-  { label: 'Issue', icon: 'alert-triangle', command: '/issue', flyout: 'issues' },
+  { label: 'Tasks', icon: 'check-square', command: '/vault:tasks', flyout: 'tasks' },
+  { label: 'Issue', icon: 'alert-triangle', command: '/vault:issue', flyout: 'issues' },
 ];
 
 const ACTION_ICONS = {
@@ -585,7 +585,7 @@ async function showFlyout(wrapperEl, type) {
 
   // Static flyout for close — "No Git" option
   if (type === 'close') {
-    flyoutMenu.innerHTML = `<button class="flyout-item" onclick="fireCommand('/close-no-git')">
+    flyoutMenu.innerHTML = `<button class="flyout-item" onclick="fireCommand('/vault:close-no-git')">
       <span class="flyout-item-label">Close (No Git)</span>
       <span class="flyout-item-desc">Skip git operations</span>
     </button>`;
@@ -595,7 +595,7 @@ async function showFlyout(wrapperEl, type) {
 
   // Static flyout for tasks — single "All Tasks" option
   if (type === 'tasks') {
-    flyoutMenu.innerHTML = `<button class="flyout-item" onclick="fireCommand('/all-tasks')">
+    flyoutMenu.innerHTML = `<button class="flyout-item" onclick="fireCommand('/vault:all-tasks')">
       <span class="flyout-item-label">All Tasks</span>
       <span class="flyout-item-desc">Work + Personal combined</span>
     </button>`;
@@ -2531,8 +2531,8 @@ async function createNewSession() {
     newChatBtn.disabled = true;
     if (sidebar.classList.contains('open')) toggleSidebar();
 
-    // Auto-send /work or /personal based on active mode tab
-    const modeCommand = currentMode === 'personal' ? '/personal' : '/work';
+    // Auto-send /vault:work or /vault:personal based on active mode tab
+    const modeCommand = currentMode === 'personal' ? '/vault:personal' : '/vault:work';
     messageInput.value = modeCommand;
     sendMessage();
   } catch (err) {
@@ -6715,8 +6715,8 @@ async function startFromTopic() {
     loadSessions();
     switchView('sessions');
 
-    // Auto-send /work or /personal based on current mode
-    const modeCommand = currentMode === 'personal' ? '/personal' : '/work';
+    // Auto-send /vault:work or /vault:personal based on current mode
+    const modeCommand = currentMode === 'personal' ? '/vault:personal' : '/vault:work';
     messageInput.value = modeCommand;
     await sendMessage();
 
@@ -6765,8 +6765,8 @@ async function continueFromSession() {
     loadSessions();
     switchView('sessions');
 
-    // Auto-send /work or /personal based on current mode
-    const modeCommand2 = currentMode === 'personal' ? '/personal' : '/work';
+    // Auto-send /vault:work or /vault:personal based on current mode
+    const modeCommand2 = currentMode === 'personal' ? '/vault:personal' : '/vault:work';
     messageInput.value = modeCommand2;
     await sendMessage();
 

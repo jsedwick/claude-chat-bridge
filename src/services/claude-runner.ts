@@ -153,6 +153,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--verbose',
     '--include-partial-messages',
     '--dangerously-skip-permissions',
+    '--plugin-dir', '/Users/jsedwick/Projects/obsidian-claude-plugin',
   ];
 
   if (hasImages) {
@@ -164,7 +165,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   }
 
   if (mode && mode !== 'work') {
-    args.push('--append-system-prompt', `You are in ${mode} mode. Run /${mode} at the start of this session to load the correct vault context.`);
+    args.push('--append-system-prompt', `You are in ${mode} mode. Run /vault:${mode} at the start of this session to load the correct vault context.`);
   }
 
   if (sessionId) {
