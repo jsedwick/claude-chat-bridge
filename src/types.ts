@@ -17,6 +17,8 @@ export interface ChatSession {
   messageCount: number;
   messages: ChatMessage[];
   archived?: boolean;
+  trashed?: boolean;
+  trashedAt?: string;
   closedAt?: string;
   handoff?: string;
   sessionFilePath?: string;

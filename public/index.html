@@ -59,6 +59,16 @@
         </button>
         <div id="archive-list" class="archive-list" style="display: none;"></div>
       </div>
+      <div class="trash-section">
+        <button class="trash-toggle" onclick="toggleTrashSection()">
+          <svg class="trash-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+          <span>Trash</span>
+          <span id="trash-count" class="trash-count">0</span>
+        </button>
+        <div id="trash-list" class="trash-list" style="display: none;"></div>
+      </div>
     </div>
     <!-- KB Browser view (sidebar file tree) -->
     <div id="kb-view" class="kb-sidebar" style="display:none">

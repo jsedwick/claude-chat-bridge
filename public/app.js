@@ -1925,15 +1925,18 @@ async function loadSessions() {
     sessionListEl.innerHTML = '<div class="sidebar-loading">Loading sessions…</div>';
   }
   try {
-    const [activeRes, archivedRes] = await Promise.all([
+    const [activeRes, archivedRes, trashedRes] = await Promise.all([
       fetchWithRetry(`/api/sessions?mode=${currentMode}`, {}, { retries: 2 }),
       fetchWithRetry(`/api/sessions?mode=${currentMode}&archived=true`, {}, { retries: 2 }),
+      fetchWithRetry(`/api/sessions?mode=${currentMode}&trashed=true`, {}, { retries: 2 }),
     ]);
     const activeSessions = await activeRes.json();
     const allSessions = await archivedRes.json();
     const archivedSessions = allSessions.filter(s => s.archived);
+    const trashedSessions = await trashedRes.json();
     renderSessionList(activeSessions);
     renderArchiveList(archivedSessions);
+    renderTrashList(trashedSessions);
   } catch (err) {
     console.error('Failed to load sessions:', err);
     // Keep existing content if available, otherwise show error
@@ -1943,21 +1946,31 @@ async function loadSessions() {
   }
 }
 
-function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, forkCount = 0 } = {}) {
+function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, forkCount = 0, isTrashed = false } = {}) {
   const isFork = forkDepth > 0;
-  const actions = isArchived
-    ? `<div class="session-item-actions">
+  let actions;
+  if (isTrashed) {
+    actions = `<div class="session-item-actions">
+         <button class="session-item-action" onclick="event.stopPropagation(); restoreSessionItem('${s.id}')" title="Restore">
+           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+         </button>
+         <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); permanentlyDeleteSessionItem('${s.id}')" title="Delete permanently">&times;</button>
+       </div>`;
+  } else if (isArchived) {
+    actions = `<div class="session-item-actions">
          <button class="session-item-action" onclick="event.stopPropagation(); unarchiveSessionItem('${s.id}')" title="Unarchive">
            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
          </button>
-         <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')" title="Delete permanently">&times;</button>
-       </div>`
-    : `<div class="session-item-actions">
+         <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')" title="Delete">&times;</button>
+       </div>`;
+  } else {
+    actions = `<div class="session-item-actions">
          <button class="session-item-action" onclick="event.stopPropagation(); archiveSessionItem('${s.id}')" title="Archive">
            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
          </button>
          <button class="session-item-action session-item-action-danger" onclick="event.stopPropagation(); deleteSessionItem('${s.id}')" title="Delete">&times;</button>
        </div>`;
+  }
 
   const forkBadge = forkCount > 0
     ? `<span class="session-fork-badge" title="${forkCount} fork${forkCount > 1 ? 's' : ''}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="3" r="1"/><circle cx="6" cy="21" r="1"/><circle cx="18" cy="21" r="1"/><path d="M12 4v6m0 0c-3.5 0-6 4-6 10m6-10c3.5 0 6 4 6 10"/></svg>${forkCount}</span>`
@@ -1967,7 +1980,7 @@ function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, f
   const indentStyle = forkDepth > 0 ? ` style="margin-left:${forkDepth * 20}px"` : '';
 
   return `
-    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''} ${forkClasses}"
+    <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${isTrashed ? 'trashed' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''} ${forkClasses}"
          onclick="switchSession('${s.id}')"${indentStyle}>
       ${isFork ? '<span class="session-fork-branch"></span>' : ''}
       ${actions}
@@ -1997,7 +2010,7 @@ function buildForkTree(sessions) {
   return { forksByParent, forkIds };
 }
 
-function renderForkChildren(html, parentId, isArchived, forksByParent, depth) {
+function renderForkChildren(html, parentId, isArchived, forksByParent, depth, { isTrashed = false } = {}) {
   const forks = forksByParent.get(parentId) || [];
   forks.forEach((fork, i) => {
     const childForks = forksByParent.get(fork.id) || [];
@@ -2006,10 +2019,11 @@ function renderForkChildren(html, parentId, isArchived, forksByParent, depth) {
       forkDepth: depth,
       isLastFork: isLastInGroup,
       forkCount: childForks.length,
+      isTrashed,
     }));
     // Recurse into nested forks at the same depth (they visually chain downward)
     if (childForks.length > 0) {
-      renderForkChildren(html, fork.id, isArchived, forksByParent, depth + 1);
+      renderForkChildren(html, fork.id, isArchived, forksByParent, depth + 1, { isTrashed });
     }
   });
 }
@@ -2080,6 +2094,65 @@ async function unarchiveSessionItem(id) {
     loadSessions();
   } catch (err) {
     console.error('Failed to unarchive session:', err);
+  }
+}
+
+function renderTrashList(sessions) {
+  const countEl = document.getElementById('trash-count');
+  const listEl = document.getElementById('trash-list');
+  countEl.textContent = sessions.length;
+  if (!sessions.length) {
+    listEl.innerHTML = '<div class="trash-empty">No deleted sessions</div>';
+    return;
+  }
+  const { forksByParent, forkIds } = buildForkTree(sessions);
+  const html = [];
+  for (const s of sessions) {
+    if (forkIds.has(s.id)) continue;
+    const forks = forksByParent.get(s.id) || [];
+    html.push(renderSessionItem(s, false, { forkCount: forks.length, isTrashed: true }));
+    renderForkChildren(html, s.id, false, forksByParent, 1, { isTrashed: true });
+  }
+  listEl.innerHTML = html.join('');
+}
+
+function toggleTrashSection() {
+  const listEl = document.getElementById('trash-list');
+  const chevron = document.querySelector('.trash-chevron');
+  const isOpen = listEl.style.display !== 'none';
+  listEl.style.display = isOpen ? 'none' : 'block';
+  chevron.classList.toggle('expanded', !isOpen);
+}
+
+async function restoreSessionItem(id) {
+  try {
+    await fetchWithRetry(`/api/sessions/${id}/restore`, { method: 'POST' });
+    loadSessions();
+  } catch (err) {
+    console.error('Failed to restore session:', err);
+  }
+}
+
+async function permanentlyDeleteSessionItem(id) {
+  if (!confirm('Permanently delete this session? This cannot be undone.')) return;
+  try {
+    await fetchWithRetry(`/api/sessions/${id}?permanent=true`, { method: 'DELETE' });
+    sessionInputDrafts.delete(id);
+    if (currentSessionId === id) {
+      currentSessionId = null;
+      chatTitle.textContent = getAppTitle();
+      currentWorkingDir = '';
+      currentSessionCreated = '';
+      currentClosedAt = '';
+      welcomeEl.style.display = '';
+      inputArea.style.display = 'none';
+      document.querySelector('.dir-picker-wrapper').style.display = 'none';
+      document.getElementById('session-details-panel').style.display = 'none';
+      clearMessages();
+    }
+    loadSessions();
+  } catch (err) {
+    console.error('Failed to permanently delete session:', err);
   }
 }
 
@@ -2529,7 +2602,6 @@ async function switchSession(id) {
 }
 
 async function deleteSessionItem(id) {
-  if (!confirm('Delete this session?')) return;
   try {
     await fetchWithRetry(`/api/sessions/${id}`, { method: 'DELETE' });
     sessionInputDrafts.delete(id);

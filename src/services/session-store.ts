@@ -27,7 +27,7 @@ export function listAllSessions(): ChatSession[] {
 
 export function listSessions(): ChatSession[] {
   return sessions
-    .filter(s => !s.archived)
+    .filter(s => !s.archived && !s.trashed)
     .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
 }
 
@@ -56,8 +56,14 @@ export function createSession(name?: string, workingDir?: string, model?: string
 
 export function listSessionsByMode(mode: string, includeArchived = false): ChatSession[] {
   return sessions
-    .filter(s => (s.mode || 'work') === mode && (includeArchived || !s.archived))
+    .filter(s => (s.mode || 'work') === mode && !s.trashed && (includeArchived || !s.archived))
     .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
+}
+
+export function listTrashedSessionsByMode(mode: string): ChatSession[] {
+  return sessions
+    .filter(s => (s.mode || 'work') === mode && s.trashed)
+    .sort((a, b) => new Date(b.trashedAt || b.lastActivity).getTime() - new Date(a.trashedAt || a.lastActivity).getTime());
 }
 
 export function archiveSession(id: string): ChatSession | undefined {
@@ -74,6 +80,41 @@ export function unarchiveSession(id: string): ChatSession | undefined {
   session.archived = false;
   save();
   return session;
+}
+
+export function trashSession(id: string): { session?: ChatSession; evicted: string[] } {
+  const session = sessions.find(s => s.id === id);
+  if (!session) return { evicted: [] };
+  session.trashed = true;
+  session.trashedAt = new Date().toISOString();
+  session.archived = false; // unarchive if it was archived
+  save();
+  const evicted = enforceTrashedCap(session.mode || 'work');
+  return { session, evicted };
+}
+
+export function restoreSession(id: string): ChatSession | undefined {
+  const session = sessions.find(s => s.id === id);
+  if (!session || !session.trashed) return undefined;
+  session.trashed = false;
+  delete session.trashedAt;
+  save();
+  return session;
+}
+
+/** Enforce FIFO cap on trashed sessions per mode. Returns IDs of permanently deleted sessions. */
+function enforceTrashedCap(mode: string): string[] {
+  const trashed = sessions
+    .filter(s => (s.mode || 'work') === mode && s.trashed)
+    .sort((a, b) => new Date(a.trashedAt || a.lastActivity).getTime() - new Date(b.trashedAt || b.lastActivity).getTime());
+
+  const evictedIds: string[] = [];
+  while (trashed.length > config.maxTrashedSessions) {
+    const oldest = trashed.shift()!;
+    evictedIds.push(oldest.id);
+    deleteSession(oldest.id); // uses deleteSession to preserve fork re-parenting
+  }
+  return evictedIds;
 }
 
 export function updateSession(id: string, updates: Partial<ChatSession>): ChatSession | undefined {
@@ -206,7 +247,7 @@ export function forkSession(sourceId: string, messageIndex: number): ChatSession
 export function getForkPoints(sessionId: string): Record<number, { id: string; name: string }[]> {
   const forks: Record<number, { id: string; name: string }[]> = {};
   for (const s of sessions) {
-    if (s.forkedFrom?.sessionId === sessionId && !s.archived) {
+    if (s.forkedFrom?.sessionId === sessionId && !s.archived && !s.trashed) {
       const idx = s.forkedFrom.messageIndex;
       if (!forks[idx]) forks[idx] = [];
       forks[idx].push({ id: s.id, name: s.name });

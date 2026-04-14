@@ -1,7 +1,7 @@
 import { config } from '../config';
 import { cancelByAppSession, appSessionMap } from './claude-runner';
 import { clearSessionPermissions } from './permissions';
-import { listAllSessions, archiveSession, deleteSession } from './session-store';
+import { listAllSessions, archiveSession, trashSession, deleteSession } from './session-store';
 
 export function cleanupSessionResources(sessionId: string): void {
   cancelByAppSession(sessionId);
@@ -16,14 +16,26 @@ export function startReaper(): NodeJS.Timeout {
     for (const session of sessions) {
       const age = now - new Date(session.lastActivity).getTime();
 
-      if (!session.archived && age > config.autoArchiveAfterMs) {
+      if (session.trashed) {
+        // Permanently delete trashed sessions after autoDeleteAfterMs
+        const trashedAge = now - new Date(session.trashedAt || session.lastActivity).getTime();
+        if (trashedAge > config.autoDeleteAfterMs) {
+          console.log(`[reaper] Auto-deleting trashed session "${session.name}" (in trash ${Math.round(trashedAge / 86400000)}d)`);
+          cleanupSessionResources(session.id);
+          deleteSession(session.id);
+        }
+      } else if (!session.archived && age > config.autoArchiveAfterMs) {
         console.log(`[reaper] Auto-archiving session "${session.name}" (inactive ${Math.round(age / 86400000)}d)`);
         cleanupSessionResources(session.id);
         archiveSession(session.id);
       } else if (session.archived && age > config.autoDeleteAfterMs) {
-        console.log(`[reaper] Auto-deleting archived session "${session.name}" (inactive ${Math.round(age / 86400000)}d)`);
+        // Archived sessions go to trash instead of permanent deletion
+        console.log(`[reaper] Auto-trashing archived session "${session.name}" (inactive ${Math.round(age / 86400000)}d)`);
         cleanupSessionResources(session.id);
-        deleteSession(session.id);
+        const { evicted } = trashSession(session.id);
+        for (const evictedId of evicted) {
+          cleanupSessionResources(evictedId);
+        }
       }
     }
   }, config.sessionTimeoutMs);

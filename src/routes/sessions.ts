@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { listSessions, listSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
+import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, trashSession, restoreSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
 import { getMode, setMode, Mode, config, getMcpConfigPath } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
@@ -38,8 +38,13 @@ function isWithinAllowedPaths(targetPath: string, allowedPaths: string[]): boole
 router.get('/', (req: Request, res: Response) => {
   const mode = req.query.mode as string | undefined;
   const includeArchived = req.query.archived === 'true';
+  const trashedOnly = req.query.trashed === 'true';
   if (mode === 'work' || mode === 'personal') {
-    res.json(listSessionsByMode(mode, includeArchived));
+    if (trashedOnly) {
+      res.json(listTrashedSessionsByMode(mode));
+    } else {
+      res.json(listSessionsByMode(mode, includeArchived));
+    }
   } else {
     res.json(listSessions());
   }
@@ -356,6 +361,29 @@ router.post('/:id/unarchive', (req: Request, res: Response) => {
   res.json(session);
 });
 
+router.post('/:id/trash', (req: Request, res: Response) => {
+  cleanupSessionResources(req.params.id as string);
+  const { session, evicted } = trashSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  // Clean up resources for any sessions evicted by the FIFO cap
+  for (const evictedId of evicted) {
+    cleanupSessionResources(evictedId);
+  }
+  res.json(session);
+});
+
+router.post('/:id/restore', (req: Request, res: Response) => {
+  const session = restoreSession(req.params.id as string);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found or not in trash' });
+    return;
+  }
+  res.json(session);
+});
+
 router.get('/:id', (req: Request, res: Response) => {
   const session = getSession(req.params.id as string);
   if (!session) {
@@ -403,13 +431,29 @@ router.patch('/:id', (req: Request, res: Response) => {
 });
 
 router.delete('/:id', (req: Request, res: Response) => {
-  cleanupSessionResources(req.params.id as string);
-  const deleted = deleteSession(req.params.id as string);
-  if (!deleted) {
-    res.status(404).json({ error: 'Session not found' });
-    return;
+  const permanent = req.query.permanent === 'true';
+  if (permanent) {
+    // Permanent delete (from trash)
+    cleanupSessionResources(req.params.id as string);
+    const deleted = deleteSession(req.params.id as string);
+    if (!deleted) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    res.status(204).end();
+  } else {
+    // Soft delete — move to trash
+    cleanupSessionResources(req.params.id as string);
+    const { session, evicted } = trashSession(req.params.id as string);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    for (const evictedId of evicted) {
+      cleanupSessionResources(evictedId);
+    }
+    res.json(session);
   }
-  res.status(204).end();
 });
 
 export default router;
