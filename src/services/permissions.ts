@@ -97,7 +97,7 @@ const BASH_ASK_PATTERNS = [
   /\bdd\s/,
   /\bmkfs\b/,
   /\bfdisk\b/,
-  />\s*\//,                          // redirect to absolute path
+  />\s*\/(?!dev\/null\b)/,             // redirect to absolute path (but not /dev/null)
 ];
 
 // ---------------------------------------------------------------------------
