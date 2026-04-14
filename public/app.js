@@ -2436,6 +2436,11 @@ async function createNewSession() {
       body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel() }),
     });
     const session = await res.json();
+
+    // Check directory trust before proceeding
+    const trusted = await ensureDirectoryTrusted(session);
+    if (!trusted) return;
+
     currentSessionId = session.id;
     chatTitle.textContent = session.name;
     currentWorkingDir = session.workingDir || '';
@@ -4320,6 +4325,54 @@ async function respondPermission(decision, allowAll) {
   }
 
   addTypingIndicator();
+}
+
+// ============================================================
+// Directory Trust Dialog
+// ============================================================
+
+let pendingTrustDir = null;
+let pendingTrustResolve = null;
+
+function showDirectoryTrustDialog(dir) {
+  pendingTrustDir = dir;
+  document.getElementById('trust-dir-path').textContent = dir;
+  document.getElementById('trust-overlay').style.display = 'flex';
+}
+
+async function respondDirectoryTrust(trusted) {
+  document.getElementById('trust-overlay').style.display = 'none';
+  const dir = pendingTrustDir;
+  pendingTrustDir = null;
+
+  if (trusted && dir) {
+    try {
+      await fetch('/api/permissions/directory-trust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir }),
+      });
+    } catch (err) {
+      console.error('[trust] Failed to trust directory:', err);
+    }
+  }
+
+  if (pendingTrustResolve) {
+    pendingTrustResolve(trusted);
+    pendingTrustResolve = null;
+  }
+}
+
+/**
+ * Check if a directory is trusted. If not, show the trust dialog and wait.
+ * Returns true if the user trusts or already trusted, false if denied.
+ */
+function ensureDirectoryTrusted(session) {
+  if (!session.workingDir || session.directoryTrusted !== false) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    pendingTrustResolve = resolve;
+    showDirectoryTrustDialog(session.workingDir);
+  });
 }
 
 // ============================================================
@@ -6573,6 +6626,10 @@ async function startFromTopic() {
     });
     const session = await res.json();
 
+    // Check directory trust before proceeding
+    const trusted = await ensureDirectoryTrusted(session);
+    if (!trusted) return;
+
     // Switch to chat view
     currentSessionId = session.id;
     chatTitle.textContent = session.name;
@@ -6618,6 +6675,10 @@ async function continueFromSession() {
       body: JSON.stringify({ workingDir }),
     });
     const session = await res.json();
+
+    // Check directory trust before proceeding
+    const trusted2 = await ensureDirectoryTrusted(session);
+    if (!trusted2) return;
 
     // Switch to chat view
     currentSessionId = session.id;

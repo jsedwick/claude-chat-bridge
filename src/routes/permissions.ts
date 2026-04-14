@@ -3,10 +3,10 @@ import { getAppSessionByClaudeId, emitToStream } from '../services/claude-runner
 import { getSession } from '../services/session-store';
 import { getObsidianRoot } from '../config';
 import {
-  isAutoAllowed,
-  isBashAskCommand,
-  isToolAskCommand,
+  checkPermission,
   isSessionAllowed,
+  isDirectoryTrusted,
+  trustDirectory,
   createPermissionRequest,
   resolvePermission,
   getPendingForSession,
@@ -32,41 +32,38 @@ router.post('/request', async (req: Request, res: Response) => {
     return;
   }
 
-  // Bash: check for git add/commit/push BEFORE generic auto-allow
-  if (tool_name === 'Bash') {
-    if (!isBashAskCommand(tool_input || {})) {
-      console.log(`[permissions] auto-allow bash: ${(tool_input?.command as string || '').substring(0, 80)}`);
-      res.json({ decision: 'allow' });
-      return;
-    }
-    // Falls through to vault-dir check, session-allow, or permission dialog
-  } else if (isToolAskCommand(tool_name)) {
-    // Tool explicitly requires permission — falls through to permission dialog
-    console.log(`[permissions] tool requires permission: ${tool_name}`);
-  } else if (isAutoAllowed(tool_name)) {
-    // Auto-allow all other non-Bash tools
-    console.log(`[permissions] auto-allow: ${tool_name}`);
-    res.json({ decision: 'allow' });
-    return;
-  }
-
-  // Auto-allow git operations inside vault directories (no confirmation needed)
-  const VAULT_DIRS = [getObsidianRoot() + '/'];
   const session = getSession(appSessionId);
-  if (session?.workingDir && VAULT_DIRS.some(v => session.workingDir!.startsWith(v))) {
-    console.log(`[permissions] auto-allow (vault dir): ${tool_name} in ${session.workingDir}`);
+  const workingDir = session?.workingDir;
+
+  // Auto-allow all operations inside vault directories (no confirmation needed)
+  const VAULT_DIRS = [getObsidianRoot() + '/'];
+  if (workingDir && VAULT_DIRS.some(v => workingDir.startsWith(v))) {
+    console.log(`[permissions] auto-allow (vault dir): ${tool_name} in ${workingDir}`);
     res.json({ decision: 'allow' });
     return;
   }
 
-  // Check session-level allow-all
+  // Check session-level allow-all (user previously clicked "Allow All" for this tool)
   if (isSessionAllowed(appSessionId, tool_name)) {
     console.log(`[permissions] session-allow: ${tool_name}`);
     res.json({ decision: 'allow' });
     return;
   }
 
-  // Create a pending permission request and emit to the client
+  // Run the unified permission check
+  const verdict = checkPermission(tool_name, tool_input || {}, workingDir);
+
+  if (verdict === 'allow') {
+    const preview = tool_name === 'Bash'
+      ? ((tool_input?.command as string) || '').substring(0, 80)
+      : tool_name;
+    console.log(`[permissions] auto-allow: ${preview}`);
+    res.json({ decision: 'allow' });
+    return;
+  }
+
+  // --- verdict === 'ask' — prompt the user ---
+
   console.log(`[permissions] ASKING USER: ${tool_name}`, tool_input ? JSON.stringify(tool_input).substring(0, 200) : '');
   const decision = createPermissionRequest(appSessionId, tool_name, tool_input || {});
 
@@ -137,6 +134,34 @@ router.post('/respond', (req: Request, res: Response) => {
     console.warn(`[permissions] /respond FAILED: no pending permission for ${requestId}`);
     res.status(404).json({ error: 'No pending permission with that ID' });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Directory trust endpoints
+// ---------------------------------------------------------------------------
+
+// Check if a directory is trusted
+router.get('/directory-trust', (req: Request, res: Response) => {
+  const dir = req.query.dir as string;
+  if (!dir) {
+    res.status(400).json({ error: 'dir query parameter required' });
+    return;
+  }
+
+  res.json({ dir, trusted: isDirectoryTrusted(dir) });
+});
+
+// Trust a directory
+router.post('/directory-trust', (req: Request, res: Response) => {
+  const { dir } = req.body;
+  if (!dir) {
+    res.status(400).json({ error: 'dir required' });
+    return;
+  }
+
+  trustDirectory(dir);
+  console.log(`[permissions] directory trusted: ${dir}`);
+  res.json({ status: 'ok', dir });
 });
 
 export default router;

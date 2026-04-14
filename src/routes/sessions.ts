@@ -7,6 +7,7 @@ import { listSessions, listSessionsByMode, createSession, deleteSession, getSess
 import { getMode, setMode, Mode, config, getMcpConfigPath } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
+import { isDirectoryTrusted } from '../services/permissions';
 
 const router = Router();
 
@@ -60,7 +61,8 @@ router.post('/', (req: Request, res: Response) => {
     }
   }
   const session = createSession(name, workingDir || undefined, model || undefined);
-  res.status(201).json(session);
+  const trusted = workingDir ? isDirectoryTrusted(workingDir) : true;
+  res.status(201).json({ ...session, directoryTrusted: trusted });
 });
 
 // Allowed root directories for the directory picker
