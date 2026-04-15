@@ -163,6 +163,17 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           }
         } catch {}
         addMessage(sessionId, 'usage', usageData);
+
+        // End the HTTP response now — don't wait for process exit.
+        // With plugins/monitors, the Claude process may outlive the response,
+        // but the client has everything it needs after 'done'.
+        clearInterval(keepalive);
+        if (!clientDisconnected) {
+          try {
+            res.end();
+          } catch {}
+        }
+        clientDisconnected = true;
       }
     },
     onClose: (claudeSessionId) => {
