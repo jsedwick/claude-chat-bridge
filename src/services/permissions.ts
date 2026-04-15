@@ -152,8 +152,8 @@ export function checkPermission(
   // 1. Always-safe tools
   if (ALWAYS_ALLOW_TOOLS.has(toolName)) return 'allow';
 
-  // 2. MCP tools matching always-allow patterns (e.g. search_vault, get_topic_context)
-  if (/^mcp__/.test(toolName) && !/(code_file|update_document)$/.test(toolName)) {
+  // 2. MCP tools — auto-allow all except code_file (which writes to project code)
+  if (/^mcp__/.test(toolName) && !/code_file$/.test(toolName)) {
     return 'allow';
   }
 
