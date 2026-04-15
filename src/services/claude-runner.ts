@@ -47,6 +47,10 @@ function closeStream(appSessionId: string): void {
   const stream = activeStreams.get(appSessionId);
   if (stream) {
     stream.done = true;
+    // Cancel any existing cleanup timer before starting a new one —
+    // prevents orphaned timeouts when closeStream is called multiple times
+    // (e.g., early cleanup on done + proc.on('close') for monitor processes).
+    if (stream.cleanupTimer) clearTimeout(stream.cleanupTimer);
     // Clean up after TTL — store handle so getOrCreateStream can cancel if reused
     stream.cleanupTimer = setTimeout(() => activeStreams.delete(appSessionId), STREAM_BUFFER_TTL);
   }
@@ -88,7 +92,11 @@ export function getActiveAppSessionIds(): string[] {
 }
 
 export function isSessionBusy(sessionId: string): boolean {
-  return activeSessions.has(sessionId);
+  // Check both maps: activeSessions is keyed by Claude session ID (or 'pending-...'),
+  // appSessionMap is keyed by app session ID. When claudeSessionId hasn't been persisted
+  // yet (process still running due to monitors), the caller falls back to appSessionId,
+  // which only exists in appSessionMap.
+  return activeSessions.has(sessionId) || appSessionMap.has(sessionId);
 }
 
 export function killSession(sessionId: string): void {
@@ -305,6 +313,25 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
             }),
           });
+
+          // Clean up immediately on done — don't wait for process exit.
+          // With plugin monitors, the CLI process outlives the response indefinitely,
+          // leaving the session in activeSessions/appSessionMap (blocks new sessions,
+          // causes sidebar pulse, and allows duplicate message sends).
+          activeSessions.delete(trackingId);
+          appSessionMap.delete(appSessionId);
+          if (capturedSessionId) {
+            claudeToAppMap.delete(capturedSessionId);
+            if (trackingId !== capturedSessionId) {
+              activeSessions.delete(capturedSessionId);
+            }
+          }
+          // Remove this listener so events from a future process on the same
+          // session don't trigger duplicate saves via this closure's onEvent.
+          stream.listeners.delete(onEvent);
+          // Mark stream as done so reconnect replays buffer instead of
+          // subscribing and waiting for a process that's only running monitors.
+          closeStream(appSessionId);
         }
       } catch {
         // Non-JSON line — check if it looks like an error message from Claude Code

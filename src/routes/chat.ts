@@ -161,6 +161,17 @@ router.post('/:sessionId', (req: Request, res: Response) => {
             const { result_text: _, ...rest } = doneData;
             usageData = JSON.stringify(rest);
           }
+          // Persist claudeSessionId immediately — don't wait for process exit.
+          // With monitors, proc.on('close') (and thus onClose) can be delayed
+          // indefinitely, leaving claudeSessionId unset and allowing the busy
+          // check to be bypassed on subsequent messages.
+          if (doneData.session_id) {
+            updateSession(sessionId, {
+              claudeSessionId: doneData.session_id,
+              lastMessage: message.substring(0, 200),
+              messageCount: session.messageCount + 1,
+            });
+          }
         } catch {}
         addMessage(sessionId, 'usage', usageData);
 
@@ -179,11 +190,14 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     onClose: (claudeSessionId) => {
       console.log(`[sse:${sessionId.slice(0, 8)}] STREAM_CLOSE total=${sseEventCount} disconnected=${clientDisconnected} textLen=${assistantText.length}`);
       clearInterval(keepalive);
-      // Save accumulated assistant response
+      // Save accumulated assistant response (normally empty — cleared on done event,
+      // but covers edge cases where process exits before done)
       if (assistantText) {
         addMessage(sessionId, 'assistant', assistantText);
       }
-      // Update session metadata
+      // Update session metadata — claudeSessionId is persisted on done event now,
+      // but onClose is the fallback for processes that exit without a result event
+      // (e.g., crash, auth failure). lastMessage/messageCount may already be set.
       updateSession(sessionId, {
         claudeSessionId: claudeSessionId || session.claudeSessionId,
         lastMessage: message.substring(0, 200),
