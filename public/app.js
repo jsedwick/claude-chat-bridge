@@ -70,11 +70,9 @@ async function restoreMessages(sessionId, sessionMeta) {
     }
     // Add fork badges to messages that have been forked from
     try {
-      const forkRes = await fetch(`/api/sessions/${sessionId}/forks`);
-      if (forkRes.ok) {
-        const forkPoints = await forkRes.json();
-        addForkBadges(forkPoints);
-      }
+      const forkRes = await fetchWithRetry(`/api/sessions/${sessionId}/forks`);
+      const forkPoints = await forkRes.json();
+      addForkBadges(forkPoints);
     } catch {}
     scrollToBottom();
   } catch (err) {
@@ -115,7 +113,7 @@ function saveModel(value) {
   localStorage.setItem('chat-bridge-model', value);
   // Persist to current session
   if (currentSessionId) {
-    fetch(`/api/sessions/${currentSessionId}`, {
+    fetchWithRetry(`/api/sessions/${currentSessionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: value }),
@@ -207,7 +205,7 @@ async function renderDirRoots(container, onSelect) {
   container.style.display = 'block';
 
   try {
-    const res = await fetch('/api/sessions/dirs/roots');
+    const res = await fetchWithRetry('/api/sessions/dirs/roots');
     const roots = await res.json();
 
     container.innerHTML = '';
@@ -363,7 +361,7 @@ function toggleDirPicker() {
     dirPicker.style.display = 'none';
     if (dirPath === currentWorkingDir) return;
     try {
-      await fetch(`/api/sessions/${currentSessionId}`, {
+      await fetchWithRetry(`/api/sessions/${currentSessionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workingDir: dirPath }),
@@ -408,7 +406,7 @@ let pendingAgentToolIds = new Set();
 // Initialize — always start in work mode on page load
 (async () => {
   try {
-    await fetch('/api/sessions/mode/current', {
+    await fetchWithRetry('/api/sessions/mode/current', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: 'work' }),
@@ -425,7 +423,7 @@ let pendingAgentToolIds = new Set();
 // Check for CLI version change on page load (non-blocking)
 async function checkVersionOnStartup() {
   try {
-    const res = await fetch('/api/settings/version');
+    const res = await fetchWithRetry('/api/settings/version');
     const data = await res.json();
     versionData = data;
     if (data.updateAvailable || data.versionChanged) {
@@ -464,7 +462,7 @@ async function dismissVersionBanner() {
   // Acknowledge current version so it doesn't show again next load
   if (versionData?.currentVersion) {
     try {
-      await fetch('/api/settings/version/acknowledge', {
+      await fetchWithRetry('/api/settings/version/acknowledge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: versionData.currentVersion }),
@@ -528,8 +526,7 @@ const ACTION_ICONS = {
 async function fetchFlyoutData(type) {
   if (type === 'tasks' || type === 'close') return null; // Static flyouts, no API needed
   try {
-    const res = await fetch(`/api/vault/${type}`);
-    if (!res.ok) return [];
+    const res = await fetchWithRetry(`/api/vault/${type}`);
     return await res.json();
   } catch { return []; }
 }
@@ -2218,7 +2215,7 @@ async function renameAppTitle() {
 
   // Fetch persona from server
   try {
-    const res = await fetch('/api/settings/persona');
+    const res = await fetchWithRetry('/api/settings/persona');
     const data = await res.json();
     textarea.value = data.persona || '';
   } catch {
@@ -2247,7 +2244,7 @@ async function savePersonaModal() {
 
   // Save persona to server
   try {
-    await fetch('/api/settings/persona', {
+    await fetchWithRetry('/api/settings/persona', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ persona: textarea.value }),
@@ -2286,7 +2283,7 @@ function startEditing(id, el) {
     }
     if (name === originalText) return;
     try {
-      await fetch(`/api/sessions/${id}`, {
+      await fetchWithRetry(`/api/sessions/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -2360,7 +2357,7 @@ function buildSessionFileList() {
   // Scan stored messages for tool calls
   if (!currentSessionId) return;
 
-  fetch(`/api/sessions/${currentSessionId}/messages`)
+  fetchWithRetry(`/api/sessions/${currentSessionId}/messages`)
     .then(r => r.json())
     .then(msgs => {
       for (const msg of msgs) {
@@ -2457,7 +2454,7 @@ async function toggleFileDiff(itemEl, filePath) {
   itemEl.classList.add('diff-open');
 
   try {
-    const res = await fetch(`/api/sessions/${currentSessionId}/file-diff?path=${encodeURIComponent(filePath)}`);
+    const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/file-diff?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
     if (data.diff) {
       diffEl.innerHTML = `<pre class="tool-diff">${renderDiffBlock(data.diff)}</pre>`;
@@ -2483,7 +2480,7 @@ async function loadHandoffNotes() {
   if (!currentClosedAt || !currentSessionId) return;
 
   try {
-    const res = await fetch(`/api/sessions/${currentSessionId}/handoff`);
+    const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/handoff`);
     const data = await res.json();
     if (!data.handoff) return;
 
@@ -2527,12 +2524,11 @@ async function saveHandoff() {
   if (!currentSessionId) return;
 
   try {
-    const res = await fetch(`/api/sessions/${currentSessionId}/handoff`, {
+    const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/handoff`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ handoff }),
     });
-    if (!res.ok) throw new Error('Save failed');
 
     const display = document.getElementById('handoff-display');
     display.innerHTML = escapeHtml(handoff).replace(/\n/g, '<br>');
@@ -2545,7 +2541,7 @@ async function saveHandoff() {
 async function createNewSession() {
   if (!selectedNewChatDir) return;
   try {
-    const res = await fetch('/api/sessions', {
+    const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel() }),
@@ -2596,7 +2592,7 @@ async function switchSession(id) {
   // Restore target session's draft
   messageInput.value = sessionInputDrafts.get(id) || '';
   messageInput.style.height = 'auto';
-  const res = await fetch(`/api/sessions/${id}`);
+  const res = await fetchWithRetry(`/api/sessions/${id}`);
   const session = await res.json();
   chatTitle.textContent = session.name;
   currentWorkingDir = session.workingDir || '';
@@ -2630,12 +2626,10 @@ async function switchSession(id) {
   // Immediately check for pending permission on this session (don't wait for 2s poll)
   if (!pendingPermissionId && permissionBlockedSessions.has(id)) {
     try {
-      const permRes = await fetch(`/api/permissions/pending/${id}`);
-      if (permRes.ok) {
-        const pending = await permRes.json();
-        if (pending && pending.id) {
-          showPermissionDialog(pending.id, pending.toolName, pending.toolInput);
-        }
+      const permRes = await fetchWithRetry(`/api/permissions/pending/${id}`);
+      const pending = await permRes.json();
+      if (pending && pending.id) {
+        showPermissionDialog(pending.id, pending.toolName, pending.toolInput);
       }
     } catch (err) {
       console.error('[permission] immediate check failed:', err);
@@ -3774,7 +3768,7 @@ async function cancelStream() {
     addInfoMessage('Queued message cancelled');
   }
   try {
-    await fetch(`/api/chat/${currentSessionId}/cancel`, { method: 'POST' });
+    await fetchWithRetry(`/api/chat/${currentSessionId}/cancel`, { method: 'POST' });
   } catch (err) {
     console.error('Failed to cancel:', err);
   }
@@ -4456,7 +4450,7 @@ async function respondPermission(decision, allowAll) {
   console.log(`[permission] responding: decision=${decision} allowAll=${!!allowAll} requestId=${pendingPermissionId}`);
 
   try {
-    const res = await fetch('/api/permissions/respond', {
+    const res = await fetchWithRetry('/api/permissions/respond', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4467,9 +4461,6 @@ async function respondPermission(decision, allowAll) {
     });
     const body = await res.json();
     console.log(`[permission] respond status=${res.status}`, body);
-    if (!res.ok) {
-      console.error(`[permission] respond FAILED: ${res.status}`, body);
-    }
   } catch (err) {
     console.error('[permission] respond fetch error:', err);
   }
@@ -4519,7 +4510,7 @@ async function respondDirectoryTrust(trusted) {
 
   if (trusted && dir) {
     try {
-      await fetch('/api/permissions/directory-trust', {
+      await fetchWithRetry('/api/permissions/directory-trust', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dir }),
@@ -4635,7 +4626,7 @@ function showSettingsSection(section) {
 
 async function loadSettings() {
   try {
-    const res = await fetch('/api/settings');
+    const res = await fetchWithRetry('/api/settings');
     settingsData = await res.json();
   } catch {
     settingsData = { primaryVaults: [], secondaryVaults: [], security: { accessControl: { allowedPaths: [] } } };
@@ -4645,7 +4636,7 @@ async function loadSettings() {
 
 async function saveSettings() {
   try {
-    await fetch('/api/settings', {
+    await fetchWithRetry('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settingsData),
@@ -4967,7 +4958,7 @@ async function renderGoogleVoiceSelector() {
   // Show API key status
   const statusEl = document.getElementById('google-tts-key-status');
   try {
-    const keyResp = await fetch('/api/tts/api-key');
+    const keyResp = await fetchWithRetry('/api/tts/api-key');
     const keyData = await keyResp.json();
     if (statusEl) {
       statusEl.textContent = keyData.configured
@@ -5085,7 +5076,7 @@ async function saveGoogleTTSKey() {
 
   const apiKey = input.value.trim();
   try {
-    const resp = await fetch('/api/tts/api-key', {
+    const resp = await fetchWithRetry('/api/tts/api-key', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey }),
@@ -5169,7 +5160,7 @@ async function renderUpdatesSettings(container) {
   `;
 
   try {
-    const res = await fetch('/api/settings/version');
+    const res = await fetchWithRetry('/api/settings/version');
     versionData = await res.json();
   } catch {
     container.querySelector('.version-status').innerHTML =
@@ -5233,7 +5224,7 @@ async function renderUpdatesSettings(container) {
   // Acknowledge current version as seen (dismisses startup banner)
   if (currentVersion) {
     try {
-      await fetch('/api/settings/version/acknowledge', {
+      await fetchWithRetry('/api/settings/version/acknowledge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: currentVersion }),
@@ -5253,7 +5244,7 @@ async function updateClaudeCli() {
   if (!statusEl) return;
   statusEl.innerHTML = '<div class="version-loading">Updating Claude Code CLI...</div>';
   try {
-    const res = await fetch('/api/settings/update-cli', { method: 'POST' });
+    const res = await fetchWithRetry('/api/settings/update-cli', { method: 'POST' }, { timeout: 120000 });
     const data = await res.json();
     if (data.success) {
       statusEl.innerHTML = `
@@ -5290,7 +5281,7 @@ async function pullProjectUpdates() {
   if (!statusEl) return;
   statusEl.innerHTML = '<div class="version-loading">Pulling updates &amp; building...</div>';
   try {
-    const res = await fetch('/api/settings/git-pull', { method: 'POST' });
+    const res = await fetchWithRetry('/api/settings/git-pull', { method: 'POST' }, { timeout: 300000 });
     const data = await res.json();
     const anyBuilt = data.results.some(r => r.built);
     const allSuccess = data.results.every(r => r.success);
@@ -5354,7 +5345,7 @@ async function renderPathsSettings(container) {
   if (!bridgePathsData) {
     container.innerHTML = '<div class="settings-loading">Loading...</div>';
     try {
-      const res = await fetch('/api/settings/bridge-paths');
+      const res = await fetchWithRetry('/api/settings/bridge-paths');
       bridgePathsData = await res.json();
     } catch {
       container.innerHTML = '<div class="settings-section-desc">Failed to load bridge paths.</div>';
@@ -5396,7 +5387,7 @@ async function saveBridgePaths() {
     if (el) updates[key] = el.value.trim();
   }
   try {
-    const res = await fetch('/api/settings/bridge-paths', {
+    const res = await fetchWithRetry('/api/settings/bridge-paths', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -5454,7 +5445,7 @@ async function saveConfigPath() {
     input.value = newPath;
   }
   try {
-    const res = await fetch('/api/settings/config-path', {
+    const res = await fetchWithRetry('/api/settings/config-path', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: newPath }),
@@ -5682,7 +5673,7 @@ let kbPendingNavigation = null; // set by navigateToKbFile/openSessionInKb to pr
 // --- KB Preferences: server-side persistence ---
 
 function saveKbPreferences(partial) {
-  fetch('/api/settings/kb-preferences', {
+  fetchWithRetry('/api/settings/kb-preferences', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(partial),
@@ -5691,7 +5682,7 @@ function saveKbPreferences(partial) {
 
 async function loadKbPreferences() {
   try {
-    const resp = await fetch('/api/settings/kb-preferences');
+    const resp = await fetchWithRetry('/api/settings/kb-preferences');
     const prefs = await resp.json();
     kbBookmarks = prefs.bookmarks || [];
     kbPrefsLoaded = true;
@@ -5799,7 +5790,7 @@ async function kbSearchDocs(query) {
   const treeEl = document.getElementById('kb-tree');
   const resultsEl = document.getElementById('kb-search-results');
   try {
-    const res = await fetch(`/api/vault/kb/search?q=${encodeURIComponent(query)}`);
+    const res = await fetchWithRetry(`/api/vault/kb/search?q=${encodeURIComponent(query)}`);
     const data = await res.json();
 
     // If input changed while fetching, discard stale results
@@ -5849,7 +5840,7 @@ function escapeRegex(str) {
 async function loadBridgePaths() {
   try {
     // Derive vault info from MCP config (Vault Setup)
-    const res = await fetch('/api/settings');
+    const res = await fetchWithRetry('/api/settings');
     const data = await res.json();
     const allVaults = [...(data.primaryVaults || []), ...(data.secondaryVaults || [])];
     VAULT_NAMES = allVaults.map(v => v.name);
@@ -5935,7 +5926,7 @@ async function loadKbTree(dirPath) {
     ? `/api/vault/kb/tree?path=${encodeURIComponent(dirPath)}`
     : '/api/vault/kb/tree';
   try {
-    const res = await fetch(url);
+    const res = await fetchWithRetry(url);
     const data = await res.json();
     if (data.error) return null;
     kbTreeCache.set(data.path, data.entries);
@@ -5960,7 +5951,7 @@ async function kbMoveFile(sourcePath, destDirPath) {
   const fileName = sourcePath.split('/').pop();
   const destination = destDirPath + '/' + fileName;
   try {
-    const res = await fetch('/api/vault/kb/move', {
+    const res = await fetchWithRetry('/api/vault/kb/move', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: sourcePath, destination }),
@@ -5991,7 +5982,7 @@ async function deleteKbFile(filePath, dirPath) {
   const fileName = filePath.split('/').pop();
   if (!confirm(`Delete "${fileName}"?`)) return;
   try {
-    const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`, { method: 'DELETE' });
+    const res = await fetchWithRetry(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.error) {
       alert('Delete failed: ' + data.error);
@@ -6039,7 +6030,7 @@ async function createKbDir(dirPath) {
   }
 
   try {
-    const res = await fetch('/api/vault/kb/dir', {
+    const res = await fetchWithRetry('/api/vault/kb/dir', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: newPath }),
@@ -6070,7 +6061,7 @@ async function deleteKbDir(dirPath) {
   const dirName = dirPath.split('/').pop();
   if (!confirm(`Delete folder "${dirName}"? (must be empty)`)) return;
   try {
-    const res = await fetch(`/api/vault/kb/dir?path=${encodeURIComponent(dirPath)}`, { method: 'DELETE' });
+    const res = await fetchWithRetry(`/api/vault/kb/dir?path=${encodeURIComponent(dirPath)}`, { method: 'DELETE' });
     const data = await res.json();
     if (data.error) {
       alert('Delete folder failed: ' + data.error);
@@ -6108,7 +6099,7 @@ function startKbRenameDir(entryPath, nameEl) {
     const parentDir = entryPath.substring(0, entryPath.lastIndexOf('/'));
     const newPath = parentDir + '/' + newName;
     try {
-      const res = await fetch('/api/vault/kb/move', {
+      const res = await fetchWithRetry('/api/vault/kb/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: entryPath, destination: newPath }),
@@ -6268,7 +6259,7 @@ async function exportKbFileToPdf() {
   printWin.document.write('<html><body style="font-family:sans-serif;padding:24px">Preparing export…</body></html>');
 
   try {
-    const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
+    const res = await fetchWithRetry(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
     if (data.error) { printWin.close(); alert('Export failed: ' + data.error); return; }
 
@@ -6324,7 +6315,7 @@ async function exportKbFileToPdf() {
 async function duplicateKbFile(filePath) {
   try {
     // Read source content
-    const readRes = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
+    const readRes = await fetchWithRetry(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
     const readData = await readRes.json();
     if (readData.error) { alert('Duplicate failed: ' + readData.error); return; }
 
@@ -6344,7 +6335,7 @@ async function duplicateKbFile(filePath) {
     }
 
     // Create the new file
-    const createRes = await fetch('/api/vault/kb/file', {
+    const createRes = await fetchWithRetry('/api/vault/kb/file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: copyPath }),
@@ -6354,7 +6345,7 @@ async function duplicateKbFile(filePath) {
 
     // Write the content
     if (readData.content) {
-      await fetch('/api/vault/kb/file', {
+      await fetchWithRetry('/api/vault/kb/file', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: createData.path, content: readData.content }),
@@ -6409,7 +6400,7 @@ async function createKbFile(dirPath, childrenContainer, chevron, depth) {
   }
 
   try {
-    const res = await fetch('/api/vault/kb/file', {
+    const res = await fetchWithRetry('/api/vault/kb/file', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: filePath }),
@@ -6459,7 +6450,7 @@ function startKbRename(entryPath, nameEl) {
     const dir = entryPath.substring(0, entryPath.lastIndexOf('/'));
     const newPath = dir + '/' + newName + '.md';
     try {
-      const res = await fetch('/api/vault/kb/move', {
+      const res = await fetchWithRetry('/api/vault/kb/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: entryPath, destination: newPath }),
@@ -6791,7 +6782,7 @@ async function startFromTopic() {
 
   try {
     // Create a new session using the last selected working directory (or none)
-    const res = await fetch('/api/sessions', {
+    const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workingDir: selectedNewChatDir || currentWorkingDir }),
@@ -6841,7 +6832,7 @@ async function continueFromSession() {
 
   try {
     // Create a new session with the same working directory
-    const res = await fetch('/api/sessions', {
+    const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workingDir }),
@@ -6940,7 +6931,7 @@ async function expandKbPathTo(filePath) {
 async function loadKbFile(filePath, { skipHistory = false } = {}) {
   kbPendingNavigation = null;
   try {
-    const res = await fetch(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
+    const res = await fetchWithRetry(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
     if (data.error) return;
 
@@ -7237,7 +7228,7 @@ async function loadKbRecentFiles() {
   container.innerHTML = '<div class="kb-bookmarks-empty">Loading…</div>';
 
   try {
-    const resp = await fetch('/api/vault/kb/recent');
+    const resp = await fetchWithRetry('/api/vault/kb/recent');
     const data = await resp.json();
 
     if (!data.results || data.results.length === 0) {
@@ -7314,7 +7305,7 @@ async function navigateWikiLink(el) {
   const target = el.dataset.target;
   const contextPath = kbCurrentFile?.path || '';
   try {
-    const res = await fetch(`/api/vault/kb/resolve-link?name=${encodeURIComponent(target)}&context=${encodeURIComponent(contextPath)}`);
+    const res = await fetchWithRetry(`/api/vault/kb/resolve-link?name=${encodeURIComponent(target)}&context=${encodeURIComponent(contextPath)}`);
     const data = await res.json();
     if (data.path) {
       loadKbFile(data.path);
@@ -7377,7 +7368,7 @@ async function toggleKbDiff() {
   document.getElementById('kb-diff').innerHTML = '<div class="kb-diff-loading">Loading diff...</div>';
 
   try {
-    const res = await fetch(`/api/vault/kb/diff?path=${encodeURIComponent(kbCurrentFile.path)}`);
+    const res = await fetchWithRetry(`/api/vault/kb/diff?path=${encodeURIComponent(kbCurrentFile.path)}`);
     const data = await res.json();
 
     if (!data.diff) {
@@ -7623,7 +7614,7 @@ function cleanToastMarkdown(md) {
 
 async function fetchKbTemplates() {
   try {
-    const res = await fetch('/api/vault/kb/templates');
+    const res = await fetchWithRetry('/api/vault/kb/templates');
     const data = await res.json();
     kbTemplatesCache = data.templates || [];
   } catch {
@@ -7711,7 +7702,7 @@ async function applyTemplate(template) {
   if (!kbEditor) return;
 
   try {
-    const res = await fetch('/api/vault/kb/file?path=' + encodeURIComponent(template.path));
+    const res = await fetchWithRetry('/api/vault/kb/file?path=' + encodeURIComponent(template.path));
     const data = await res.json();
     if (data.content == null) return;
 
@@ -7758,7 +7749,7 @@ async function kbAutosave() {
   if (content === kbCurrentFile.content) return;
   try {
     showKbSaveStatus('Saving...');
-    const res = await fetch('/api/vault/kb/file', {
+    const res = await fetchWithRetry('/api/vault/kb/file', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: kbCurrentFile.path, content }),
@@ -7787,7 +7778,7 @@ async function saveKbFile() {
   const editorContent = cleanToastMarkdown(rawContent);
   const content = getCurrentFrontmatter() + editorContent;
   try {
-    const res = await fetch('/api/vault/kb/file', {
+    const res = await fetchWithRetry('/api/vault/kb/file', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: kbCurrentFile.path, content }),
