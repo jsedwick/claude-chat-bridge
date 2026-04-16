@@ -577,6 +577,38 @@ function buildActionMenu() {
   });
 }
 
+function flyoutCategoryStorageKey(type) {
+  return `chat-bridge-flyout-expanded-${type}`;
+}
+
+function getExpandedFlyoutCategories(type) {
+  try {
+    const raw = localStorage.getItem(flyoutCategoryStorageKey(type));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function toggleFlyoutCategory(headerEl, type) {
+  const group = headerEl.closest('.flyout-group');
+  if (!group) return;
+  const cat = headerEl.dataset.category;
+  const nowCollapsed = group.classList.toggle('collapsed');
+  headerEl.setAttribute('aria-expanded', String(!nowCollapsed));
+  const expanded = getExpandedFlyoutCategories(type);
+  if (nowCollapsed) {
+    expanded.delete(cat);
+  } else {
+    expanded.add(cat);
+  }
+  try {
+    localStorage.setItem(flyoutCategoryStorageKey(type), JSON.stringify([...expanded]));
+  } catch {}
+}
+
 async function showFlyout(wrapperEl, type) {
   const data = await fetchFlyoutData(type);
 
@@ -622,8 +654,8 @@ async function showFlyout(wrapperEl, type) {
         if (!b) return 1;
         return a.localeCompare(b);
       });
+      const expanded = getExpandedFlyoutCategories(type);
       flyoutMenu.innerHTML = sortedKeys.map(cat => {
-        const header = cat ? `<div class="flyout-group-header">${cat.replace(/-/g, ' ')}</div>` : '';
         const buttons = groups[cat].map(item => {
           const label = (item.slug.includes('/') ? item.slug.split('/').pop() : item.slug).replace(/-/g, ' ');
           const subtitle = item.description || '';
@@ -632,7 +664,17 @@ async function showFlyout(wrapperEl, type) {
             ${subtitle ? `<span class="flyout-item-desc">${subtitle}</span>` : ''}
           </button>`;
         }).join('');
-        return header + buttons;
+        if (!cat) return buttons;
+        const isExpanded = expanded.has(cat);
+        const collapsedCls = isExpanded ? '' : ' collapsed';
+        const catAttr = cat.replace(/"/g, '&quot;');
+        return `<div class="flyout-group${collapsedCls}">
+          <button type="button" class="flyout-group-header" onclick="toggleFlyoutCategory(this, '${type}')" data-category="${catAttr}" aria-expanded="${isExpanded}">
+            <span class="flyout-group-chevron" aria-hidden="true">▸</span>
+            <span class="flyout-group-label">${cat.replace(/-/g, ' ')}</span>
+          </button>
+          <div class="flyout-group-body">${buttons}</div>
+        </div>`;
       }).join('');
     } else {
       flyoutMenu.innerHTML = items.map(item => {
