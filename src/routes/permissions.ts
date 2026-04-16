@@ -4,6 +4,7 @@ import { getSession } from '../services/session-store';
 import { getObsidianRoot } from '../config';
 import {
   checkPermission,
+  isNeverAllowed,
   isSessionAllowed,
   isDirectoryTrusted,
   trustDirectory,
@@ -35,6 +36,14 @@ router.post('/request', async (req: Request, res: Response) => {
   const session = getSession(appSessionId);
   const workingDir = session?.workingDir;
 
+  // Deny tools incompatible with bridge context before any early-return allows.
+  // Without this, the vault-dir and session-allow checks below would let them through.
+  if (isNeverAllowed(tool_name)) {
+    console.log(`[permissions] auto-deny (incompatible with bridge): ${tool_name}`);
+    res.json({ decision: 'deny' });
+    return;
+  }
+
   // Auto-allow all operations inside vault directories (no confirmation needed)
   const VAULT_DIRS = [getObsidianRoot() + '/'];
   if (workingDir && VAULT_DIRS.some(v => workingDir.startsWith(v))) {
@@ -52,6 +61,12 @@ router.post('/request', async (req: Request, res: Response) => {
 
   // Run the unified permission check
   const verdict = checkPermission(tool_name, tool_input || {}, workingDir);
+
+  if (verdict === 'deny') {
+    console.log(`[permissions] auto-deny (incompatible with bridge): ${tool_name}`);
+    res.json({ decision: 'deny' });
+    return;
+  }
 
   if (verdict === 'allow') {
     const preview = tool_name === 'Bash'

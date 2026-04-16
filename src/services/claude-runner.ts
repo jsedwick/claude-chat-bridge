@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import { randomBytes } from 'crypto';
 import { config } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
 
@@ -187,9 +188,15 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     args.push(message);
   }
 
+  // W3C Trace Context — correlates bridge logs ↔ Claude CLI ↔ Anthropic API
+  const traceId = randomBytes(16).toString('hex');
+  const spanId = randomBytes(8).toString('hex');
+  const traceparent = `00-${traceId}-${spanId}-01`;
+  console.log(`[trace:${appSessionId.slice(0,8)}] traceparent=${traceparent}`);
+
   const proc = spawn(config.claudePath, args, {
     cwd: workingDir || config.workingDir,
-    env: { ...process.env, CHAT_BRIDGE_SESSION: appSessionId, ...(mode ? { VAULT_MODE: mode } : {}) },
+    env: { ...process.env, CHAT_BRIDGE_SESSION: appSessionId, TRACEPARENT: traceparent, ...(mode ? { VAULT_MODE: mode } : {}) },
     stdio: [hasImages ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   });
 
@@ -311,6 +318,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               cache_read_input_tokens: usage?.cache_read_input_tokens,
               // Include final response text for recovery when text_delta events are lost
               result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
+              trace_id: traceId,
             }),
           });
 
@@ -409,6 +417,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
                 cache_creation_input_tokens: usage?.cache_creation_input_tokens,
                 cache_read_input_tokens: usage?.cache_read_input_tokens,
                 result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
+                trace_id: traceId,
               }),
             });
           }

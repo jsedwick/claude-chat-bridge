@@ -23,6 +23,19 @@ interface PendingPermission {
 // what the Claude Code CLI would normally prompt for in its default mode.
 // ---------------------------------------------------------------------------
 
+// Tools that are never allowed in bridge context — auto-deny without prompting.
+// These are scheduling/remote-control tools designed for interactive CLI sessions.
+// In -p mode the process exits before any timer fires, but --resume now resurrects
+// unexpired scheduled tasks (v2.1.110), so we block creation entirely to prevent
+// zombie tasks that get resurrected on every message but never execute.
+const NEVER_ALLOW_TOOLS = new Set([
+  'ScheduleWakeup',   // delayed re-execution (min 60s) — process exits before it fires
+  'CronCreate',       // persistent cron triggers — no daemon to run them in -p mode
+  'CronDelete',       // no crons to delete, but block for consistency
+  'CronList',         // harmless read, but signals intent to use crons
+  'RemoteTrigger',    // remote agent execution — out of scope for bridge
+]);
+
 // Tools that are always safe (read-only / session-local) — never prompt
 const ALWAYS_ALLOW_TOOLS = new Set([
   'Read',
@@ -141,14 +154,26 @@ export function trustDirectory(dir: string): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Returns true if the tool is architecturally incompatible with bridge context
+ * and should be denied unconditionally (before any early-return allow logic).
+ */
+export function isNeverAllowed(toolName: string): boolean {
+  return NEVER_ALLOW_TOOLS.has(toolName);
+}
+
+/**
  * Determine whether a tool invocation needs user permission.
- * Returns 'allow' for safe operations, 'ask' when the user should decide.
+ * Returns 'allow' for safe operations, 'ask' when the user should decide,
+ * or 'deny' for tools incompatible with bridge context.
  */
 export function checkPermission(
   toolName: string,
   toolInput: Record<string, unknown>,
   workingDir?: string,
-): 'allow' | 'ask' {
+): 'allow' | 'ask' | 'deny' {
+  // 0. Never-allowed tools (scheduling/remote — incompatible with -p mode)
+  if (NEVER_ALLOW_TOOLS.has(toolName)) return 'deny';
+
   // 1. Always-safe tools
   if (ALWAYS_ALLOW_TOOLS.has(toolName)) return 'allow';
 
