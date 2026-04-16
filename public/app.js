@@ -3093,8 +3093,11 @@ function addToolIndicator(name, id, input) {
     detailHtml = renderToolInput(name, input);
   }
 
-  const icon = isAgent ? '&#9889;' : '&#9881;'; // ⚡ vs ⚙
-  const displayName = isAgent && input?.description ? `Agent: ${input.description}` : name;
+  const isAskUser = name === 'AskUserQuestion';
+  const icon = isAgent ? '&#9889;' : isAskUser ? '&#10067;' : '&#9881;'; // ⚡ vs ❓ vs ⚙
+  const displayName = isAgent && input?.description ? `Agent: ${input.description}` : isAskUser ? 'Question' : name;
+
+  if (isAskUser) item.classList.add('tool-ask-user', 'tool-detail-open');
 
   item.innerHTML = `
     <div class="tool-item-header" onclick="event.stopPropagation(); this.parentElement.classList.toggle('tool-detail-open')">
@@ -3123,6 +3126,15 @@ function updateToolDetails(id, name, input) {
       const iconEl = item.querySelector('.tool-item-icon');
       if (iconEl) iconEl.innerHTML = '&#9889;'; // ⚡
     }
+  }
+
+  // For AskUserQuestion, auto-expand and restyle
+  if (name === 'AskUserQuestion' && !item.classList.contains('tool-ask-user')) {
+    item.classList.add('tool-ask-user', 'tool-detail-open');
+    const nameEl = item.querySelector('.tool-item-name');
+    if (nameEl) nameEl.textContent = 'Question';
+    const iconEl = item.querySelector('.tool-item-icon');
+    if (iconEl) iconEl.innerHTML = '&#10067;'; // ❓
   }
 
   const detailHtml = renderToolInput(name, input);
@@ -3236,6 +3248,22 @@ function renderToolInput(toolName, input) {
     if (input.offset) meta.push(`offset: ${input.offset}`);
     if (input.limit) meta.push(`limit: ${input.limit}`);
     return fileLabel + (meta.length ? `<div class="tool-meta">${escapeHtml(meta.join(', '))}</div>` : '');
+  }
+
+  // AskUserQuestion — show formatted questions with options
+  if (name === 'askuserquestion' && input.questions) {
+    return input.questions.map(q => {
+      const header = q.header ? `<div class="ask-question-tag">${escapeHtml(q.header)}</div>` : '';
+      const multi = q.multiSelect ? ' <span class="ask-question-multi">(select multiple)</span>' : '';
+      const question = `<div class="ask-question-text">${escapeHtml(q.question)}${multi}</div>`;
+      const options = (q.options || []).map(opt =>
+        `<div class="ask-question-option">
+          <span class="ask-option-label">${escapeHtml(opt.label)}</span>
+          ${opt.description ? `<span class="ask-option-desc">${escapeHtml(opt.description)}</span>` : ''}
+        </div>`
+      ).join('');
+      return `<div class="ask-question">${header}${question}<div class="ask-question-options">${options}</div></div>`;
+    }).join('');
   }
 
   // Generic fallback for tools with small input
@@ -3775,6 +3803,28 @@ async function sendMessage(skipRender = false) {
   let streamCompleted = false;
   let everRenderedText = false; // Track if ANY text was rendered (survives tool_use clears)
   let slowApiTimer = null;
+  const renderedAskQuestions = new Set(); // Track AskUserQuestion tool IDs already rendered to chat
+
+  function renderAskUserQuestionInChat(toolId, questions) {
+    if (renderedAskQuestions.has(toolId)) return;
+    renderedAskQuestions.add(toolId);
+    const md = questions.map(q => {
+      const parts = [];
+      if (q.header) parts.push(`**${q.header}**\n`);
+      parts.push(q.question);
+      if (q.multiSelect) parts.push(' *(select multiple)*');
+      parts.push('');
+      for (const opt of (q.options || [])) {
+        const desc = opt.description ? ` — ${opt.description}` : '';
+        parts.push(`- **${opt.label}**${desc}`);
+      }
+      return parts.join('\n');
+    }).join('\n\n---\n\n');
+    const el = createAssistantMessage();
+    el.innerHTML = renderMarkdown(md);
+    ensureCopyButton(el);
+    scrollToBottom();
+  }
 
   function showSlowApiIndicator() {
     if (document.getElementById('slow-api-indicator')) return;
@@ -3879,6 +3929,10 @@ async function sendMessage(skipRender = false) {
           try {
             const tool = JSON.parse(data);
             addToolIndicator(tool.name, tool.id, tool.input);
+            // Render AskUserQuestion as visible chat text
+            if (tool.name === 'AskUserQuestion' && tool.input?.questions) {
+              renderAskUserQuestionInChat(tool.id, tool.input.questions);
+            }
             // Track active Agent (subagent) calls
             if (tool.name === 'Agent') {
               pendingAgentToolIds.add(tool.id);
@@ -3898,6 +3952,10 @@ async function sendMessage(skipRender = false) {
           try {
             const tool = JSON.parse(data);
             updateToolDetails(tool.id, tool.name, tool.input);
+            // Render AskUserQuestion as visible chat text (if not already rendered by tool_use)
+            if (tool.name === 'AskUserQuestion' && tool.input?.questions) {
+              renderAskUserQuestionInChat(tool.id, tool.input.questions);
+            }
             // Detect close_session finalize — update closed state for handoff display
             if (tool.name?.includes('close_session') && tool.input?.finalize) {
               currentClosedAt = new Date().toISOString();

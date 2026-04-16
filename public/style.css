@@ -1911,6 +1911,85 @@ pre.streaming {
   opacity: 0.8;
 }
 
+/* AskUserQuestion tool — formatted question display */
+.tool-item.tool-ask-user .tool-item-icon {
+  color: #f59e0b;
+}
+
+.tool-item.tool-ask-user .tool-item-name {
+  color: #f59e0b;
+}
+
+.tool-item.tool-ask-user .tool-item-detail {
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+}
+
+.ask-question {
+  margin-bottom: 8px;
+}
+
+.ask-question + .ask-question {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.ask-question-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-bottom: 4px;
+}
+
+.ask-question-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.ask-question-multi {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.ask-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ask-question-option {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ask-option-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ask-option-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
 /* Structured output cards for MCP tools with outputSchema */
 .struct-header {
   font-size: 13px;
