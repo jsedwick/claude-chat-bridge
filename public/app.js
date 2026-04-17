@@ -1,6 +1,15 @@
 // State
 let currentSessionId = null;
 const streamingSessions = new Set(); // track which sessions are actively streaming
+// When the user returns to a still-streaming session, switchSession() takes over
+// rendering via a fresh reconnect subscription. The originating sendMessage()'s
+// processEvent is silenced for any session in this set so it doesn't double-render.
+const hijackedStreams = new Set();
+// Per-session AbortController for an in-flight replaySessionStream(). Used so
+// switchSession() can cancel a stale replay (whose closure-held assistantEl
+// would point at the cleared DOM after restoreMessages) before starting a
+// fresh one.
+const activeReplayControllers = new Map();
 const sessionInputDrafts = new Map(); // preserve input text per session
 const pendingMessages = new Map(); // queued messages per session (sent when stream completes)
 let currentMode = 'work';
@@ -34,13 +43,25 @@ async function fetchWithRetry(url, options = {}, { timeout = 10000, retries = 0,
 }
 
 // Message history (server-backed)
-async function restoreMessages(sessionId, sessionMeta) {
+async function restoreMessages(sessionId, sessionMeta, opts = {}) {
+  // upToLastUser: stop rendering after the latest user message. Used when the
+  // session is still streaming and a live reconnect will render the in-progress
+  // assistant turn — avoids double-rendering text/tools that were flushed to
+  // persistence at tool_use boundaries.
+  const { upToLastUser = false } = opts;
   console.log('[SSE] restoreMessages called', sessionId, new Error().stack?.split('\n').slice(1,4).join(' <- '));
   clearMessages();
   try {
     const res = await fetchWithRetry(`/api/sessions/${sessionId}/messages`, {}, { retries: 1 });
     const messages = await res.json();
-    for (const msg of messages) {
+    let renderLimit = messages.length;
+    if (upToLastUser) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') { renderLimit = i + 1; break; }
+      }
+    }
+    for (let i = 0; i < renderLimit; i++) {
+      const msg = messages[i];
       if (msg.role === 'user') {
         addUserMessage(msg.content);
       } else if (msg.role === 'assistant') {
@@ -2710,19 +2731,25 @@ async function switchSession(id) {
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
   document.querySelector('.dir-picker-wrapper').style.display = '';
-  await restoreMessages(id, session);
+  const isStreamingOnEntry = streamingSessions.has(id);
+  // Hijack BEFORE the await so the originating sendMessage()'s processEvent
+  // stops rendering live events into the DOM while restoreMessages is in flight
+  // (otherwise those same events get re-rendered by replaySessionStream from
+  // the server buffer, producing duplicates).
+  if (isStreamingOnEntry) hijackedStreams.add(id);
+  await restoreMessages(id, session, { upToLastUser: isStreamingOnEntry });
   loadSessions();
   // Show correct button state for this session
-  if (streamingSessions.has(id)) {
-    // Restore ephemeral "working" cues that aren't persisted server-side.
-    // Only glow the tool group if it's the last element — matches live-stream
-    // semantics where deactivateToolGroup() strips .active once text follows.
-    const last = messagesEl.lastElementChild;
-    if (last && last.classList.contains('tool-group')) last.classList.add('active');
+  if (isStreamingOnEntry) {
+    // Take over rendering via a fresh reconnect subscription so any content
+    // that streamed while away is replayed, and live events continue to render.
     addTypingIndicator();
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'flex';
     messageInput.placeholder = 'Queue a message...';
+    // Fire-and-forget — replaySessionStream runs until the server signals done
+    // or the user switches away again. Not awaited so switchSession can return.
+    replaySessionStream(id);
   } else {
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
@@ -3866,6 +3893,146 @@ async function attemptReconnect(sessionId, processEvent) {
   }
 }
 
+// Take over rendering of a still-streaming session on switch-back.
+// Opens /api/chat/:id/reconnect, which atomically replays the server's SSE
+// buffer (everything the originating sendMessage() dropped while the user was
+// away) and subscribes to remaining live events. Uses its own closure state so
+// it's independent of the originating sendMessage() — which is silenced via
+// hijackedStreams for the duration.
+async function replaySessionStream(sessionId) {
+  // Cancel any in-flight replay for this session so its stale closure state
+  // (assistantEl pointing at a now-cleared DOM) can't keep rendering.
+  const prev = activeReplayControllers.get(sessionId);
+  if (prev) prev.abort();
+  const controller = new AbortController();
+  activeReplayControllers.set(sessionId, controller);
+  let assistantEl = null;
+  let currentText = '';
+  let thinkingEl = null;
+  try {
+    const res = await fetch(`/api/chat/${sessionId}/reconnect`, { signal: controller.signal });
+    if (!res.ok) return;
+    await readSSEStream(res, (type, data) => {
+      // Suppress DOM updates if the user navigated away again mid-replay —
+      // but keep consuming the stream so the fetch drains cleanly.
+      if (currentSessionId !== sessionId) return;
+      try {
+        switch (type) {
+          case 'text':
+            deactivateToolGroup();
+            if (!assistantEl) {
+              assistantEl = createAssistantMessage();
+              addTypingIndicator();
+            }
+            currentText += data;
+            assistantEl.innerHTML = renderMarkdown(currentText);
+            ensureCopyButton(assistantEl);
+            scrollToBottom();
+            break;
+          case 'thinking':
+            if (!thinkingEl) {
+              thinkingEl = addThinkingIndicator();
+              addTypingIndicator();
+            }
+            const contentEl = thinkingEl.querySelector('.thinking-content');
+            if (contentEl) contentEl.textContent += data;
+            break;
+          case 'tool_use':
+            if (assistantEl && currentText) {
+              assistantEl = null;
+              currentText = '';
+            }
+            try {
+              const tool = JSON.parse(data);
+              addToolIndicator(tool.name, tool.id, tool.input);
+              if (tool.name === 'Agent') {
+                pendingAgentToolIds.add(tool.id);
+                updateAgentIndicator();
+              }
+            } catch {
+              addToolIndicator(data, 'unknown');
+            }
+            getOrCreateToolGroup().classList.add('active');
+            addTypingIndicator();
+            break;
+          case 'tool_update':
+            try {
+              const tool = JSON.parse(data);
+              updateToolDetails(tool.id, tool.name, tool.input);
+              if (tool.name?.includes('close_session') && tool.input?.finalize) {
+                currentClosedAt = new Date().toISOString();
+                loadSessions();
+              }
+            } catch {}
+            break;
+          case 'tool_result':
+            try {
+              const result = JSON.parse(data);
+              addToolOutput(result.tool_use_id, result.content);
+              if (pendingAgentToolIds.has(result.tool_use_id)) {
+                pendingAgentToolIds.delete(result.tool_use_id);
+                updateAgentIndicator();
+              }
+            } catch {}
+            break;
+          case 'permission_request':
+            removeTypingIndicator();
+            try {
+              const perm = typeof data === 'string' ? JSON.parse(data) : data;
+              updateSessionBlockedBadge(sessionId, true);
+              showPermissionDialog(perm.id, perm.toolName, perm.toolInput);
+            } catch {}
+            break;
+          case 'error': {
+            const errEl = document.createElement('div');
+            errEl.className = 'message message-error';
+            errEl.textContent = data;
+            messagesEl.appendChild(errEl);
+            scrollToBottom();
+            break;
+          }
+          case 'done':
+            // Safety net (parity with sendMessage's processEvent): if no text
+            // events arrived but the done payload includes result_text, render
+            // it so the assistant message isn't empty.
+            try {
+              const doneData = typeof data === 'string' ? JSON.parse(data) : data;
+              if (!currentText && doneData.result_text) {
+                deactivateToolGroup();
+                if (!assistantEl) assistantEl = createAssistantMessage();
+                currentText = doneData.result_text;
+                assistantEl.innerHTML = renderMarkdown(currentText);
+                ensureCopyButton(assistantEl);
+              }
+            } catch {}
+            removeTypingIndicator();
+            deactivateToolGroup();
+            pendingAgentToolIds.clear();
+            addUsageInfo(data);
+            scrollToBottom();
+            break;
+        }
+      } catch (err) {
+        console.error('replaySessionStream render error:', type, err);
+      }
+    });
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error('replaySessionStream failed:', err);
+  } finally {
+    // Only clear the controller if it's still ours — a newer replay may have
+    // already replaced it via abort+set.
+    if (activeReplayControllers.get(sessionId) === controller) {
+      activeReplayControllers.delete(sessionId);
+    }
+    // Clear hijack flag too in case the originating sendMessage() already
+    // finished (its finally also clears, but if it cleared during the await on
+    // restoreMessages — before switchSession re-set the flag — only this
+    // cleanup will remove the now-stale entry).
+    hijackedStreams.delete(sessionId);
+    if (currentSessionId === sessionId) removeTypingIndicator();
+  }
+}
+
 // Cancel active stream
 async function cancelStream() {
   if (!currentSessionId || !streamingSessions.has(currentSessionId)) return;
@@ -4005,9 +4172,10 @@ async function sendMessage(skipRender = false) {
         console.error('[permission] failed to parse background permission:', err);
       }
     }
-    // Don't update DOM if user switched to a different session
-    if (currentSessionId !== streamSessionId) {
-      logSSE('SESSION_MISMATCH', { type, current: currentSessionId, stream: streamSessionId });
+    // Don't update DOM if user switched to a different session, or if a
+    // switchSession-triggered replay has taken over rendering for this stream.
+    if (currentSessionId !== streamSessionId || hijackedStreams.has(streamSessionId)) {
+      logSSE('SESSION_MISMATCH', { type, current: currentSessionId, stream: streamSessionId, hijacked: hijackedStreams.has(streamSessionId) });
       return;
     }
     try {
@@ -4215,8 +4383,9 @@ async function sendMessage(skipRender = false) {
 
     logSSE('stream_ended', { streamCompleted, textLen: currentText.length });
 
-    // Stream ended without a 'done' event — connection likely dropped (common on mobile)
-    if (!streamCompleted) {
+    // Stream ended without a 'done' event — connection likely dropped (common on mobile).
+    // Skip if a switchSession replay has taken over rendering for this stream.
+    if (!streamCompleted && !hijackedStreams.has(streamSessionId)) {
       logSSE('reconnect:no_done', { textLen: currentText.length });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
       logSSE('reconnect:result', { reconnected, textLen: currentText.length });
@@ -4232,9 +4401,9 @@ async function sendMessage(skipRender = false) {
     }
   } catch (err) {
     logSSE('stream_error', { error: err.message, streamCompleted, textLen: currentText.length });
-    if (currentSessionId === streamSessionId) removeTypingIndicator();
-    // Only attempt reconnect if we were genuinely mid-stream (not completed/cancelled)
-    if (!streamCompleted && err.name !== 'AbortError') {
+    if (currentSessionId === streamSessionId && !hijackedStreams.has(streamSessionId)) removeTypingIndicator();
+    // Only attempt reconnect if we were genuinely mid-stream (not completed/cancelled/hijacked)
+    if (!streamCompleted && err.name !== 'AbortError' && !hijackedStreams.has(streamSessionId)) {
       logSSE('reconnect:after_error', { error: err.message });
       const reconnected = await attemptReconnect(streamSessionId, processEvent);
       logSSE('reconnect:error_result', { reconnected, textLen: currentText.length });
@@ -4248,7 +4417,7 @@ async function sendMessage(skipRender = false) {
           await restoreMessages(streamSessionId);
         }
       }
-    } else if (!streamCompleted && currentSessionId === streamSessionId) {
+    } else if (!streamCompleted && currentSessionId === streamSessionId && !hijackedStreams.has(streamSessionId)) {
       const errEl = document.createElement('div');
       errEl.className = 'message message-error';
       errEl.textContent = err.message;
@@ -4259,6 +4428,7 @@ async function sendMessage(skipRender = false) {
     clearSlowApi();
     if (ttsFaceResponseActive && currentSessionId === streamSessionId) ttsFaceResponseEnd();
     streamingSessions.delete(streamSessionId);
+    hijackedStreams.delete(streamSessionId);
     updateSessionBlockedBadge(streamSessionId, false);
     // Only update DOM if we're still viewing the session that finished
     if (currentSessionId === streamSessionId) {
