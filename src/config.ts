@@ -54,6 +54,8 @@ export const config = {
   // Path to .obsidian-mcp.json — resolved from: env var > bridge-config.json > default
   mcpConfigPath: expandTilde(resolve('CHAT_BRIDGE_MCP_CONFIG', 'mcpConfigPath',
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),
+  pluginDir: expandTilde(resolve('CHAT_BRIDGE_PLUGIN_DIR', 'pluginDir',
+    path.join(home, 'Projects', 'obsidian-claude-plugin'))),
 };
 
 // Derive vault configuration from MCP config (Vault Setup)
@@ -113,6 +115,7 @@ export function getBridgePaths(): Record<string, any> {
     workingDir: config.workingDir,
     claudePath: config.claudePath,
     mcpConfigPath: config.mcpConfigPath,
+    pluginDir: config.pluginDir,
   };
 }
 

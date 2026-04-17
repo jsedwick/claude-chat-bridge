@@ -5356,6 +5356,7 @@ async function renderPathsSettings(container) {
     { key: 'workingDir', label: 'Working Directory', desc: 'Default working directory for new sessions' },
     { key: 'claudePath', label: 'Claude CLI Path', desc: 'Path to the Claude CLI binary' },
     { key: 'mcpConfigPath', label: 'MCP Config Path', desc: 'Path to .obsidian-mcp.json configuration file' },
+    { key: 'pluginDir', label: 'Plugin Directory', desc: 'Path to the obsidian-claude-plugin directory passed to Claude via --plugin-dir' },
   ];
   let html = '<h2 class="settings-title">Paths</h2>';
   html += '<p class="settings-section-desc">Configure file system paths for the bridge. Changes take effect on next server restart.</p>';
@@ -5381,7 +5382,7 @@ async function renderPathsSettings(container) {
 
 async function saveBridgePaths() {
   const updates = {};
-  const stringFields = ['workingDir', 'claudePath', 'mcpConfigPath'];
+  const stringFields = ['workingDir', 'claudePath', 'mcpConfigPath', 'pluginDir'];
   for (const key of stringFields) {
     const el = document.getElementById(`bridge-path-${key}`);
     if (el) updates[key] = el.value.trim();

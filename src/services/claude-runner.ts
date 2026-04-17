@@ -162,7 +162,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--verbose',
     '--include-partial-messages',
     '--dangerously-skip-permissions',
-    '--plugin-dir', '/Users/jsedwick/Projects/obsidian-claude-plugin',
+    '--plugin-dir', config.pluginDir,
   ];
 
   if (hasImages) {
