@@ -1123,13 +1123,16 @@ let ttsGoogleVoicesCache = null; // cached Google Cloud voice list
 let ttsProvider = localStorage.getItem('chat-bridge-tts-provider') || 'browser'; // 'browser' or 'google-cloud'
 
 // Streaming TTS state — progressive sentence-by-sentence playback during response streaming
-let ttsStreamQueue = [];        // sentences waiting to be spoken
+// Queue items: { text, audioPromise?, controller? } — audioPromise/controller present iff prefetched
+let ttsStreamQueue = [];
 let ttsStreamRawText = '';      // accumulated raw markdown from text deltas
 let ttsStreamSentCount = 0;     // number of sentences already queued from accumulated text
 let ttsStreamActive = false;    // is streaming TTS currently accepting new text
 let ttsStreamConsuming = false; // is the consumer currently playing audio
 let ttsStreamDone = false;      // has flush been called (no more sentences coming)
 let ttsStreamStarted = false;   // was streaming TTS activated for current response
+const TTS_PREFETCH_CAP = 3;     // max concurrent Google Cloud synthesis fetches
+let ttsInFlightPrefetches = 0;
 
 function getTTSVoice() {
   const saved = localStorage.getItem('chat-bridge-tts-voice');
@@ -1474,12 +1477,60 @@ function extractTextForTTS(el) {
 // === Streaming TTS: progressive sentence-by-sentence playback during response streaming ===
 
 function ttsStreamReset() {
+  // Abort any in-flight synthesis prefetches so their fetches don't leak or try to play
+  for (const item of ttsStreamQueue) {
+    if (item && item.controller) {
+      try { item.controller.abort(); } catch (_) { /* already aborted */ }
+    }
+  }
   ttsStreamQueue = [];
   ttsStreamRawText = '';
   ttsStreamSentCount = 0;
   ttsStreamActive = false;
   ttsStreamConsuming = false;
   ttsStreamDone = false;
+  ttsInFlightPrefetches = 0;
+}
+
+function ttsStreamEnqueue(sentence) {
+  const item = { text: sentence };
+  // Prefetch synthesis for Google Cloud so audio is (usually) ready by the time it pops
+  if (ttsProvider === 'google-cloud') {
+    ttsStreamStartPrefetch(item);
+  }
+  ttsStreamQueue.push(item);
+}
+
+function ttsStreamStartPrefetch(item) {
+  if (ttsInFlightPrefetches >= TTS_PREFETCH_CAP) return; // cap reached; consumer will kick off later
+  if (item.audioPromise) return;                         // already prefetching
+  const controller = new AbortController();
+  item.controller = controller;
+  ttsInFlightPrefetches++;
+  item.audioPromise = ttsFetchSynthesis(item.text, controller.signal).finally(() => {
+    ttsInFlightPrefetches--;
+    ttsStreamMaybePrefetchNext();
+  });
+}
+
+function ttsStreamMaybePrefetchNext() {
+  if (ttsInFlightPrefetches >= TTS_PREFETCH_CAP) return;
+  const next = ttsStreamQueue.find((it) => it && !it.audioPromise);
+  if (next && ttsProvider === 'google-cloud') ttsStreamStartPrefetch(next);
+}
+
+async function ttsFetchSynthesis(text, signal) {
+  const voiceName = localStorage.getItem('chat-bridge-tts-google-voice') || '';
+  const rate = parseFloat(localStorage.getItem('chat-bridge-tts-rate') || '1.0');
+  const resp = await fetch('/api/tts/synthesize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voiceName: voiceName || undefined, speakingRate: rate }),
+    signal,
+  });
+  if (!resp.ok) throw new Error('synthesize ' + resp.status);
+  const data = await resp.json();
+  return data.audioContent; // base64 MP3
 }
 
 function ttsStreamStart(messageEl) {
@@ -1524,7 +1575,7 @@ function ttsStreamAppend(delta) {
   while (ttsStreamSentCount < completeSentences.length) {
     const sentence = completeSentences[ttsStreamSentCount].trim();
     if (sentence) {
-      ttsStreamQueue.push(sentence);
+      ttsStreamEnqueue(sentence);
       console.log('[TTS:Stream] queued sentence', ttsStreamSentCount, `(${sentence.length} chars)`);
     }
     ttsStreamSentCount++;
@@ -1547,7 +1598,7 @@ function ttsStreamFlush() {
   while (ttsStreamSentCount < allSentences.length) {
     const sentence = allSentences[ttsStreamSentCount].trim();
     if (sentence) {
-      ttsStreamQueue.push(sentence);
+      ttsStreamEnqueue(sentence);
       console.log('[TTS:Stream] flush queued sentence', ttsStreamSentCount, `(${sentence.length} chars)`);
     }
     ttsStreamSentCount++;
@@ -1591,18 +1642,51 @@ async function ttsStreamConsumeNext() {
   }
 
   ttsStreamConsuming = true;
-  const sentence = ttsStreamQueue.shift();
+  const item = ttsStreamQueue.shift();
+  // Shifting opened a slot — prefetch the next unprefetched item if we're on Google Cloud
+  ttsStreamMaybePrefetchNext();
 
-  if (ttsProvider === 'google-cloud') {
-    await ttsStreamSpeakGoogle(sentence);
+  if (item.audioPromise) {
+    // Prefetched (Google Cloud): await the in-flight fetch (usually already resolved) then play
+    await ttsStreamPlayPrefetched(item);
+  } else if (ttsProvider === 'google-cloud') {
+    // Not prefetched — provider switched browser→google-cloud mid-stream. Fall back to inline synth.
+    await ttsStreamSpeakGoogle(item.text);
   } else {
     // Restart mouth animation for this sentence (may have been paused between batches)
     if (!ttsFaceBrowserInterval) ttsFaceBrowserStart();
-    await ttsStreamSpeakBrowser(sentence);
+    await ttsStreamSpeakBrowser(item.text);
   }
 
   // Continue to next sentence
   ttsStreamConsumeNext();
+}
+
+function ttsStreamPlayPrefetched(item) {
+  return new Promise(async (resolve) => {
+    if (ttsGoogleCancelled) { resolve(); return; }
+    try {
+      const audioContent = await item.audioPromise;
+      if (ttsGoogleCancelled) { resolve(); return; }
+      const audio = ttsIOSAudioEl || new Audio();
+      audio.src = 'data:audio/mp3;base64,' + audioContent;
+      audio.load();
+      ttsAudioEl = audio;
+      audio.playbackRate = 1.0;
+      audio.onended = () => resolve();
+      audio.onerror = (e) => {
+        console.warn('[TTS:Stream] Audio playback error:', e);
+        resolve();
+      };
+      ttsFaceConnectAudio(audio);
+      audio.play().catch(() => resolve());
+    } catch (err) {
+      if (err && err.name === 'AbortError') { resolve(); return; }
+      console.warn('[TTS:Stream] Prefetch failed, falling back to browser:', err);
+      await ttsStreamSpeakBrowser(item.text);
+      resolve();
+    }
+  });
 }
 
 function ttsStreamSpeakGoogle(text) {
