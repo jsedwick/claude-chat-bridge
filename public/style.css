@@ -4707,7 +4707,7 @@ pre.streaming {
 }
 
 /* ============================================================
-   TTS Speaking Face Overlay — MCP / Tron
+   TTS Speaking Face Overlay
    ============================================================ */
 
 .tts-face-overlay {
@@ -4733,61 +4733,8 @@ pre.streaming {
   height: 240px;
 }
 
-/* MCP head: dark red-black fill, orange-red angular stroke */
-.tts-face-head {
-  fill: #0d0000;
-  stroke: #cc3300;
-  stroke-width: 2;
-}
-
-/* Circuit grid pattern overlaid on head */
-.tts-face-grid {
-  fill: url(#mcp-grid);
-  opacity: 0.6;
-  animation: grid-pulse 3.5s ease-in-out infinite;
-}
-
-@keyframes grid-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 0.75; }
-}
-
-/* Corner circuit trace details */
-.tts-face-circuit {
-  fill: none;
-  stroke: #550000;
-  stroke-width: 1;
-}
-
-/* Scanlines overlaid on face */
-.tts-face-scanlines {
-  fill: url(#mcp-scanlines);
-  pointer-events: none;
-}
-
-/* Eyes: neon orange-red parallelogram slits */
-.tts-face-eye {
-  fill: #ff4400;
-  filter: url(#mcp-neon);
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-/* Mouth: glowing angular slit */
-.tts-face-mouth {
-  fill: none;
-  stroke: #ff4400;
-  stroke-width: 3;
-  stroke-linecap: square;
-  filter: url(#mcp-neon);
-}
-
-/* Brows: sharp angular lines */
+/* Brow + eye-group share transition (color/stroke set per-SVG below) */
 .tts-face-brow {
-  fill: none;
-  stroke: #cc3300;
-  stroke-width: 2;
-  stroke-linecap: butt;
   transition: transform 0.5s ease;
 }
 
@@ -4801,26 +4748,14 @@ pre.streaming {
   90%, 92% { transform: scaleY(0.05); }
 }
 
-.tts-face-eye {
-  animation: face-blink 4s ease-in-out infinite;
-}
-
-/* Subtle idle bob + CRT flicker */
+/* Subtle idle bob */
 @keyframes face-bob {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-4px); }
 }
 
-@keyframes mcp-flicker {
-  0%, 91%, 100% { opacity: 1; }
-  92% { opacity: 0.80; }
-  94% { opacity: 0.93; }
-  95% { opacity: 0.75; }
-  97% { opacity: 0.97; }
-}
-
 .tts-face-overlay.visible .tts-face-svg-dark {
-  animation: face-bob 4s ease-in-out infinite, mcp-flicker 7s linear infinite;
+  animation: face-bob 4s ease-in-out infinite;
 }
 
 .tts-face-overlay.visible .tts-face-svg-light {
@@ -4869,7 +4804,6 @@ pre.streaming {
 
 .tts-face-glow {
   fill: none;
-  stroke: #ff6600;
   stroke-width: 1.5;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -4906,7 +4840,7 @@ pre.streaming {
 [data-theme="light"] .tts-face-svg-dark { display: none; }
 [data-theme="light"] .tts-face-svg-light { display: block; }
 
-/* ── Light face: friendly element classes ── */
+/* ── Eye blink (both faces share circular eye structure) ── */
 
 .tts-face-eye-light {
   transform-box: fill-box;
@@ -4914,80 +4848,66 @@ pre.streaming {
   animation: face-blink 4s ease-in-out infinite;
 }
 
-.tts-face-eye-white {
-  fill: #ffffff;
-  stroke: #cbd5e1;
-  stroke-width: 1;
-}
+/* ── Light face: friendly element styles ── */
 
-.tts-face-pupil {
-  fill: #3b82f6;
-  filter: url(#friendly-glow);
-}
-
-.tts-face-highlight {
-  fill: #ffffff;
-}
-
-.tts-face-cheek {
-  fill: #fda4af;
-  opacity: 0.4;
-}
-
-/* Ears for light theme face */
-.tts-face-ear {
+.tts-face-svg-light .tts-face-head {
   fill: #fef9f0;
   stroke: #93c5fd;
   stroke-width: 2;
 }
-
-.tts-face-ear-inner {
+.tts-face-svg-light .tts-face-glow { stroke: #3b82f6; }
+.tts-face-svg-light .tts-face-mouth {
+  fill: none;
+  stroke: #374151;
+  stroke-linecap: round;
+  stroke-width: 2.5;
+}
+.tts-face-svg-light .tts-face-brow {
+  fill: none;
+  stroke: #3d2f1f;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+.tts-face-svg-light .tts-face-pupil {
+  fill: #3b82f6;
+  filter: url(#friendly-glow);
+}
+.tts-face-svg-light .tts-face-eye-white {
+  fill: #ffffff;
+  stroke: #cbd5e1;
+  stroke-width: 1;
+}
+.tts-face-svg-light .tts-face-highlight { fill: #ffffff; }
+.tts-face-svg-light .tts-face-ear {
+  fill: #fef9f0;
+  stroke: #93c5fd;
+  stroke-width: 2;
+}
+.tts-face-svg-light .tts-face-ear-inner {
   fill: none;
   stroke: #f0a0b0;
   stroke-width: 1.2;
   stroke-linecap: round;
   opacity: 0.5;
 }
-
-/* Side hair: behind-head ellipse for temple/side coverage */
-.tts-face-side-hair {
-  fill: #6b3d22;
-}
-
-/* Hair: clean side-part style for light theme face */
-.tts-face-hair {
-  fill: #6b3d22;
-}
-
-.tts-face-hair-sheen {
+.tts-face-svg-light .tts-face-side-hair { fill: #6b3d22; }
+.tts-face-svg-light .tts-face-hair { fill: #6b3d22; }
+.tts-face-svg-light .tts-face-hair-sheen {
   fill: none;
   stroke: #c47a50;
   stroke-width: 2.5;
   stroke-linecap: round;
   opacity: 0.55;
 }
-
-.tts-face-hair-part {
+.tts-face-svg-light .tts-face-hair-part {
   fill: none;
   stroke: url(#hair-part-gradient);
   stroke-width: 1.2;
   stroke-linecap: round;
   opacity: 0.85;
 }
-
-/* Beard and mustache for light theme face */
-.tts-face-beard {
-  stroke: none;
-}
-
-.tts-face-mustache {
-  fill: #4a2810;
-  stroke: none;
-  opacity: 0.92;
-}
-
-/* Nose for light theme face */
-.tts-face-nose {
+.tts-face-svg-light .tts-face-beard { stroke: none; }
+.tts-face-svg-light .tts-face-nose {
   fill: none;
   stroke: #c8917a;
   stroke-width: 1.5;
@@ -4995,27 +4915,76 @@ pre.streaming {
   opacity: 0.65;
 }
 
-/* ── Light theme overrides for shared face classes ── */
+/* ── Dark face: pale skin, red glowing eyes, horns ── */
 
-[data-theme="light"] .tts-face-head {
-  fill: #fef9f0;
-  stroke: #93c5fd;
+.tts-face-svg-dark .tts-face-head {
+  fill: #b8a89c;
+  stroke: #5a1818;
   stroke-width: 2;
 }
-
-[data-theme="light"] .tts-face-brow {
-  stroke: #3d2f1f;
-  stroke-width: 3.5;
-  stroke-linecap: round;
-}
-
-[data-theme="light"] .tts-face-glow {
-  stroke: #3b82f6;
-}
-
-[data-theme="light"] .tts-face-mouth {
-  stroke: #374151;
+.tts-face-svg-dark .tts-face-glow { stroke: #cc1a1a; }
+.tts-face-svg-dark .tts-face-mouth {
+  fill: none;
+  stroke: #1a0404;
   stroke-linecap: round;
   stroke-width: 2.5;
-  filter: none;
+}
+.tts-face-svg-dark .tts-face-brow {
+  fill: none;
+  stroke: #0a0202;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.tts-face-svg-dark .tts-face-pupil {
+  fill: #ff2222;
+  filter: url(#evil-glow);
+}
+.tts-face-svg-dark .tts-face-eye-white {
+  fill: #f0e2c8;
+  stroke: #5a1818;
+  stroke-width: 1;
+}
+.tts-face-svg-dark .tts-face-highlight { fill: #ffaa66; }
+.tts-face-svg-dark .tts-face-ear {
+  fill: #b8a89c;
+  stroke: #5a1818;
+  stroke-width: 2;
+}
+.tts-face-svg-dark .tts-face-ear-inner {
+  fill: none;
+  stroke: #5a1818;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  opacity: 0.6;
+}
+.tts-face-svg-dark .tts-face-side-hair { fill: #0a0303; }
+.tts-face-svg-dark .tts-face-hair { fill: #0a0303; }
+.tts-face-svg-dark .tts-face-hair-sheen {
+  fill: none;
+  stroke: #4a1010;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+.tts-face-svg-dark .tts-face-hair-part {
+  fill: none;
+  stroke: #2a0606;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+.tts-face-svg-dark .tts-face-beard { stroke: none; }
+.tts-face-svg-dark .tts-face-nose {
+  fill: none;
+  stroke: #5a3030;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+.tts-face-svg-dark .tts-face-cheek-swoop { fill: #b8a89c; }
+.tts-face-svg-dark .tts-face-horn {
+  fill: url(#horn-gradient);
+  stroke: #1a0606;
+  stroke-width: 1;
+  stroke-linejoin: round;
 }

@@ -193,55 +193,89 @@
 
     <div class="messages-container">
       <div id="tts-face-overlay" class="tts-face-overlay">
+        <!-- Dark theme face: evil twin of light face — pale skin, red eyes, horns -->
         <svg class="tts-face-svg tts-face-svg-dark" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <!-- Neon glow filter -->
-            <filter id="mcp-neon" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur"/>
+            <!-- Glow filter for red eyes -->
+            <filter id="evil-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
               <feMerge>
                 <feMergeNode in="blur"/>
                 <feMergeNode in="blur"/>
                 <feMergeNode in="SourceGraphic"/>
               </feMerge>
             </filter>
-            <!-- Circuit grid pattern -->
-            <pattern id="mcp-grid" x="0" y="0" width="15" height="15" patternUnits="userSpaceOnUse">
-              <path d="M15 0 L0 0 0 15" fill="none" stroke="#880000" stroke-width="0.5"/>
-            </pattern>
-            <!-- Scanline pattern -->
-            <pattern id="mcp-scanlines" x="0" y="0" width="2" height="4" patternUnits="userSpaceOnUse">
-              <rect x="0" y="2" width="2" height="2" fill="rgba(0,0,0,0.35)"/>
-            </pattern>
-            <!-- Clip to head polygon -->
-            <clipPath id="mcp-face-clip">
-              <polygon points="70,20 130,20 160,55 160,150 130,180 70,180 40,150 40,55"/>
+            <!-- Head clip path for beard -->
+            <clipPath id="head-clip-dark">
+              <ellipse cx="100" cy="105" rx="60" ry="72"/>
             </clipPath>
+            <!-- Beard gradient: black, sinister -->
+            <linearGradient id="beard-gradient-dark" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%" stop-color="#1a0606" stop-opacity="0.45"/>
+              <stop offset="40%" stop-color="#0a0202" stop-opacity="0.92"/>
+              <stop offset="100%" stop-color="#000000" stop-opacity="1"/>
+            </linearGradient>
+            <!-- Skin-fade for beard top edge -->
+            <linearGradient id="beard-skin-fade-dark" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+              <stop offset="0%" stop-color="#b8a89c" stop-opacity="0.95"/>
+              <stop offset="30%" stop-color="#b8a89c" stop-opacity="0.55"/>
+              <stop offset="55%" stop-color="#b8a89c" stop-opacity="0.15"/>
+              <stop offset="75%" stop-color="#b8a89c" stop-opacity="0"/>
+            </linearGradient>
+            <!-- Horn gradient: dark red base, blackened tip -->
+            <linearGradient id="horn-gradient" x1="0" y1="1" x2="0" y2="0" gradientUnits="objectBoundingBox">
+              <stop offset="0%" stop-color="#4a1010"/>
+              <stop offset="60%" stop-color="#2a0606"/>
+              <stop offset="100%" stop-color="#0a0202"/>
+            </linearGradient>
           </defs>
-          <!-- Outer energy ring (animated glow) -->
-          <polygon class="tts-face-glow" points="100,4 168,28 192,100 168,172 100,196 32,172 8,100 32,28"/>
-          <!-- Head: angular octagonal shape -->
-          <polygon class="tts-face-head" points="70,20 130,20 160,55 160,150 130,180 70,180 40,150 40,55"/>
-          <!-- Circuit grid overlaid on head -->
-          <rect class="tts-face-grid" x="40" y="20" width="120" height="160" clip-path="url(#mcp-face-clip)"/>
-          <!-- Corner circuit trace details -->
-          <g class="tts-face-circuit">
-            <path d="M70,20 L54,20 M40,55 L40,37"/>
-            <path d="M130,20 L146,20 M160,55 L160,37"/>
-            <path d="M70,180 L54,180 M40,150 L40,168"/>
-            <path d="M130,180 L146,180 M160,150 L160,168"/>
-          </g>
-          <!-- Eyebrows: sharp angular lines angled toward nose (menacing) -->
-          <path class="tts-face-brow" d="M52,72 L87,80"/>
-          <path class="tts-face-brow" d="M113,80 L148,72"/>
-          <!-- Eyes: angular parallelogram slits (grouped for movement) -->
+          <!-- Outer glow ring (circle) -->
+          <circle class="tts-face-glow" cx="100" cy="100" r="94" fill="none"/>
+          <!-- Ears: behind head -->
+          <ellipse class="tts-face-ear" cx="34" cy="102" rx="10" ry="14"/>
+          <path class="tts-face-ear-inner" d="M 36,92 C 31,97 31,107 36,112"/>
+          <ellipse class="tts-face-ear" cx="166" cy="102" rx="10" ry="14"/>
+          <path class="tts-face-ear-inner" d="M 164,92 C 169,97 169,107 164,112"/>
+          <!-- Side hair: behind head, peeks out at temples -->
+          <ellipse class="tts-face-side-hair" cx="100" cy="83" rx="68" ry="54"/>
+          <!-- Head: friendly oval -->
+          <ellipse class="tts-face-head" cx="100" cy="105" rx="60" ry="72"/>
+          <!-- Hair -->
+          <path class="tts-face-hair" d="M 38,70 C 34,54 40,32 68,22 C 79,17 90,15 100,17 C 112,15 126,21 138,29 C 150,38 166,54 162,70 C 157,64 142,59 128,56 Q 100,52 72,56 C 58,59 43,64 38,70 Z"/>
+          <path class="tts-face-hair-sheen" d="M 83,19 C 95,17 112,22 130,34 C 140,41 146,50 147,60"/>
+          <path class="tts-face-hair-part" d="M 84,23 C 84,32 85,42 87,54"/>
+          <!-- Horns: emerge from hair at temples, curve up and outward -->
+          <path class="tts-face-horn" d="M 66,38 C 60,28 52,16 38,2 C 48,16 50,30 54,42 Z"/>
+          <path class="tts-face-horn" d="M 134,38 C 140,28 148,16 162,2 C 152,16 150,30 146,42 Z"/>
+          <!-- Eyebrows: angled down toward nose for menace -->
+          <path class="tts-face-brow" d="M62,75 L91,69"/>
+          <path class="tts-face-brow" d="M109,69 L138,75"/>
+          <!-- Eyes: red glowing pupils on yellowed sclera -->
           <g class="tts-face-eye-group">
-            <polygon class="tts-face-eye" points="53,86 87,92 87,98 53,98"/>
-            <polygon class="tts-face-eye" points="113,92 147,86 147,98 113,98"/>
+            <g class="tts-face-eye-light">
+              <circle class="tts-face-eye-white" cx="76" cy="90" r="14"/>
+              <circle class="tts-face-pupil" cx="78" cy="91" r="8"/>
+              <circle class="tts-face-highlight" cx="81" cy="86" r="3"/>
+            </g>
+            <g class="tts-face-eye-light">
+              <circle class="tts-face-eye-white" cx="124" cy="90" r="14"/>
+              <circle class="tts-face-pupil" cx="126" cy="91" r="8"/>
+              <circle class="tts-face-highlight" cx="129" cy="86" r="3"/>
+            </g>
           </g>
-          <!-- Scanlines overlaid on face -->
-          <rect class="tts-face-scanlines" x="40" y="20" width="120" height="160" clip-path="url(#mcp-face-clip)"/>
-          <!-- Mouth: angular slit (animated via JS) -->
-          <path id="tts-face-mouth" class="tts-face-mouth" d="M72 148 Q100 151, 128 148"/>
+          <!-- Beard + mustache: unified single shape, clipped to head outline -->
+          <path class="tts-face-beard" clip-path="url(#head-clip-dark)" style="fill: url(#beard-gradient-dark)" d="M 40,118 C 33,133 32,153 45,168 C 52,177 65,183 80,185 Q 100,188 120,185 C 135,183 148,177 155,168 C 168,153 167,133 160,118 C 152,124 138,128 124,130 C 116,131 110,132 106,133 Q 100,134 94,133 C 90,132 84,131 76,130 C 62,128 48,124 40,118 Z"/>
+          <!-- Skin-to-beard fade -->
+          <path clip-path="url(#head-clip-dark)" style="fill: url(#beard-skin-fade-dark)" d="M 40,118 C 33,133 32,153 45,168 C 52,177 65,183 80,185 Q 100,188 120,185 C 135,183 148,177 155,168 C 168,153 167,133 160,118 C 152,124 138,128 124,130 C 116,131 110,132 106,133 Q 100,134 94,133 C 90,132 84,131 76,130 C 62,128 48,124 40,118 Z"/>
+          <!-- Cheek swoops -->
+          <path clip-path="url(#head-clip-dark)" class="tts-face-cheek-swoop" d="M 42,115 L 80,115 L 80,131 C 70,139 54,139 45,121 Z"/>
+          <path clip-path="url(#head-clip-dark)" class="tts-face-cheek-swoop" d="M 158,115 L 120,115 L 120,131 C 130,139 146,139 155,121 Z"/>
+          <!-- Nose hint -->
+          <path class="tts-face-nose" d="M 94,116 C 92,121 91,124 93,127 Q 97,130 100,129 Q 103,130 107,127 C 109,124 108,121 106,116"/>
+          <!-- Mouth: layered (above + below + main) for soft beard blend -->
+          <path id="tts-face-mouth-above" fill="none" stroke="#3a0808" stroke-width="3" stroke-linecap="round" d="M72 145 Q100 160, 128 145"/>
+          <path id="tts-face-mouth-below" fill="none" stroke="#1a0404" stroke-width="3" stroke-linecap="round" d="M72 151 Q100 166, 128 151"/>
+          <path id="tts-face-mouth" class="tts-face-mouth" d="M72 148 Q100 163, 128 148"/>
         </svg>
 
         <!-- Light theme face: friendly, rounded -->
