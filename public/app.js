@@ -4690,6 +4690,17 @@ marked.use({
 });
 
 function renderMarkdown(text) {
+  // Pre-process [[wiki-links]] into wiki-link spans before marked parses.
+  // Mirrors renderKbMarkdown so vault references Claude writes in chat
+  // (e.g. `[[topic-slug]]`) resolve and open in the KB pane on click.
+  text = text.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
+    const parts = inner.split('|');
+    const target = parts[0].trim();
+    const display = (parts[1] || parts[0]).trim();
+    const escaped = target.replace(/"/g, '&quot;');
+    return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)">${escapeHtml(display)}</span>`;
+  });
+
   // Handle unclosed code block (still streaming) — close it temporarily for parsing
   const unclosedMatch = text.match(/```(\w*)\n([^`]*)$/);
   if (unclosedMatch) {
@@ -7384,7 +7395,6 @@ async function expandKbPathTo(filePath) {
 }
 
 async function loadKbFile(filePath, { skipHistory = false } = {}) {
-  kbPendingNavigation = null;
   try {
     const res = await fetchWithRetry(`/api/vault/kb/file?path=${encodeURIComponent(filePath)}`);
     const data = await res.json();
@@ -7396,6 +7406,11 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     }
 
     kbCurrentFile = data;
+    // Clear pending-navigation only after the intended file has committed —
+    // clearing earlier lets a concurrent loadKbPreferences() (kicked off by
+    // switchView('kb') on first KB open) restore the last-viewed file and
+    // clobber the click target.
+    if (kbPendingNavigation === filePath) kbPendingNavigation = null;
     kbIsEditing = false;
     kbShowingDiff = false;
 
@@ -7759,18 +7774,30 @@ function escapeHtml(str) {
 async function navigateWikiLink(el) {
   const target = el.dataset.target;
   const contextPath = kbCurrentFile?.path || '';
+  const flashBroken = () => {
+    el.style.color = 'var(--error)';
+    setTimeout(() => { el.style.color = ''; }, 1500);
+  };
   try {
-    const res = await fetchWithRetry(`/api/vault/kb/resolve-link?name=${encodeURIComponent(target)}&context=${encodeURIComponent(contextPath)}`);
+    // Use raw fetch — fetchWithRetry throws on 404, which is exactly the
+    // "not found" signal we need to distinguish from a transport error.
+    const res = await fetch(`/api/vault/kb/resolve-link?name=${encodeURIComponent(target)}&context=${encodeURIComponent(contextPath)}`);
+    if (res.status === 404) {
+      flashBroken();
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.path) {
-      loadKbFile(data.path);
+      // Route through navigateToKbFile so the same handler works from both
+      // the KB pane and the chat pane (switchView is a no-op when already on kb).
+      navigateToKbFile(data.path);
     } else {
-      // Brief visual feedback for broken link
-      el.style.color = 'var(--error)';
-      setTimeout(() => { el.style.color = ''; }, 1500);
+      flashBroken();
     }
   } catch (err) {
     console.error('Failed to resolve wiki-link:', err);
+    flashBroken();
   }
 }
 
