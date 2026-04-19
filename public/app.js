@@ -2738,6 +2738,12 @@ async function switchSession(id) {
   // the server buffer, producing duplicates).
   if (isStreamingOnEntry) hijackedStreams.add(id);
   await restoreMessages(id, session, { upToLastUser: isStreamingOnEntry });
+  // Re-render queued message indicator (if any) — restoreMessages only renders
+  // server-persisted messages; the queued one lives client-side until drained.
+  if (pendingMessages.has(id)) {
+    const queued = pendingMessages.get(id);
+    renderQueuedMessage(id, queued.text, queued.attachments);
+  }
   loadSessions();
   // Show correct button state for this session
   if (isStreamingOnEntry) {
@@ -2818,6 +2824,142 @@ function addInfoMessage(text) {
   el.style.color = 'var(--text-secondary)';
   el.textContent = text;
   messagesEl.appendChild(el);
+}
+
+// Render the user bubble + info bubble for a queued message. The bubbles carry
+// data-queued-session attrs so cancel/drain can find them later (e.g. after a
+// session-switch restoreMessages, which only renders server-persisted messages).
+function renderQueuedMessage(sessionId, text, attachments) {
+  const userEl = document.createElement('div');
+  userEl.className = 'message message-user message-queued';
+  userEl.dataset.queuedSession = sessionId;
+  userEl.textContent = text;
+  ensureCopyButton(userEl);
+  messagesEl.appendChild(userEl);
+
+  if (attachments && attachments.length) {
+    const attachEl = document.createElement('div');
+    attachEl.className = 'message message-error message-queued-attach';
+    attachEl.dataset.queuedSession = sessionId;
+    attachEl.style.background = 'rgba(74, 158, 255, 0.1)';
+    attachEl.style.border = '1px solid rgba(74, 158, 255, 0.3)';
+    attachEl.style.color = 'var(--text-secondary)';
+    attachEl.textContent = `${attachments.length} image(s) attached`;
+    messagesEl.appendChild(attachEl);
+  }
+
+  const infoEl = document.createElement('div');
+  infoEl.className = 'message message-error message-queued-info';
+  infoEl.dataset.queuedSession = sessionId;
+  infoEl.style.background = 'rgba(74, 158, 255, 0.1)';
+  infoEl.style.border = '1px solid rgba(74, 158, 255, 0.3)';
+  infoEl.style.color = 'var(--text-secondary)';
+  const textSpan = document.createElement('span');
+  textSpan.textContent = '⏳ Message queued — will send when current response completes';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'btn-cancel-queued';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => cancelQueuedMessage(sessionId));
+  infoEl.appendChild(textSpan);
+  infoEl.appendChild(document.createTextNode(' '));
+  infoEl.appendChild(cancelBtn);
+  messagesEl.appendChild(infoEl);
+  scrollToBottom();
+}
+
+// Remove a queued message from the pending map and update the visible bubbles
+// (only if the user is currently viewing the owning session — otherwise the
+// bubbles aren't in the DOM and there's nothing to update).
+function cancelQueuedMessage(sessionId) {
+  if (!pendingMessages.has(sessionId)) return;
+  pendingMessages.delete(sessionId);
+  if (currentSessionId !== sessionId) return;
+  messagesEl.querySelectorAll(
+    `.message-queued[data-queued-session="${sessionId}"]`
+  ).forEach(el => {
+    el.classList.remove('message-queued');
+    el.classList.add('message-cancelled');
+  });
+  messagesEl.querySelectorAll(
+    `.message-queued-attach[data-queued-session="${sessionId}"]`
+  ).forEach(el => el.remove());
+  messagesEl.querySelectorAll(
+    `.message-queued-info[data-queued-session="${sessionId}"]`
+  ).forEach(el => {
+    el.textContent = '✕ Message cancelled';
+    el.classList.remove('message-queued-info');
+    el.style.background = 'rgba(120, 120, 120, 0.08)';
+    el.style.border = '1px solid rgba(120, 120, 120, 0.25)';
+  });
+}
+
+// Drain transition: queued message is about to actually send. Strip the queued
+// styling on the user bubble (it's now a real sent message) and remove the
+// transient info/attachment bubbles.
+function clearQueuedDecorations(sessionId) {
+  if (currentSessionId !== sessionId) return;
+  messagesEl.querySelectorAll(
+    `.message-queued[data-queued-session="${sessionId}"]`
+  ).forEach(el => {
+    el.classList.remove('message-queued');
+    delete el.dataset.queuedSession;
+  });
+  messagesEl.querySelectorAll(
+    `.message-queued-info[data-queued-session="${sessionId}"], .message-queued-attach[data-queued-session="${sessionId}"]`
+  ).forEach(el => el.remove());
+}
+
+// Background drain: send a queued message for a session the user is no longer
+// viewing. Bypasses messageInput / currentSessionId (which now belong to a
+// different session) and lets server-side persistence + replaySessionStream
+// handle UI restoration if/when the user switches back.
+async function drainQueuedMessage(sessionId, text, attachments) {
+  streamingSessions.add(sessionId);
+  try {
+    const res = await fetch(`/api/chat/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: text || 'Please analyze the attached image(s).',
+        model: getSelectedModel(),
+        attachments,
+      }),
+    });
+    if (!res.ok) {
+      console.error(`drainQueuedMessage POST failed for ${sessionId}: HTTP ${res.status}`);
+      return;
+    }
+    // Drain the SSE stream so the connection completes cleanly. processEvent
+    // is a minimal stub — server-side persistence is independent of what we
+    // render here, and switchSession's replaySessionStream picks up live state
+    // when the user returns to this session.
+    await readSSEStream(res, (type, data) => {
+      if (type === 'permission_request') {
+        updateSessionBlockedBadge(sessionId, true);
+      }
+    });
+  } catch (err) {
+    console.error(`drainQueuedMessage error for ${sessionId}:`, err);
+  } finally {
+    streamingSessions.delete(sessionId);
+    updateSessionBlockedBadge(sessionId, false);
+    // Recursively drain any further queued message for this background session.
+    const queued = pendingMessages.get(sessionId);
+    if (queued) {
+      pendingMessages.delete(sessionId);
+      await new Promise(r => setTimeout(r, 500));
+      if (currentSessionId === sessionId) {
+        clearQueuedDecorations(sessionId);
+        messageInput.value = queued.text;
+        if (queued.attachments) pendingAttachments.push(...queued.attachments);
+        sendMessage(true);
+      } else {
+        drainQueuedMessage(sessionId, queued.text, queued.attachments);
+      }
+    }
+    loadSessions();
+  }
 }
 
 function addServerDisconnectedMessage() {
@@ -4037,10 +4179,7 @@ async function replaySessionStream(sessionId) {
 async function cancelStream() {
   if (!currentSessionId || !streamingSessions.has(currentSessionId)) return;
   // Clear any queued message — user cancelled, so don't auto-send
-  if (pendingMessages.has(currentSessionId)) {
-    pendingMessages.delete(currentSessionId);
-    addInfoMessage('Queued message cancelled');
-  }
+  cancelQueuedMessage(currentSessionId);
   try {
     await fetchWithRetry(`/api/chat/${currentSessionId}/cancel`, { method: 'POST' });
   } catch (err) {
@@ -4075,12 +4214,7 @@ async function sendMessage(skipRender = false) {
     messageInput.value = '';
     messageInput.style.height = 'auto';
     clearAttachments();
-    addUserMessage(text);
-    if (queued.attachments) {
-      addInfoMessage(`${queued.attachments.length} image(s) attached`);
-    }
-    addInfoMessage('⏳ Message queued — will send when current response completes');
-    scrollToBottom();
+    renderQueuedMessage(currentSessionId, text, queued.attachments);
     return;
   }
 
@@ -4467,12 +4601,19 @@ async function sendMessage(skipRender = false) {
       pendingMessages.delete(streamSessionId);
       // Small delay so the user sees the response before next message fires
       await new Promise(r => setTimeout(r, 500));
-      // Populate input and send — skipRender since user message was shown at queue time
-      messageInput.value = queued.text;
-      if (queued.attachments) {
-        pendingAttachments.push(...queued.attachments);
+      if (currentSessionId === streamSessionId) {
+        // Foreground drain — reuse the input flow so focus/draft behavior works.
+        clearQueuedDecorations(streamSessionId);
+        messageInput.value = queued.text;
+        if (queued.attachments) {
+          pendingAttachments.push(...queued.attachments);
+        }
+        sendMessage(true);
+      } else {
+        // Background drain — user is on another session; fire directly so we
+        // don't clobber their input/attachments or send to the wrong session.
+        drainQueuedMessage(streamSessionId, queued.text, queued.attachments);
       }
-      sendMessage(true);
     }
   }
 }
