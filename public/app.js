@@ -95,7 +95,7 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
       const forkPoints = await forkRes.json();
       addForkBadges(forkPoints);
     } catch {}
-    scrollToBottom();
+    scrollToBottomForce();
   } catch (err) {
     console.error('Failed to load messages:', err);
   }
@@ -2813,7 +2813,7 @@ function addUserMessage(text) {
   el.textContent = text;
   ensureCopyButton(el);
   messagesEl.appendChild(el);
-  scrollToBottom();
+  scrollToBottomForce();
 }
 
 function addInfoMessage(text) {
@@ -2865,7 +2865,7 @@ function renderQueuedMessage(sessionId, text, attachments) {
   infoEl.appendChild(document.createTextNode(' '));
   infoEl.appendChild(cancelBtn);
   messagesEl.appendChild(infoEl);
-  scrollToBottom();
+  scrollToBottomForce();
 }
 
 // Remove a queued message from the pending map and update the visible bubbles
@@ -3839,7 +3839,43 @@ function addUsageInfo(data) {
   } catch {}
 }
 
+// scrollToBottom() only fires when the user is pinned near the bottom; if they've scrolled up to read, a pill prompts them instead of yanking them down.
+let autoScrollEnabled = true;
+const SCROLL_STICKY_THRESHOLD = 80;
+
+function isAtBottom() {
+  return (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight) <= SCROLL_STICKY_THRESHOLD;
+}
+
+function showNewContentPill() {
+  const pill = document.getElementById('new-content-pill');
+  if (pill) pill.classList.add('visible');
+}
+
+function hideNewContentPill() {
+  const pill = document.getElementById('new-content-pill');
+  if (pill) pill.classList.remove('visible');
+}
+
+messagesEl.addEventListener('scroll', () => {
+  const atBottom = isAtBottom();
+  autoScrollEnabled = atBottom;
+  if (atBottom) hideNewContentPill();
+}, { passive: true });
+
 function scrollToBottom() {
+  requestAnimationFrame(() => {
+    if (autoScrollEnabled) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    } else {
+      showNewContentPill();
+    }
+  });
+}
+
+function scrollToBottomForce() {
+  autoScrollEnabled = true;
+  hideNewContentPill();
   requestAnimationFrame(() => {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   });
