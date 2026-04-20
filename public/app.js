@@ -182,6 +182,7 @@ async function setMode(mode) {
           welcomeEl.style.display = '';
           inputArea.style.display = 'none';
           document.querySelector('.dir-picker-wrapper').style.display = 'none';
+          document.getElementById('session-details-panel').style.display = 'none';
           clearMessages();
         }
       } catch {}
