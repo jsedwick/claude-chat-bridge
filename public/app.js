@@ -2441,6 +2441,13 @@ function showTitleMenu(event) {
     menu.style.display = 'none';
     return;
   }
+  const detailsPanel = document.getElementById('session-details-panel');
+  const detailsLabel = document.getElementById('title-menu-details-label');
+  if (detailsLabel) {
+    detailsLabel.textContent = detailsPanel && detailsPanel.style.display !== 'none'
+      ? 'Hide Session Details'
+      : 'View Session Details';
+  }
   menu.style.display = 'block';
 
   // Close on outside click
