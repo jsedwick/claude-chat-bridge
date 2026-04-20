@@ -6124,6 +6124,7 @@ let kbShowingDiff = false;
 let kbEditor = null;          // Toast UI Editor instance
 let kbFrontmatter = '';       // Stashed frontmatter (stripped before editor, restored on save)
 let kbHistory = [];           // Navigation history stack for back button
+let kbEntryPoint = null;      // { sessionId } — session user jumped from into KB, consumed by Back when kbHistory is empty
 let kbTreeLoaded = false;
 const kbExpandedDirs = new Set();
 const kbTreeCache = new Map(); // path -> entries
@@ -6336,6 +6337,9 @@ function resolveVaultPath(filePath) {
 
 function navigateToKbFile(filePath) {
   const resolved = resolveVaultPath(filePath);
+  if (currentView === 'sessions' && currentSessionId) {
+    kbEntryPoint = { sessionId: currentSessionId };
+  }
   kbPendingNavigation = resolved;
   switchView('kb');
   loadKbFile(resolved);
@@ -7464,8 +7468,9 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     // Show/hide back button and action bar
     const backBtn = document.getElementById('kb-back-btn');
     const actionBar = document.getElementById('kb-action-bar');
-    backBtn.style.display = kbHistory.length > 0 ? '' : 'none';
-    const hasAnyButton = kbHistory.length > 0 || sessionMeta || topicMeta;
+    const canGoBack = kbHistory.length > 0 || kbEntryPoint !== null;
+    backBtn.style.display = canGoBack ? '' : 'none';
+    const hasAnyButton = canGoBack || sessionMeta || topicMeta;
     actionBar.style.display = hasAnyButton ? '' : 'none';
 
     // Render markdown
@@ -7488,9 +7493,17 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
 }
 
 function navigateKbBack() {
-  if (kbHistory.length === 0) return;
-  const previousPath = kbHistory.pop();
-  loadKbFile(previousPath, { skipHistory: true });
+  if (kbHistory.length > 0) {
+    const previousPath = kbHistory.pop();
+    loadKbFile(previousPath, { skipHistory: true });
+    return;
+  }
+  if (kbEntryPoint) {
+    const { sessionId } = kbEntryPoint;
+    kbEntryPoint = null;
+    switchView('sessions');
+    switchSession(sessionId);
+  }
 }
 
 // ---- KB Bookmarks ----
