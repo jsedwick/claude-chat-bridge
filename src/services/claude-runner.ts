@@ -170,7 +170,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--dangerously-skip-permissions',
+    '--permission-mode', 'auto',
     '--plugin-dir', config.pluginDir,
   ];
 
