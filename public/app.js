@@ -7394,7 +7394,7 @@ async function expandKbPathTo(filePath) {
   const activeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(filePath)}"]`);
   if (activeItem) {
     activeItem.classList.add('active');
-    activeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    requestAnimationFrame(() => activeItem.scrollIntoView({ block: 'center', behavior: 'auto' }));
   }
 }
 
