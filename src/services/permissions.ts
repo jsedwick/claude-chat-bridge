@@ -260,11 +260,18 @@ export function createPermissionRequest(
   });
 }
 
-export function resolvePermission(requestId: string, decision: 'allow' | 'deny', allowAll?: boolean): boolean {
+export interface ResolveResult {
+  resolved: boolean;
+  appSessionId?: string;
+  resolvedRequestIds: string[];
+}
+
+export function resolvePermission(requestId: string, decision: 'allow' | 'deny', allowAll?: boolean): ResolveResult {
   const pending = pendingPermissions.get(requestId);
-  if (!pending) return false;
+  if (!pending) return { resolved: false, resolvedRequestIds: [] };
 
   pendingPermissions.delete(requestId);
+  const resolvedRequestIds = [requestId];
 
   // If allowAll, remember this tool for the session and auto-resolve other pending requests
   if (allowAll && decision === 'allow') {
@@ -275,13 +282,18 @@ export function resolvePermission(requestId: string, decision: 'allow' | 'deny',
       if (other.request.appSessionId === pending.request.appSessionId) {
         pendingPermissions.delete(id);
         other.resolve('allow');
+        resolvedRequestIds.push(id);
         console.log(`[permissions] auto-resolved pending request ${id} (allowAll cascade)`);
       }
     }
   }
 
   pending.resolve(decision);
-  return true;
+  return {
+    resolved: true,
+    appSessionId: pending.request.appSessionId,
+    resolvedRequestIds,
+  };
 }
 
 export function getPendingRequest(requestId: string): PermissionRequest | undefined {

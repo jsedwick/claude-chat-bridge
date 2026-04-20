@@ -67,6 +67,15 @@ export function getStreamBuffer(appSessionId: string): StreamEvent[] | null {
   return stream ? [...stream.buffer] : null;
 }
 
+export function removeFromStreamBuffer(
+  appSessionId: string,
+  predicate: (event: StreamEvent) => boolean,
+): void {
+  const stream = activeStreams.get(appSessionId);
+  if (!stream) return;
+  stream.buffer = stream.buffer.filter(e => !predicate(e));
+}
+
 export function subscribeToStream(appSessionId: string, listener: (event: StreamEvent) => void): (() => void) | null {
   const stream = activeStreams.get(appSessionId);
   if (!stream) return null;

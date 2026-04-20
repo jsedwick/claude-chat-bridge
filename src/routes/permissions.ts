@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getAppSessionByClaudeId, emitToStream } from '../services/claude-runner';
+import { getAppSessionByClaudeId, emitToStream, removeFromStreamBuffer } from '../services/claude-runner';
 import { getSession } from '../services/session-store';
 import { getObsidianRoot } from '../config';
 import {
@@ -141,9 +141,24 @@ router.post('/respond', (req: Request, res: Response) => {
   }
 
   console.log(`[permissions] /respond: requestId=${requestId} decision=${decision} allowAll=${allowAll}`);
-  const resolved = resolvePermission(requestId, decision, allowAll === true);
-  console.log(`[permissions] /respond resolved=${resolved}`);
-  if (resolved) {
+  const result = resolvePermission(requestId, decision, allowAll === true);
+  console.log(`[permissions] /respond resolved=${result.resolved}`);
+  if (result.resolved) {
+    // Scrub resolved permission_request events from the session's stream buffer so
+    // a subsequent /reconnect replay (e.g. user switches away and back mid-tool-call)
+    // can't resurrect the dialog with a now-dead request ID.
+    if (result.appSessionId) {
+      const resolvedIds = new Set(result.resolvedRequestIds);
+      removeFromStreamBuffer(result.appSessionId, (event) => {
+        if (event.type !== 'permission_request') return false;
+        try {
+          const parsed = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          return resolvedIds.has(parsed?.id);
+        } catch {
+          return false;
+        }
+      });
+    }
     res.json({ status: 'ok' });
   } else {
     console.warn(`[permissions] /respond FAILED: no pending permission for ${requestId}`);
