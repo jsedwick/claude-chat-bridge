@@ -130,6 +130,7 @@ interface IndexEntry {
   path: string;
   isDirectory: boolean;
   vault?: string;
+  mtimeMs: number;
 }
 interface CachedIndex {
   entries: IndexEntry[];
@@ -155,13 +156,20 @@ function buildIndex(roots: Array<{ name?: string; path: string }>): IndexEntry[]
       if (entries.length >= MAX_INDEX_ENTRIES) return;
       if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
       const childPath = path.join(dir, e.name);
-      entries.push({ name: e.name, path: childPath, isDirectory: e.isDirectory(), vault });
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(childPath).mtimeMs;
+      } catch {
+        // stat can fail on broken symlinks or permission errors; treat as oldest
+      }
+      entries.push({ name: e.name, path: childPath, isDirectory: e.isDirectory(), vault, mtimeMs });
       if (e.isDirectory()) walk(childPath, depth + 1, vault);
     }
   }
   for (const root of roots) {
     walk(root.path, 0, root.name);
   }
+  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return entries;
 }
 
