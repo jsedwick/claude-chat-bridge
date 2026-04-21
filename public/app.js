@@ -10,6 +10,12 @@ const hijackedStreams = new Set();
 // would point at the cleared DOM after restoreMessages) before starting a
 // fresh one.
 const activeReplayControllers = new Map();
+// Monotonic counter incremented on every switchSession() call. Lets post-await
+// code bail when a newer switch has superseded it — prevents concurrent
+// switchSession() calls from racing each other's restoreMessages/render steps
+// (symptoms: dropped tool indicators, double messages, output that only
+// reappears after refresh).
+let switchSessionSeq = 0;
 const sessionInputDrafts = new Map(); // preserve input text per session
 const pendingMessages = new Map(); // queued messages per session (sent when stream completes)
 let currentMode = 'work';
@@ -49,11 +55,17 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
   // assistant turn — avoids double-rendering text/tools that were flushed to
   // persistence at tool_use boundaries.
   const { upToLastUser = false } = opts;
+  // Bail if the caller's session is no longer the one being viewed — prevents
+  // a stale fetch from clobbering the active session's DOM after a rapid
+  // switchSession(A) → switchSession(B) sequence.
+  const isStale = () => currentSessionId !== sessionId;
   console.log('[SSE] restoreMessages called', sessionId, new Error().stack?.split('\n').slice(1,4).join(' <- '));
   clearMessages();
   try {
     const res = await fetchWithRetry(`/api/sessions/${sessionId}/messages`, {}, { retries: 1 });
+    if (isStale()) return;
     const messages = await res.json();
+    if (isStale()) return;
     let renderLimit = messages.length;
     if (upToLastUser) {
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -92,7 +104,9 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
     // Add fork badges to messages that have been forked from
     try {
       const forkRes = await fetchWithRetry(`/api/sessions/${sessionId}/forks`);
+      if (isStale()) return;
       const forkPoints = await forkRes.json();
+      if (isStale()) return;
       addForkBadges(forkPoints);
     } catch {}
     scrollToBottomForce();
@@ -2886,6 +2900,13 @@ async function createNewSession() {
 }
 
 async function switchSession(id) {
+  // Bump the switch counter so any in-flight switchSession() call from a
+  // previous click bails at its next await instead of clobbering this one's
+  // DOM with stale data. Without this, rapid A→B→A clicks can leave the
+  // rendered view out of sync with currentSessionId (missing tool indicators,
+  // duplicate messages, stream output that only reappears after refresh).
+  const seq = ++switchSessionSeq;
+  const stale = () => seq !== switchSessionSeq;
   // Stop any active TTS playback and force-hide face regardless of response state
   stopSpeaking();
   ttsFaceActivity = 'idle';
@@ -2900,7 +2921,9 @@ async function switchSession(id) {
   messageInput.value = sessionInputDrafts.get(id) || '';
   messageInput.style.height = 'auto';
   const res = await fetchWithRetry(`/api/sessions/${id}`);
+  if (stale()) return;
   const session = await res.json();
+  if (stale()) return;
   chatTitle.textContent = session.name;
   currentWorkingDir = session.workingDir || '';
   currentForkDepth = session.forkDepth || 0;
@@ -2923,6 +2946,7 @@ async function switchSession(id) {
   // the server buffer, producing duplicates).
   if (isStreamingOnEntry) hijackedStreams.add(id);
   await restoreMessages(id, session, { upToLastUser: isStreamingOnEntry });
+  if (stale()) return;
   // Re-render queued message indicator (if any) — restoreMessages only renders
   // server-persisted messages; the queued one lives client-side until drained.
   if (pendingMessages.has(id)) {
