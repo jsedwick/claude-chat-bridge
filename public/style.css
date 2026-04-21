@@ -5141,3 +5141,46 @@ pre.streaming {
   direction: rtl;
   text-align: left;
 }
+
+/* Scope breadcrumb header for the @-picker when descended into a directory */
+.mention-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin: -4px 0 4px 0;
+  background: rgba(74, 158, 255, 0.10);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary, var(--text-primary));
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.mention-breadcrumb-arrow {
+  color: var(--accent, #4a9eff);
+  font-weight: 600;
+}
+
+.mention-breadcrumb-path {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  flex: 1;
+}
+
+.mention-breadcrumb-hint {
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Wiki-link popover is rendered under the caret inside the Toast UI editor;
+   mention-popover styling applies, but we drop the tall max-height for tidiness. */
+.wiki-link-popover {
+  max-height: 260px;
+}

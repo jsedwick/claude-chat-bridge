@@ -11,6 +11,7 @@ import {
   createPermissionRequest,
   resolvePermission,
   getPendingForSession,
+  requiresExplicitPrompt,
 } from '../services/permissions';
 
 const router = Router();
@@ -44,23 +45,28 @@ router.post('/request', async (req: Request, res: Response) => {
     return;
   }
 
+  // Some commands (e.g. restarting the bridge) must always prompt, even if
+  // the user previously clicked "Allow All" for the tool or is working in a
+  // vault dir. Force-prompt is checked before any auto-allow shortcut.
+  const mustPrompt = requiresExplicitPrompt(tool_name, tool_input || {});
+
   // Auto-allow all operations inside vault directories (no confirmation needed)
   const VAULT_DIRS = [getObsidianRoot() + '/'];
-  if (workingDir && VAULT_DIRS.some(v => workingDir.startsWith(v))) {
+  if (!mustPrompt && workingDir && VAULT_DIRS.some(v => workingDir.startsWith(v))) {
     console.log(`[permissions] auto-allow (vault dir): ${tool_name} in ${workingDir}`);
     res.json({ decision: 'allow' });
     return;
   }
 
   // Check session-level allow-all (user previously clicked "Allow All" for this tool)
-  if (isSessionAllowed(appSessionId, tool_name)) {
+  if (!mustPrompt && isSessionAllowed(appSessionId, tool_name)) {
     console.log(`[permissions] session-allow: ${tool_name}`);
     res.json({ decision: 'allow' });
     return;
   }
 
-  // Run the unified permission check
-  const verdict = checkPermission(tool_name, tool_input || {}, workingDir);
+  // Run the unified permission check. mustPrompt forces 'ask' regardless.
+  const verdict = mustPrompt ? 'ask' : checkPermission(tool_name, tool_input || {}, workingDir);
 
   if (verdict === 'deny') {
     console.log(`[permissions] auto-deny (incompatible with bridge): ${tool_name}`);

@@ -2129,8 +2129,11 @@ function autoResize(el) {
 const mentionState = {
   open: false,
   start: -1,
-  query: '',
+  query: '',           // full token after '@' (may include 'vault:' prefix)
+  strippedQuery: '',   // query with 'vault:' prefix removed when in vault mode
   vaultMode: false,
+  scopedDir: null,     // absolute dir path when user has Tab-descended into a directory
+  scopedLabel: null,   // short breadcrumb label for scopedDir
   results: [],
   selectedIdx: 0,
   fetchSeq: 0,
@@ -2154,6 +2157,9 @@ function closeMentionPopover() {
   mentionState.open = false;
   mentionState.results = [];
   mentionState.selectedIdx = 0;
+  mentionState.scopedDir = null;
+  mentionState.scopedLabel = null;
+  mentionState.strippedQuery = '';
   mentionState.fetchSeq++;
   if (mentionFetchTimer) { clearTimeout(mentionFetchTimer); mentionFetchTimer = null; }
   if (mentionState.popoverEl) mentionState.popoverEl.style.display = 'none';
@@ -2192,15 +2198,19 @@ function positionMentionPopover() {
 
 function renderMentionPopover() {
   const el = ensureMentionPopover();
+  const breadcrumb = mentionState.scopedDir
+    ? `<div class="mention-breadcrumb"><span class="mention-breadcrumb-arrow">↳</span><span class="mention-breadcrumb-path">${escapeMentionHtml(mentionState.scopedLabel || mentionState.scopedDir)}</span><span class="mention-breadcrumb-hint">Backspace to exit</span></div>`
+    : '';
   if (!mentionState.results.length) {
-    el.innerHTML = '<div class="mention-empty">No matches</div>';
+    el.innerHTML = breadcrumb + '<div class="mention-empty">No matches</div>';
   } else {
-    el.innerHTML = mentionState.results.map((r, idx) => {
+    const items = mentionState.results.map((r, idx) => {
       const cls = idx === mentionState.selectedIdx ? 'mention-item selected' : 'mention-item';
       const icon = r.isDirectory ? '📁' : '📄';
       const vault = r.vault ? `<span class="mention-vault">${escapeMentionHtml(r.vault)}</span>` : '';
       return `<div class="${cls}" data-idx="${idx}"><span class="mention-icon">${icon}</span><span class="mention-name">${escapeMentionHtml(r.name)}</span>${vault}<span class="mention-path">${escapeMentionHtml(r.path)}</span></div>`;
     }).join('');
+    el.innerHTML = breadcrumb + items;
     el.querySelectorAll('.mention-item').forEach(itemEl => {
       itemEl.addEventListener('mousedown', (e) => {
         e.preventDefault();
@@ -2215,10 +2225,20 @@ function renderMentionPopover() {
 async function fetchMentionResults(query, vaultMode) {
   const seq = ++mentionState.fetchSeq;
   const endpoint = vaultMode ? '/api/sessions/dirs/vault-search' : '/api/sessions/dirs/search';
+  const params = new URLSearchParams({ q: query, limit: '20' });
+  if (mentionState.scopedDir) params.set('scope', mentionState.scopedDir);
   try {
-    const r = await fetch(`${endpoint}?q=${encodeURIComponent(query)}&limit=20`);
+    const r = await fetch(`${endpoint}?${params.toString()}`);
     if (seq !== mentionState.fetchSeq) return;
-    if (!r.ok) return;
+    if (!r.ok) {
+      if (r.status === 403) {
+        // Scope rejected (allowed paths may have shifted) — drop it and retry once.
+        mentionState.scopedDir = null;
+        mentionState.scopedLabel = null;
+        fetchMentionResults(query, vaultMode);
+      }
+      return;
+    }
     const results = await r.json();
     mentionState.results = results;
     mentionState.selectedIdx = 0;
@@ -2254,11 +2274,45 @@ function updateMentionPicker() {
   }
   const vaultMode = tok.query.startsWith('vault:');
   const query = vaultMode ? tok.query.slice('vault:'.length) : tok.query;
+  // Switching between vault-mode and regular mode invalidates any scope the user
+  // had established in the other namespace — its allowed-path validation differs.
+  if (mentionState.open && mentionState.vaultMode !== vaultMode && mentionState.scopedDir) {
+    mentionState.scopedDir = null;
+    mentionState.scopedLabel = null;
+  }
   mentionState.open = true;
   mentionState.start = tok.start;
   mentionState.query = tok.query;
+  mentionState.strippedQuery = query;
   mentionState.vaultMode = vaultMode;
   scheduleMentionFetch(query, vaultMode);
+}
+
+function buildScopedLabel(absPath) {
+  const parts = String(absPath).replace(/\/+$/, '').split('/').filter(Boolean);
+  const tail = parts.slice(-3).join('/');
+  return (parts.length > 3 ? '…/' : '/') + tail + '/';
+}
+
+function descendIntoDirectory(idx) {
+  if (idx < 0 || idx >= mentionState.results.length) return false;
+  const chosen = mentionState.results[idx];
+  if (!chosen || !chosen.isDirectory) return false;
+  // Clear the typed query text from the input, keeping '@' (and 'vault:' if in vault mode).
+  const prefixLen = 1 + (mentionState.vaultMode ? 'vault:'.length : 0);
+  const queryStart = mentionState.start + prefixLen;
+  const v = messageInput.value;
+  const cursor = messageInput.selectionStart;
+  messageInput.value = v.slice(0, queryStart) + v.slice(cursor);
+  messageInput.setSelectionRange(queryStart, queryStart);
+  mentionState.scopedDir = chosen.path;
+  mentionState.scopedLabel = buildScopedLabel(chosen.path);
+  mentionState.query = mentionState.vaultMode ? 'vault:' : '';
+  mentionState.strippedQuery = '';
+  mentionState.selectedIdx = 0;
+  // Fetch scoped-and-empty so the popover shows the contents of the chosen directory.
+  scheduleMentionFetch('', mentionState.vaultMode);
+  return true;
 }
 
 function handleMentionKeydown(e) {
@@ -2275,11 +2329,30 @@ function handleMentionKeydown(e) {
     renderMentionPopover();
     return true;
   }
-  const pickKey = (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey)
-    || (e.key === 'Tab' && !e.shiftKey);
-  if (pickKey && mentionState.results.length) {
+  // Tab on a directory → descend into it; on anything else → pick and close.
+  if (e.key === 'Tab' && !e.shiftKey && mentionState.results.length) {
+    const chosen = mentionState.results[mentionState.selectedIdx];
+    if (chosen && chosen.isDirectory) {
+      e.preventDefault();
+      descendIntoDirectory(mentionState.selectedIdx);
+      return true;
+    }
     e.preventDefault();
     applyMentionSelection(mentionState.selectedIdx);
+    return true;
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && mentionState.results.length) {
+    e.preventDefault();
+    applyMentionSelection(mentionState.selectedIdx);
+    return true;
+  }
+  // Backspace at an empty scoped query exits the scope but preserves the '@' token.
+  if (e.key === 'Backspace' && mentionState.scopedDir && mentionState.strippedQuery === '') {
+    e.preventDefault();
+    mentionState.scopedDir = null;
+    mentionState.scopedLabel = null;
+    mentionState.selectedIdx = 0;
+    scheduleMentionFetch(mentionState.strippedQuery, mentionState.vaultMode);
     return true;
   }
   if (e.key === 'Escape') {
@@ -8269,6 +8342,222 @@ function getCurrentFrontmatter() {
   return '---\n' + val + '\n---\n';
 }
 
+// ============================================================================
+// [[wiki-link]] autocomplete for the KB Toast UI editor (WYSIWYG mode).
+// Listens for `[[query` before the caret in a text node, offers active-mode
+// vault filenames from /api/vault/kb/link-candidates, and inserts the bare
+// filename inside `[[...]]` on selection — matching Obsidian's convention.
+// ============================================================================
+const wikiLinkState = {
+  open: false,
+  startNode: null,
+  startOffset: -1,
+  query: '',
+  results: [],
+  selectedIdx: 0,
+  fetchSeq: 0,
+  popoverEl: null,
+};
+const WIKI_FETCH_DEBOUNCE_MS = 150;
+let wikiFetchTimer = null;
+
+function ensureWikiPopover() {
+  if (wikiLinkState.popoverEl) return wikiLinkState.popoverEl;
+  const el = document.createElement('div');
+  el.id = 'wiki-link-popover';
+  el.className = 'mention-popover wiki-link-popover';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  wikiLinkState.popoverEl = el;
+  return el;
+}
+
+function closeWikiPopover() {
+  wikiLinkState.open = false;
+  wikiLinkState.startNode = null;
+  wikiLinkState.startOffset = -1;
+  wikiLinkState.query = '';
+  wikiLinkState.results = [];
+  wikiLinkState.selectedIdx = 0;
+  wikiLinkState.fetchSeq++;
+  if (wikiFetchTimer) { clearTimeout(wikiFetchTimer); wikiFetchTimer = null; }
+  if (wikiLinkState.popoverEl) wikiLinkState.popoverEl.style.display = 'none';
+}
+
+function positionWikiPopover() {
+  const el = ensureWikiPopover();
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) { el.style.display = 'none'; return; }
+  const range = sel.getRangeAt(0).cloneRange();
+  range.collapse(true);
+  let rect = range.getBoundingClientRect();
+  // Empty text nodes return 0,0 rects; fall back to the parent element's rect.
+  if (rect.top === 0 && rect.left === 0 && rect.bottom === 0) {
+    const container = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    if (container) rect = container.getBoundingClientRect();
+  }
+  const POPOVER_WIDTH = 360;
+  const left = Math.min(Math.max(rect.left, 8), window.innerWidth - POPOVER_WIDTH - 8);
+  el.style.left = `${left}px`;
+  el.style.top = `${rect.bottom + 4}px`;
+  el.style.bottom = 'auto';
+  el.style.width = `${POPOVER_WIDTH}px`;
+}
+
+function renderWikiPopover() {
+  const el = ensureWikiPopover();
+  if (!wikiLinkState.results.length) {
+    el.innerHTML = '<div class="mention-empty">No matches</div>';
+  } else {
+    el.innerHTML = wikiLinkState.results.map((r, idx) => {
+      const cls = idx === wikiLinkState.selectedIdx ? 'mention-item selected' : 'mention-item';
+      const vault = r.vault ? `<span class="mention-vault">${escapeMentionHtml(r.vault)}</span>` : '';
+      return `<div class="${cls}" data-idx="${idx}"><span class="mention-icon">🔗</span><span class="mention-name">${escapeMentionHtml(r.name)}</span>${vault}</div>`;
+    }).join('');
+    el.querySelectorAll('.mention-item').forEach(itemEl => {
+      itemEl.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        applyWikiSelection(parseInt(itemEl.getAttribute('data-idx'), 10));
+      });
+    });
+  }
+  positionWikiPopover();
+  el.style.display = 'block';
+}
+
+async function fetchWikiCandidates(query) {
+  const seq = ++wikiLinkState.fetchSeq;
+  try {
+    const r = await fetch(`/api/vault/kb/link-candidates?q=${encodeURIComponent(query)}&limit=20`);
+    if (seq !== wikiLinkState.fetchSeq) return;
+    if (!r.ok) return;
+    const results = await r.json();
+    wikiLinkState.results = results;
+    wikiLinkState.selectedIdx = 0;
+    renderWikiPopover();
+  } catch {}
+}
+
+function scheduleWikiFetch(query) {
+  if (wikiFetchTimer) clearTimeout(wikiFetchTimer);
+  wikiFetchTimer = setTimeout(() => fetchWikiCandidates(query), WIKI_FETCH_DEBOUNCE_MS);
+}
+
+function detectWikiToken() {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed) return null;
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+  const text = node.textContent || '';
+  const slice = text.slice(0, offset);
+  const idx = slice.lastIndexOf('[[');
+  if (idx < 0) return null;
+  const after = slice.slice(idx + 2);
+  // Stop tracking if the user has typed ']' or a newline after '[['
+  if (/[\]\n]/.test(after)) return null;
+  return { node, startOffset: idx, query: after };
+}
+
+function updateWikiPicker() {
+  if (!kbIsEditing || !kbEditor) {
+    if (wikiLinkState.open) closeWikiPopover();
+    return;
+  }
+  const tok = detectWikiToken();
+  if (!tok) {
+    if (wikiLinkState.open) closeWikiPopover();
+    return;
+  }
+  wikiLinkState.open = true;
+  wikiLinkState.startNode = tok.node;
+  wikiLinkState.startOffset = tok.startOffset;
+  wikiLinkState.query = tok.query;
+  scheduleWikiFetch(tok.query);
+  positionWikiPopover();
+  ensureWikiPopover().style.display = 'block';
+}
+
+function applyWikiSelection(idx) {
+  if (idx < 0 || idx >= wikiLinkState.results.length) return;
+  const chosen = wikiLinkState.results[idx];
+  const node = wikiLinkState.startNode;
+  if (!node || !node.parentNode) {
+    closeWikiPopover();
+    return;
+  }
+  const sel = window.getSelection();
+  if (!sel) {
+    closeWikiPopover();
+    return;
+  }
+  let cursorOffset = (node.textContent || '').length;
+  if (sel.rangeCount && sel.getRangeAt(0).startContainer === node) {
+    cursorOffset = sel.getRangeAt(0).startOffset;
+  }
+  try {
+    const range = document.createRange();
+    range.setStart(node, wikiLinkState.startOffset);
+    range.setEnd(node, cursorOffset);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const ok = document.execCommand('insertText', false, `[[${chosen.name}]]`);
+    if (!ok && kbEditor && typeof kbEditor.insertText === 'function') {
+      kbEditor.insertText(`[[${chosen.name}]]`);
+    }
+  } catch {
+    try { kbEditor.insertText(`[[${chosen.name}]]`); } catch {}
+  }
+  closeWikiPopover();
+}
+
+function handleWikiKeydown(e) {
+  if (!wikiLinkState.open) return false;
+  if (e.key === 'ArrowDown' && wikiLinkState.results.length) {
+    e.preventDefault(); e.stopPropagation();
+    wikiLinkState.selectedIdx = (wikiLinkState.selectedIdx + 1) % wikiLinkState.results.length;
+    renderWikiPopover();
+    return true;
+  }
+  if (e.key === 'ArrowUp' && wikiLinkState.results.length) {
+    e.preventDefault(); e.stopPropagation();
+    wikiLinkState.selectedIdx = (wikiLinkState.selectedIdx - 1 + wikiLinkState.results.length) % wikiLinkState.results.length;
+    renderWikiPopover();
+    return true;
+  }
+  if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (wikiLinkState.results.length) {
+      e.preventDefault(); e.stopPropagation();
+      applyWikiSelection(wikiLinkState.selectedIdx);
+      return true;
+    }
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation();
+    closeWikiPopover();
+    return true;
+  }
+  return false;
+}
+
+function attachWikiLinkListeners(editorRootEl) {
+  if (editorRootEl.dataset.wikiLinkBound === '1') return;
+  editorRootEl.dataset.wikiLinkBound = '1';
+  editorRootEl.addEventListener('keydown', handleWikiKeydown, true);
+  editorRootEl.addEventListener('input', updateWikiPicker);
+  editorRootEl.addEventListener('click', updateWikiPicker);
+  editorRootEl.addEventListener('keyup', (e) => {
+    // Arrow keys and printable keystrokes can move the caret outside [[...]] — re-evaluate.
+    if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Backspace','Delete'].includes(e.key)) {
+      updateWikiPicker();
+    }
+  });
+}
+
 async function toggleKbEdit() {
   if (!kbCurrentFile) return;
   kbIsEditing = true;
@@ -8357,9 +8646,14 @@ async function toggleKbEdit() {
   // Template picker command
   kbEditor.addCommand('wysiwyg', 'insertTemplate', () => { showTemplatePicker(); return true; });
   kbEditor.addCommand('markdown', 'insertTemplate', () => { showTemplatePicker(); return true; });
+
+  // Wire [[wiki-link]] autocomplete — capture-phase listener on the persistent
+  // host intercepts ProseMirror's keyboard handling for Tab/Enter/Escape.
+  attachWikiLinkListeners(editorEl);
 }
 
 function cancelKbEdit() {
+  closeWikiPopover();
   clearTimeout(kbAutosaveTimer);
   kbIsEditing = false;
   kbFrontmatter = '';

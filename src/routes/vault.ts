@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getMode, getObsidianRoot, getObsidianVaults, getVaultPath } from '../config';
+import { getMode, getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults } from '../config';
 
 const router = Router();
 
@@ -506,8 +506,9 @@ router.put('/kb/file', (req: Request, res: Response) => {
 
   try {
     fs.writeFileSync(resolved, content, 'utf-8');
-    // Clear wiki-link cache since file changed
+    // Clear wiki-link caches since file changed
     wikiLinkCache = null;
+    linkCandidateCache.clear();
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -542,6 +543,7 @@ router.post('/kb/file', (req: Request, res: Response) => {
   try {
     fs.writeFileSync(resolved, '', 'utf-8');
     wikiLinkCache = null;
+    linkCandidateCache.clear();
     res.json({ success: true, path: resolved, name: path.basename(resolved, '.md') });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -570,6 +572,7 @@ router.delete('/kb/file', (req: Request, res: Response) => {
   try {
     fs.unlinkSync(resolved);
     wikiLinkCache = null;
+    linkCandidateCache.clear();
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -683,6 +686,7 @@ router.post('/kb/move', (req: Request, res: Response) => {
   try {
     fs.renameSync(resolvedSrc, resolvedDest);
     wikiLinkCache = null;
+    linkCandidateCache.clear();
     res.json({ success: true, path: resolvedDest });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -760,6 +764,91 @@ function buildWikiLinkIndex(): Map<string, string> {
   }
   return index;
 }
+
+// In-memory cache for wiki-link autocomplete candidates, scoped to active-mode vaults.
+// Invalidated whenever a vault .md file is written/created/deleted/moved (see wikiLinkCache resets).
+interface LinkCandidate {
+  name: string;
+  path: string;
+  vault: string;
+  mtimeMs: number;
+}
+interface LinkCandidateCache {
+  entries: LinkCandidate[];
+  builtAt: number;
+}
+const linkCandidateCache = new Map<string, LinkCandidateCache>();
+const LINK_CANDIDATE_TTL_MS = 30_000;
+const LINK_CANDIDATE_SKIP = new Set(['.git', '.obsidian', '.trash', 'node_modules']);
+
+function buildLinkCandidates(vaults: Array<{ name: string; path: string }>): LinkCandidate[] {
+  const results: LinkCandidate[] = [];
+  const seen = new Set<string>();
+  function walk(dir: string, vault: string) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || LINK_CANDIDATE_SKIP.has(e.name)) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full, vault);
+      } else if (e.isFile() && e.name.endsWith('.md')) {
+        if (seen.has(full)) continue;
+        seen.add(full);
+        let mtimeMs = 0;
+        try { mtimeMs = fs.statSync(full).mtimeMs; } catch {}
+        results.push({ name: e.name.replace(/\.md$/, ''), path: full, vault, mtimeMs });
+      }
+    }
+  }
+  for (const v of vaults) walk(v.path, v.name);
+  results.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return results;
+}
+
+function getLinkCandidates(): LinkCandidate[] {
+  const vaults = getActiveModeVaults(getMode());
+  if (vaults.length === 0) return [];
+  const key = getMode() + ':' + vaults.map(v => v.path).join('|');
+  const cached = linkCandidateCache.get(key);
+  if (cached && Date.now() - cached.builtAt < LINK_CANDIDATE_TTL_MS) return cached.entries;
+  const entries = buildLinkCandidates(vaults);
+  linkCandidateCache.set(key, { entries, builtAt: Date.now() });
+  return entries;
+}
+
+// Wiki-link autocomplete: return active-mode vault .md filenames matching the query,
+// ranked exact > prefix > substring, then by recency.
+router.get('/kb/link-candidates', (req: Request, res: Response) => {
+  const q = ((req.query.q as string) || '').trim().toLowerCase();
+  const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
+  const entries = getLinkCandidates();
+  if (entries.length === 0) {
+    res.json([]);
+    return;
+  }
+  let filtered: LinkCandidate[];
+  if (!q) {
+    filtered = entries.slice(0, limit);
+  } else {
+    const exact: LinkCandidate[] = [];
+    const prefix: LinkCandidate[] = [];
+    const substring: LinkCandidate[] = [];
+    for (const e of entries) {
+      const name = e.name.toLowerCase();
+      if (name === q) exact.push(e);
+      else if (name.startsWith(q)) prefix.push(e);
+      else if (name.includes(q)) substring.push(e);
+      if (exact.length + prefix.length + substring.length >= limit * 4) break;
+    }
+    filtered = [...exact, ...prefix, ...substring].slice(0, limit);
+  }
+  res.json(filtered.map(e => ({ name: e.name, path: e.path, vault: e.vault })));
+});
 
 // Resolve a wiki-link to a file path
 router.get('/kb/resolve-link', (req: Request, res: Response) => {

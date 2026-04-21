@@ -197,17 +197,41 @@ function rankMatches(entries: IndexEntry[], query: string, limit: number): Index
   return [...exact, ...prefix, ...substring].slice(0, limit);
 }
 
-// Search files/directories under allowed paths for @-mention autocomplete
+// Filter an index to entries strictly *under* a scope directory (not the scope itself).
+// Returns null when the scope is not inside any allowed root (so the caller can 403).
+function filterEntriesByScope(
+  entries: IndexEntry[],
+  scope: string,
+  allowedRoots: string[],
+): IndexEntry[] | null {
+  const resolved = path.resolve(scope);
+  if (!isWithinAllowedPaths(resolved, allowedRoots)) return null;
+  const prefix = resolved + path.sep;
+  return entries.filter(e => e.path.startsWith(prefix));
+}
+
+// Search files/directories under allowed paths for @-mention autocomplete.
+// Optional `scope=<abs-path>` narrows the search to descendants of that directory
+// (must itself be within an allowed path, else 403).
 router.get('/dirs/search', (req: Request, res: Response) => {
   const q = (req.query.q as string) || '';
   const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
+  const scope = (req.query.scope as string) || '';
   const allowed = getAllowedPaths();
   if (allowed.length === 0) {
     res.json([]);
     return;
   }
   const cacheKey = 'dirs:' + allowed.join('|');
-  const entries = getOrBuildIndex(cacheKey, allowed.map(p => ({ path: p })));
+  let entries = getOrBuildIndex(cacheKey, allowed.map(p => ({ path: p })));
+  if (scope) {
+    const scoped = filterEntriesByScope(entries, scope, allowed);
+    if (scoped === null) {
+      res.status(403).json({ error: 'Scope outside allowed paths' });
+      return;
+    }
+    entries = scoped;
+  }
   res.json(rankMatches(entries, q, limit).map(e => ({
     name: e.name,
     path: e.path,
@@ -215,17 +239,27 @@ router.get('/dirs/search', (req: Request, res: Response) => {
   })));
 });
 
-// Search files/directories across all vaults of the current mode for @vault: autocomplete
+// Search files/directories across all vaults of the current mode for @vault: autocomplete.
+// Optional `scope=<abs-path>` narrows to descendants of a directory under one of those vaults.
 router.get('/dirs/vault-search', (req: Request, res: Response) => {
   const q = (req.query.q as string) || '';
   const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
+  const scope = (req.query.scope as string) || '';
   const vaults = getActiveModeVaults(getMode());
   if (vaults.length === 0) {
     res.json([]);
     return;
   }
   const cacheKey = 'vault:' + getMode() + ':' + vaults.map(v => v.path).join('|');
-  const entries = getOrBuildIndex(cacheKey, vaults);
+  let entries = getOrBuildIndex(cacheKey, vaults);
+  if (scope) {
+    const scoped = filterEntriesByScope(entries, scope, vaults.map(v => v.path));
+    if (scoped === null) {
+      res.status(403).json({ error: 'Scope outside active-mode vaults' });
+      return;
+    }
+    entries = scoped;
+  }
   res.json(rankMatches(entries, q, limit).map(e => ({
     name: e.name,
     path: e.path,

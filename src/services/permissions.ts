@@ -90,6 +90,15 @@ const BASH_SAFE_PATTERNS = [
   /^(tar|zip|unzip|gzip|gunzip|bzip2|xz)\s/,   // archive ops
 ];
 
+// Bash commands that must ALWAYS prompt — never auto-allowed by session
+// allow-all, vault-dir bypass, or any other shortcut. For actions where
+// silent re-execution would surprise the user, like restarting the bridge
+// itself (which kills the running session and forces a reconnect).
+const BASH_REQUIRE_PROMPT_PATTERNS = [
+  /\blaunchctl\s+(kickstart|stop|kill|bootout|unload|load)\b.*\bclaude-chat-bridge\b/,
+  /\bpkill\b.*\bclaude-chat-bridge\b/,
+];
+
 // Bash commands that always need permission (destructive / state-changing)
 const BASH_ASK_PATTERNS = [
   /^git\s+(add|commit|push|reset|rebase|merge|checkout|switch|cherry-pick|revert|clean|stash\s+(drop|pop|clear))\b/,
@@ -159,6 +168,21 @@ export function trustDirectory(dir: string): void {
  */
 export function isNeverAllowed(toolName: string): boolean {
   return NEVER_ALLOW_TOOLS.has(toolName);
+}
+
+/**
+ * Returns true if this invocation must always prompt the user, regardless of
+ * session allow-all, vault-dir bypass, or trusted-dir status. Used for actions
+ * (like restarting the bridge process) where silent re-execution would
+ * interrupt the running session.
+ */
+export function requiresExplicitPrompt(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+): boolean {
+  if (toolName !== 'Bash') return false;
+  const command = ((toolInput.command as string) || '').trim();
+  return BASH_REQUIRE_PROMPT_PATTERNS.some(p => p.test(command));
 }
 
 /**
