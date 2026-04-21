@@ -5052,3 +5052,73 @@ pre.streaming {
   stroke-width: 1;
   stroke-linejoin: round;
 }
+
+/* @-mention picker — anchored above the message textarea */
+.mention-popover {
+  position: fixed;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 0;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  z-index: 200;
+  font-family: var(--font-sans);
+}
+
+.mention-empty {
+  padding: 10px 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.mention-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+
+.mention-item:hover,
+.mention-item.selected {
+  background: rgba(74, 158, 255, 0.14);
+}
+
+.mention-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.mention-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-vault {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(74, 158, 255, 0.18);
+  color: var(--text-secondary, var(--text-primary));
+  white-space: nowrap;
+}
+
+.mention-path {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}

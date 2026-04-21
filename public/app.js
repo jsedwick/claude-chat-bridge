@@ -2073,7 +2073,184 @@ function autoResize(el) {
 }
 
 // Keyboard handling
+// ============================================================================
+// @-mention picker — restricts to allowed paths from MCP settings (mirrors
+// the directory picker's allowlist) and supports a `@vault:` namespace that
+// searches all vaults of the current mode. Selected items are inserted as
+// literal `@<absolute-path>` tokens that the spawned `claude -p` expands
+// natively at the CLI layer (verified to work with --add-dir injected by
+// claude-runner).
+// ============================================================================
+const mentionState = {
+  open: false,
+  start: -1,
+  query: '',
+  vaultMode: false,
+  results: [],
+  selectedIdx: 0,
+  fetchSeq: 0,
+  popoverEl: null,
+};
+const MENTION_FETCH_DEBOUNCE_MS = 150;
+let mentionFetchTimer = null;
+
+function ensureMentionPopover() {
+  if (mentionState.popoverEl) return mentionState.popoverEl;
+  const el = document.createElement('div');
+  el.id = 'mention-popover';
+  el.className = 'mention-popover';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  mentionState.popoverEl = el;
+  return el;
+}
+
+function closeMentionPopover() {
+  mentionState.open = false;
+  mentionState.results = [];
+  mentionState.selectedIdx = 0;
+  mentionState.fetchSeq++;
+  if (mentionFetchTimer) { clearTimeout(mentionFetchTimer); mentionFetchTimer = null; }
+  if (mentionState.popoverEl) mentionState.popoverEl.style.display = 'none';
+}
+
+function detectMentionToken() {
+  const v = messageInput.value;
+  const cursor = messageInput.selectionStart;
+  let i = cursor - 1;
+  while (i >= 0) {
+    const ch = v[i];
+    if (ch === '@') {
+      if (i === 0 || /\s/.test(v[i - 1])) {
+        const tail = v.slice(i + 1, cursor);
+        if (!/\s/.test(tail)) return { start: i, query: tail };
+      }
+      return null;
+    }
+    if (/\s/.test(ch)) return null;
+    i--;
+  }
+  return null;
+}
+
+function escapeMentionHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function positionMentionPopover() {
+  const rect = messageInput.getBoundingClientRect();
+  const el = mentionState.popoverEl;
+  el.style.left = `${rect.left}px`;
+  el.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  el.style.width = `${Math.min(Math.max(rect.width, 320), 520)}px`;
+}
+
+function renderMentionPopover() {
+  const el = ensureMentionPopover();
+  if (!mentionState.results.length) {
+    el.innerHTML = '<div class="mention-empty">No matches</div>';
+  } else {
+    el.innerHTML = mentionState.results.map((r, idx) => {
+      const cls = idx === mentionState.selectedIdx ? 'mention-item selected' : 'mention-item';
+      const icon = r.isDirectory ? '📁' : '📄';
+      const vault = r.vault ? `<span class="mention-vault">${escapeMentionHtml(r.vault)}</span>` : '';
+      return `<div class="${cls}" data-idx="${idx}"><span class="mention-icon">${icon}</span><span class="mention-name">${escapeMentionHtml(r.name)}</span>${vault}<span class="mention-path">${escapeMentionHtml(r.path)}</span></div>`;
+    }).join('');
+    el.querySelectorAll('.mention-item').forEach(itemEl => {
+      itemEl.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        applyMentionSelection(parseInt(itemEl.getAttribute('data-idx'), 10));
+      });
+    });
+  }
+  positionMentionPopover();
+  el.style.display = 'block';
+}
+
+async function fetchMentionResults(query, vaultMode) {
+  const seq = ++mentionState.fetchSeq;
+  const endpoint = vaultMode ? '/api/sessions/dirs/vault-search' : '/api/sessions/dirs/search';
+  try {
+    const r = await fetch(`${endpoint}?q=${encodeURIComponent(query)}&limit=20`);
+    if (seq !== mentionState.fetchSeq) return;
+    if (!r.ok) return;
+    const results = await r.json();
+    mentionState.results = results;
+    mentionState.selectedIdx = 0;
+    renderMentionPopover();
+  } catch {}
+}
+
+function scheduleMentionFetch(query, vaultMode) {
+  if (mentionFetchTimer) clearTimeout(mentionFetchTimer);
+  mentionFetchTimer = setTimeout(() => fetchMentionResults(query, vaultMode), MENTION_FETCH_DEBOUNCE_MS);
+}
+
+function applyMentionSelection(idx) {
+  if (idx < 0 || idx >= mentionState.results.length) return;
+  const chosen = mentionState.results[idx];
+  const v = messageInput.value;
+  const cursor = messageInput.selectionStart;
+  const before = v.slice(0, mentionState.start);
+  const after = v.slice(cursor);
+  const insertion = `@${chosen.path} `;
+  messageInput.value = before + insertion + after;
+  const newCursor = before.length + insertion.length;
+  messageInput.setSelectionRange(newCursor, newCursor);
+  closeMentionPopover();
+  messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function updateMentionPicker() {
+  const tok = detectMentionToken();
+  if (!tok) {
+    closeMentionPopover();
+    return;
+  }
+  const vaultMode = tok.query.startsWith('vault:');
+  const query = vaultMode ? tok.query.slice('vault:'.length) : tok.query;
+  mentionState.open = true;
+  mentionState.start = tok.start;
+  mentionState.query = tok.query;
+  mentionState.vaultMode = vaultMode;
+  scheduleMentionFetch(query, vaultMode);
+}
+
+function handleMentionKeydown(e) {
+  if (!mentionState.open) return false;
+  if (e.key === 'ArrowDown' && mentionState.results.length) {
+    e.preventDefault();
+    mentionState.selectedIdx = (mentionState.selectedIdx + 1) % mentionState.results.length;
+    renderMentionPopover();
+    return true;
+  }
+  if (e.key === 'ArrowUp' && mentionState.results.length) {
+    e.preventDefault();
+    mentionState.selectedIdx = (mentionState.selectedIdx - 1 + mentionState.results.length) % mentionState.results.length;
+    renderMentionPopover();
+    return true;
+  }
+  const pickKey = (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey)
+    || (e.key === 'Tab' && !e.shiftKey);
+  if (pickKey && mentionState.results.length) {
+    e.preventDefault();
+    applyMentionSelection(mentionState.selectedIdx);
+    return true;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeMentionPopover();
+    return true;
+  }
+  return false;
+}
+
+messageInput.addEventListener('input', updateMentionPicker);
+messageInput.addEventListener('blur', () => setTimeout(closeMentionPopover, 120));
+window.addEventListener('resize', () => { if (mentionState.open) positionMentionPopover(); });
+
 function handleKeydown(e) {
+  if (handleMentionKeydown(e)) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();

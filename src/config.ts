@@ -97,6 +97,24 @@ export function getMcpConfigPath(): string {
   return config.mcpConfigPath;
 }
 
+export function getAllowedPaths(): string[] {
+  try {
+    const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
+    const data = JSON.parse(raw);
+    const paths: string[] = data?.security?.accessControl?.allowedPaths || [];
+    return paths.map(expandTilde);
+  } catch {
+    return [];
+  }
+}
+
+export function getActiveModeVaults(mode: Mode): Array<{ name: string; path: string }> {
+  const vaults = readMcpVaults();
+  return vaults
+    .filter(v => v.mode === mode)
+    .map(v => ({ name: v.name, path: v.path }));
+}
+
 export function setMcpConfigPath(newPath: string): void {
   config.mcpConfigPath = newPath;
   setBridgeConfigValue('mcpConfigPath', newPath);

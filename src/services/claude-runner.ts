@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
-import { config } from '../config';
+import { config, getAllowedPaths } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
 
 const activeSessions = new Map<string, ChildProcess>();
@@ -173,6 +173,13 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--permission-mode', 'auto',
     '--plugin-dir', config.pluginDir,
   ];
+
+  // Allow Claude to read files via @-mention from any user-allowed path,
+  // even when the spawn cwd doesn't contain them. Mirrors the bridge's
+  // /dirs/browse allowlist so @-picker results are guaranteed readable.
+  for (const allowed of getAllowedPaths()) {
+    args.push('--add-dir', allowed);
+  }
 
   if (hasImages) {
     args.push('--input-format', 'stream-json');

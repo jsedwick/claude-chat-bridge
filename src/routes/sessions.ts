@@ -2,29 +2,13 @@ import { Router, Request, Response } from 'express';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, trashSession, restoreSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
-import { getMode, setMode, Mode, config, getMcpConfigPath } from '../config';
+import { getMode, setMode, Mode, config, getAllowedPaths, getActiveModeVaults } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
 import { isDirectoryTrusted } from '../services/permissions';
 
 const router = Router();
-
-// Read allowed paths from MCP settings config
-function getAllowedPaths(): string[] {
-  try {
-    const raw = fs.readFileSync(getMcpConfigPath(), 'utf-8');
-    const data = JSON.parse(raw);
-    const paths: string[] = data?.security?.accessControl?.allowedPaths || [];
-    const home = os.homedir();
-    return paths.map(p =>
-      p.startsWith('~/') || p === '~' ? home + p.slice(1) : p
-    );
-  } catch {
-    return [];
-  }
-}
 
 // Check if a path is within any of the allowed paths
 function isWithinAllowedPaths(targetPath: string, allowedPaths: string[]): boolean {
@@ -137,6 +121,109 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
     parent: hasParent ? parentDir : null,
     children,
   });
+});
+
+// In-memory file index for @-mention autocomplete. Keyed by the joined source paths
+// so that a mode switch (which changes vault roots) naturally invalidates.
+interface IndexEntry {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  vault?: string;
+}
+interface CachedIndex {
+  entries: IndexEntry[];
+  builtAt: number;
+}
+const indexCache = new Map<string, CachedIndex>();
+const INDEX_TTL_MS = 30_000;
+const SKIP_DIRS = new Set(['.git', '.obsidian', 'node_modules', 'dist', '.next', '.cache', '.trash', '.DS_Store']);
+const MAX_DEPTH = 6;
+const MAX_INDEX_ENTRIES = 50_000;
+
+function buildIndex(roots: Array<{ name?: string; path: string }>): IndexEntry[] {
+  const entries: IndexEntry[] = [];
+  function walk(dir: string, depth: number, vault?: string) {
+    if (depth > MAX_DEPTH || entries.length >= MAX_INDEX_ENTRIES) return;
+    let children: fs.Dirent[];
+    try {
+      children = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of children) {
+      if (entries.length >= MAX_INDEX_ENTRIES) return;
+      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+      const childPath = path.join(dir, e.name);
+      entries.push({ name: e.name, path: childPath, isDirectory: e.isDirectory(), vault });
+      if (e.isDirectory()) walk(childPath, depth + 1, vault);
+    }
+  }
+  for (const root of roots) {
+    walk(root.path, 0, root.name);
+  }
+  return entries;
+}
+
+function getOrBuildIndex(cacheKey: string, roots: Array<{ name?: string; path: string }>): IndexEntry[] {
+  const cached = indexCache.get(cacheKey);
+  if (cached && Date.now() - cached.builtAt < INDEX_TTL_MS) return cached.entries;
+  const entries = buildIndex(roots);
+  indexCache.set(cacheKey, { entries, builtAt: Date.now() });
+  return entries;
+}
+
+function rankMatches(entries: IndexEntry[], query: string, limit: number): IndexEntry[] {
+  if (!query) return entries.slice(0, limit);
+  const q = query.toLowerCase();
+  const exact: IndexEntry[] = [];
+  const prefix: IndexEntry[] = [];
+  const substring: IndexEntry[] = [];
+  for (const e of entries) {
+    const name = e.name.toLowerCase();
+    if (name === q) exact.push(e);
+    else if (name.startsWith(q)) prefix.push(e);
+    else if (name.includes(q)) substring.push(e);
+    if (exact.length + prefix.length + substring.length >= limit * 4) break;
+  }
+  return [...exact, ...prefix, ...substring].slice(0, limit);
+}
+
+// Search files/directories under allowed paths for @-mention autocomplete
+router.get('/dirs/search', (req: Request, res: Response) => {
+  const q = (req.query.q as string) || '';
+  const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
+  const allowed = getAllowedPaths();
+  if (allowed.length === 0) {
+    res.json([]);
+    return;
+  }
+  const cacheKey = 'dirs:' + allowed.join('|');
+  const entries = getOrBuildIndex(cacheKey, allowed.map(p => ({ path: p })));
+  res.json(rankMatches(entries, q, limit).map(e => ({
+    name: e.name,
+    path: e.path,
+    isDirectory: e.isDirectory,
+  })));
+});
+
+// Search files/directories across all vaults of the current mode for @vault: autocomplete
+router.get('/dirs/vault-search', (req: Request, res: Response) => {
+  const q = (req.query.q as string) || '';
+  const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
+  const vaults = getActiveModeVaults(getMode());
+  if (vaults.length === 0) {
+    res.json([]);
+    return;
+  }
+  const cacheKey = 'vault:' + getMode() + ':' + vaults.map(v => v.path).join('|');
+  const entries = getOrBuildIndex(cacheKey, vaults);
+  res.json(rankMatches(entries, q, limit).map(e => ({
+    name: e.name,
+    path: e.path,
+    isDirectory: e.isDirectory,
+    vault: e.vault,
+  })));
 });
 
 // Active sessions endpoint (must be before /:id to avoid param capture)
