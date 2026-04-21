@@ -411,21 +411,42 @@ router.put('/:id/handoff', (req: Request, res: Response) => {
 });
 
 router.post('/:id/fork', (req: Request, res: Response) => {
-  const { messageIndex } = req.body || {};
+  const { messageIndex, workingDir } = req.body || {};
   if (typeof messageIndex !== 'number' || messageIndex < 0) {
     res.status(400).json({ error: 'messageIndex is required and must be a non-negative number' });
     return;
   }
-  const forked = forkSession(req.params.id as string, messageIndex);
+  if (workingDir !== undefined && workingDir !== null) {
+    if (typeof workingDir !== 'string' || !workingDir) {
+      res.status(400).json({ error: 'workingDir must be a non-empty string' });
+      return;
+    }
+    try {
+      const stat = fs.statSync(path.resolve(workingDir));
+      if (!stat.isDirectory()) {
+        res.status(400).json({ error: 'Not a directory' });
+        return;
+      }
+    } catch {
+      res.status(400).json({ error: 'Directory not found' });
+      return;
+    }
+  }
+  const forked = forkSession(
+    req.params.id as string,
+    messageIndex,
+    typeof workingDir === 'string' ? workingDir : undefined,
+  );
   if (forked === 'max_depth') {
-    res.status(400).json({ error: 'Maximum fork depth reached (2 levels)' });
+    res.status(400).json({ error: 'Maximum fork depth reached (5 levels)' });
     return;
   }
   if (!forked) {
     res.status(404).json({ error: 'Session not found or invalid message index' });
     return;
   }
-  res.status(201).json(forked);
+  const trusted = forked.workingDir ? isDirectoryTrusted(forked.workingDir) : true;
+  res.status(201).json({ ...forked, directoryTrusted: trusted });
 });
 
 router.get('/:id/forks', (req: Request, res: Response) => {

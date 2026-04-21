@@ -187,9 +187,13 @@ export function getForkDepth(sessionId: string): number {
   return depth;
 }
 
-const MAX_FORK_DEPTH = 2;
+const MAX_FORK_DEPTH = 5;
 
-export function forkSession(sourceId: string, messageIndex: number): ChatSession | undefined | 'max_depth' {
+export function forkSession(
+  sourceId: string,
+  messageIndex: number,
+  overrideWorkingDir?: string,
+): ChatSession | undefined | 'max_depth' {
   const source = sessions.find(s => s.id === sourceId);
   if (!source) return undefined;
   if (getForkDepth(sourceId) >= MAX_FORK_DEPTH) return 'max_depth';
@@ -227,7 +231,7 @@ export function forkSession(sourceId: string, messageIndex: number): ChatSession
     name: `${source.name} (fork)`,
     model: source.model,
     mode: source.mode,
-    workingDir: source.workingDir,
+    workingDir: overrideWorkingDir || source.workingDir,
     created: new Date().toISOString(),
     lastActivity: new Date().toISOString(),
     lastMessage: source.lastMessage,
@@ -237,6 +241,7 @@ export function forkSession(sourceId: string, messageIndex: number): ChatSession
       sessionId: source.id,
       sessionName: source.name,
       messageIndex,
+      parentWorkingDir: source.workingDir,
     },
   };
   sessions.push(forked);

@@ -29,6 +29,16 @@ function getOrCreateStream(appSessionId: string): ActiveStream {
     // and reset for the new process. Without this, the old timeout would delete
     // the stream from the map while the new process is still emitting events.
     if (stream.cleanupTimer) clearTimeout(stream.cleanupTimer);
+    // Evict any stale /reconnect subscribers before reviving. A client replay
+    // whose fetch hasn't closed yet (e.g. replaySessionStream's abort-on-done
+    // is racing the user's resubmit) would otherwise receive this new stream's
+    // events and render them alongside the live sendMessage processor — the
+    // multi-session double-messages bug. Emit a synthetic done so each stale
+    // listener can finalize cleanly, then drop them.
+    for (const listener of stream.listeners) {
+      try { listener({ type: 'done', data: '{}' }); } catch {}
+    }
+    stream.listeners.clear();
     stream.done = false;
     stream.buffer = [];
   }
@@ -273,7 +283,9 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           const events = Array.isArray(result) ? result : [result];
           for (const event of events) {
             if (event.type === 'text') {
-              console.log(`[debug:${appSessionId.slice(0,8)}] TEXT_EMIT len=${(event.data as string).length} streamed=${hasStreamedText(appSessionId)}`);
+              const src = parsed.type === 'assistant' ? 'snapshot' : parsed.type === 'stream_event' ? 'delta' : parsed.type;
+              const txt = event.data as string;
+              console.log(`[debug:${appSessionId.slice(0,8)}] TEXT_EMIT src=${src} len=${txt.length} preview=${JSON.stringify(txt.substring(0,40))} streamed=${hasStreamedText(appSessionId)}`);
               markStreamedText(appSessionId);
             } else if (event.type === 'tool_use') {
               const toolData = JSON.parse(event.data as string);
@@ -406,7 +418,12 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           if (result) {
             const events = Array.isArray(result) ? result : [result];
             for (const event of events) {
-              if (event.type === 'text') markStreamedText(appSessionId);
+              if (event.type === 'text') {
+                const src = parsed.type === 'assistant' ? 'snapshot' : parsed.type === 'stream_event' ? 'delta' : parsed.type;
+                const txt = event.data as string;
+                console.log(`[debug-close:${appSessionId.slice(0,8)}] TEXT_EMIT src=${src} len=${txt.length} preview=${JSON.stringify(txt.substring(0,40))} streamed=${hasStreamedText(appSessionId)}`);
+                markStreamedText(appSessionId);
+              }
               else if (event.type === 'tool_use') {
                 const toolData = JSON.parse(event.data as string);
                 console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_USE name=${toolData.name} id=${toolData.id?.slice(0,8)}`);

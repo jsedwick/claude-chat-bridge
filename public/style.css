@@ -1453,6 +1453,25 @@ html, body {
   flex-shrink: 0;
 }
 
+.fork-divider-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 80%;
+}
+
+.fork-divider-cwd {
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 /* Fork-point marker on the message where a fork diverged */
 .msg-fork-point-marker {
   position: absolute;

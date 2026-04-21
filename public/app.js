@@ -98,7 +98,12 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
     }
     // Show fork-point divider and mark the fork-point message if this is a forked session
     if (sessionMeta?.forkedFrom) {
-      addForkDivider(sessionMeta.forkedFrom.sessionName, sessionMeta.forkedFrom.sessionId);
+      addForkDivider(
+        sessionMeta.forkedFrom.sessionName,
+        sessionMeta.forkedFrom.sessionId,
+        sessionMeta.forkedFrom.parentWorkingDir,
+        sessionMeta.workingDir,
+      );
       markForkPointMessage(sessionMeta.forkedFrom.messageIndex);
     }
     // Add fork badges to messages that have been forked from
@@ -396,16 +401,42 @@ function toggleDirPicker() {
   const onSelect = async (dirPath) => {
     dirPicker.style.display = 'none';
     if (dirPath === currentWorkingDir) return;
+    localStorage.setItem('chat-bridge-last-dir', dirPath);
+    const visibleCount = messagesEl.querySelectorAll('.message-user, .message-assistant').length;
+    if (visibleCount === 0) {
+      // Empty session — no transcript to preserve. Just PATCH the cwd in place.
+      try {
+        await fetchWithRetry(`/api/sessions/${currentSessionId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workingDir: dirPath }),
+        });
+        currentWorkingDir = dirPath;
+      } catch (err) {
+        console.error('Failed to update working directory:', err);
+      }
+      return;
+    }
+    // Non-empty session — fork so the parent session stays coherent for its
+    // original directory and the child owns the new one. Transcript carries
+    // forward via --fork-session; the next Claude subprocess spawns with the
+    // new cwd (src/services/claude-runner.ts uses session.workingDir).
     try {
-      await fetchWithRetry(`/api/sessions/${currentSessionId}`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/sessions/${currentSessionId}/fork`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workingDir: dirPath }),
+        body: JSON.stringify({ messageIndex: visibleCount - 1, workingDir: dirPath }),
       });
-      currentWorkingDir = dirPath;
-      localStorage.setItem('chat-bridge-last-dir', dirPath);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('Fork into directory failed: ' + (err.error || 'Unknown error'));
+        return;
+      }
+      const forkedSession = await res.json();
+      await switchSession(forkedSession.id);
     } catch (err) {
-      console.error('Failed to update working directory:', err);
+      console.error('Fork-into-dir failed:', err);
+      alert('Fork into directory failed: ' + err.message);
     }
   };
   if (currentWorkingDir) {
@@ -3235,9 +3266,11 @@ function startServerRecoveryPolling(disconnectedEl) {
   }, INTERVAL);
 })();
 
-function addForkDivider(parentName, parentId) {
+function addForkDivider(parentName, parentId, parentWorkingDir, workingDir) {
   const el = document.createElement('div');
   el.className = 'fork-divider';
+  const inner = document.createElement('div');
+  inner.className = 'fork-divider-inner';
   const label = document.createElement('span');
   label.className = 'fork-divider-label';
   // Build via DOM to avoid XSS from user-editable session names
@@ -3261,7 +3294,17 @@ function addForkDivider(parentName, parentId) {
     label.title = 'Click to open parent session';
     label.onclick = () => switchSession(parentId);
   }
-  el.appendChild(label);
+  inner.appendChild(label);
+  // If the fork changed working directory, show the transition so the agent's
+  // next turn has explicit signal that prior file paths belong to the parent.
+  if (parentWorkingDir && workingDir && parentWorkingDir !== workingDir) {
+    const cwdLine = document.createElement('span');
+    cwdLine.className = 'fork-divider-cwd';
+    cwdLine.textContent = parentWorkingDir + ' → ' + workingDir;
+    cwdLine.title = 'Working directory changed at fork point';
+    inner.appendChild(cwdLine);
+  }
+  el.appendChild(inner);
   messagesEl.appendChild(el);
 }
 
@@ -4209,14 +4252,23 @@ async function readSSEStream(response, processEvent) {
 
 // Reconnect to an active stream
 async function attemptReconnect(sessionId, processEvent) {
+  console.log(`[SSE:reconnect:fired] sessionId=${sessionId} currentSessionId=${currentSessionId}`);
   try {
+    // Server replays the FULL buffer from the start of the assistant turn, so
+    // we must clear the in-progress DOM first — otherwise live-rendered bubbles
+    // co-exist with replay-rebuilt bubbles (double-messages bug). Mirrors the
+    // switchSession → replaySessionStream path, which only works because
+    // switchSession already called clearMessages + restoreMessages.
+    if (currentSessionId === sessionId) {
+      await restoreMessages(sessionId, null, { upToLastUser: true });
+      // If the view changed during the async restore, abort the reconnect —
+      // don't replay into a different session's DOM.
+      if (currentSessionId !== sessionId) return false;
+    }
+
     const res = await fetch(`/api/chat/${sessionId}/reconnect`);
     if (!res.ok) return false;
 
-    // Don't clear messages — preserve what's already visible on screen.
-    // The buffer replay will rebuild from the full stream, so we clear
-    // only the in-progress elements (thinking, typing) and let replay rebuild.
-    // Only manipulate DOM if we're still viewing this session
     if (currentSessionId === sessionId) {
       removeTypingIndicator();
       const existingThinking = document.getElementById('thinking-current');
@@ -4245,8 +4297,9 @@ async function attemptReconnect(sessionId, processEvent) {
           receivedContent = true;
         }
         if (type === 'text') {
+          const preview = typeof data === 'string' ? JSON.stringify(data.substring(0, 40)) : '';
+          console.log(`[SSE:reconnect:text] preview=${preview} totalLen=${reconnectedText.length + (typeof data === 'string' ? data.length : 0)} hadEl=${!!reconnectedAssistantEl}`);
           if (!reconnectedAssistantEl) {
-            console.log('[SSE:reconnect] creating new assistantEl');
             reconnectedAssistantEl = createAssistantMessage();
             addTypingIndicator(); // keep dots at bottom
           }
@@ -4296,16 +4349,24 @@ async function replaySessionStream(sessionId) {
   let assistantEl = null;
   let currentText = '';
   let thinkingEl = null;
+  // Guard against leaked events after the target stream ends. Without this,
+  // a user who resubmits in this session before the /reconnect fetch closes
+  // would see replay keep rendering the new stream's events in parallel with
+  // sendMessage's live processEvent — producing duplicate bubbles.
+  let terminated = false;
   try {
     const res = await fetch(`/api/chat/${sessionId}/reconnect`, { signal: controller.signal });
     if (!res.ok) return;
     await readSSEStream(res, (type, data) => {
+      if (terminated) return;
       // Suppress DOM updates if the user navigated away again mid-replay —
       // but keep consuming the stream so the fetch drains cleanly.
       if (currentSessionId !== sessionId) return;
       try {
         switch (type) {
-          case 'text':
+          case 'text': {
+            const preview = typeof data === 'string' ? JSON.stringify(data.substring(0, 40)) : '';
+            console.log(`[SSE:replay:text] preview=${preview} totalLen=${currentText.length + (typeof data === 'string' ? data.length : 0)} hadEl=${!!assistantEl}`);
             deactivateToolGroup();
             if (!assistantEl) {
               assistantEl = createAssistantMessage();
@@ -4316,6 +4377,7 @@ async function replaySessionStream(sessionId) {
             ensureCopyButton(assistantEl);
             scrollToBottom();
             break;
+          }
           case 'thinking':
             if (!thinkingEl) {
               thinkingEl = addThinkingIndicator();
@@ -4397,6 +4459,16 @@ async function replaySessionStream(sessionId) {
             pendingAgentToolIds.clear();
             addUsageInfo(data);
             scrollToBottom();
+            // Terminate the replay — the target stream has ended. Without the
+            // abort, the /reconnect fetch stays open until the server's 500ms
+            // checkDone poll fires, and if the user resubmits in this session
+            // during that window, the server revives the same ActiveStream
+            // object with our stale listener still attached — new events leak
+            // into this replay closure and render in parallel with the new
+            // sendMessage's processEvent (double-messages bug, multi-session
+            // variant).
+            terminated = true;
+            controller.abort();
             break;
         }
       } catch (err) {
@@ -4555,6 +4627,10 @@ async function sendMessage(skipRender = false) {
     // switchSession-triggered replay has taken over rendering for this stream.
     if (currentSessionId !== streamSessionId || hijackedStreams.has(streamSessionId)) {
       logSSE('SESSION_MISMATCH', { type, current: currentSessionId, stream: streamSessionId, hijacked: hijackedStreams.has(streamSessionId) });
+      // Still track the end-of-stream signal so the post-loop reconnect check
+      // doesn't fire a redundant attemptReconnect after replaySessionStream
+      // already finished rendering the turn (which would duplicate it).
+      if (type === 'done') streamCompleted = true;
       return;
     }
     try {
@@ -4569,13 +4645,14 @@ async function sendMessage(skipRender = false) {
           ttsFaceSetActivity('idle');
           deactivateToolGroup();
           if (!assistantEl) {
-            logSSE('text:create_el', { dataLen: typeof data === 'string' ? data.length : 0 });
+            logSSE('text:create_el', { dataLen: typeof data === 'string' ? data.length : 0, preview: typeof data === 'string' ? data.substring(0, 40) : '' });
             assistantEl = createAssistantMessage();
             lastRenderedAssistantEl = assistantEl; // save before tool_use can clear it
             addTypingIndicator(); // keep dots at bottom
           }
           currentText += data;
           everRenderedText = true;
+          logSSE('text:append', { preview: typeof data === 'string' ? data.substring(0, 40) : '', totalLen: currentText.length });
           assistantEl.innerHTML = renderMarkdown(currentText);
           ensureCopyButton(assistantEl);
           scrollToBottom();

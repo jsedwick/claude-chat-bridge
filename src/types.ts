@@ -29,6 +29,7 @@ export interface ChatSession {
     sessionId: string;
     sessionName: string;
     messageIndex: number;
+    parentWorkingDir?: string;
   };
 }
 
