@@ -16,6 +16,13 @@ const activeReplayControllers = new Map();
 // (symptoms: dropped tool indicators, double messages, output that only
 // reappears after refresh).
 let switchSessionSeq = 0;
+// Per-session token for restoreMessages(). Two concurrent restoreMessages()
+// calls for the same session both clear the DOM at the top, then both render
+// loops appendChild into messagesEl — producing duplicate messages. The
+// currentSessionId/switchSessionSeq guards don't catch this because
+// currentSessionId stays the same across rapid same-session clicks. This
+// token lets a newer call invalidate any older in-flight call.
+const restoreMessageTokens = new Map();
 const sessionInputDrafts = new Map(); // preserve input text per session
 const pendingMessages = new Map(); // queued messages per session (sent when stream completes)
 let currentMode = 'work';
@@ -55,11 +62,17 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
   // assistant turn — avoids double-rendering text/tools that were flushed to
   // persistence at tool_use boundaries.
   const { upToLastUser = false } = opts;
-  // Bail if the caller's session is no longer the one being viewed — prevents
-  // a stale fetch from clobbering the active session's DOM after a rapid
-  // switchSession(A) → switchSession(B) sequence.
-  const isStale = () => currentSessionId !== sessionId;
-  console.log('[SSE] restoreMessages called', sessionId, new Error().stack?.split('\n').slice(1,4).join(' <- '));
+  // Claim the restoreMessages token for this session. A newer call will
+  // overwrite it and cause our isStale() checks to return true, so we bail
+  // at the next await without running our render loop on top of the newer
+  // call's DOM (the double-messages bug's surviving mechanism).
+  const myToken = Symbol(sessionId);
+  restoreMessageTokens.set(sessionId, myToken);
+  // Bail if the caller's session is no longer the one being viewed OR a newer
+  // restoreMessages() for this same session has superseded us. Both checks
+  // are needed: currentSessionId catches cross-session switches;
+  // restoreMessageTokens catches rapid same-session clicks.
+  const isStale = () => currentSessionId !== sessionId || restoreMessageTokens.get(sessionId) !== myToken;
   clearMessages();
   try {
     const res = await fetchWithRetry(`/api/sessions/${sessionId}/messages`, {}, { retries: 1 });
@@ -4325,7 +4338,6 @@ async function readSSEStream(response, processEvent) {
 
 // Reconnect to an active stream
 async function attemptReconnect(sessionId, processEvent) {
-  console.log(`[SSE:reconnect:fired] sessionId=${sessionId} currentSessionId=${currentSessionId}`);
   try {
     // Server replays the FULL buffer from the start of the assistant turn, so
     // we must clear the in-progress DOM first — otherwise live-rendered bubbles
@@ -4355,9 +4367,14 @@ async function attemptReconnect(sessionId, processEvent) {
     let receivedContent = false;
 
     function reconnectProcessor(type, data) {
-      console.log(`[SSE:reconnect] ${type}`, typeof data === 'string' ? data.substring(0, 80) : '', `reconnTextLen=${reconnectedText.length}`);
-      // Don't update DOM if user switched to a different session
-      if (currentSessionId !== sessionId) {
+      // Don't update DOM if user switched to a different session, OR if a
+      // switchSession-triggered replaySessionStream has taken over rendering
+      // for this session (hijackedStreams). Without the hijacked check, an
+      // attemptReconnect already in flight when the user navigates A→B→A
+      // renders into its own closure's reconnectedAssistantEl while
+      // replaySessionStream concurrently renders into its own — producing
+      // two side-by-side identical bubbles (double-messages bug, mechanism C).
+      if (currentSessionId !== sessionId || hijackedStreams.has(sessionId)) {
         // Still track content reception for return value
         if (type === 'text' || type === 'tool_use' || type === 'done') {
           receivedContent = true;
@@ -4370,8 +4387,6 @@ async function attemptReconnect(sessionId, processEvent) {
           receivedContent = true;
         }
         if (type === 'text') {
-          const preview = typeof data === 'string' ? JSON.stringify(data.substring(0, 40)) : '';
-          console.log(`[SSE:reconnect:text] preview=${preview} totalLen=${reconnectedText.length + (typeof data === 'string' ? data.length : 0)} hadEl=${!!reconnectedAssistantEl}`);
           if (!reconnectedAssistantEl) {
             reconnectedAssistantEl = createAssistantMessage();
             addTypingIndicator(); // keep dots at bottom
@@ -4431,6 +4446,14 @@ async function replaySessionStream(sessionId) {
     const res = await fetch(`/api/chat/${sessionId}/reconnect`, { signal: controller.signal });
     if (!res.ok) return;
     await readSSEStream(res, (type, data) => {
+      // If a newer replaySessionStream() has taken over for this sessionId,
+      // bail — prev.abort() at the top of the newer call isn't synchronous,
+      // so events already buffered in this reader (e.g. a tool_use→text pair
+      // that clears assistantEl then calls createAssistantMessage) would
+      // otherwise append new bubbles to messagesEl after the newer call's
+      // restoreMessages cleared the DOM. The newer call set itself as the
+      // sessionId's controller synchronously, so this check catches the race.
+      if (activeReplayControllers.get(sessionId) !== controller) return;
       if (terminated) return;
       // Suppress DOM updates if the user navigated away again mid-replay —
       // but keep consuming the stream so the fetch drains cleanly.
@@ -4438,8 +4461,6 @@ async function replaySessionStream(sessionId) {
       try {
         switch (type) {
           case 'text': {
-            const preview = typeof data === 'string' ? JSON.stringify(data.substring(0, 40)) : '';
-            console.log(`[SSE:replay:text] preview=${preview} totalLen=${currentText.length + (typeof data === 'string' ? data.length : 0)} hadEl=${!!assistantEl}`);
             deactivateToolGroup();
             if (!assistantEl) {
               assistantEl = createAssistantMessage();
@@ -4556,11 +4577,20 @@ async function replaySessionStream(sessionId) {
     if (activeReplayControllers.get(sessionId) === controller) {
       activeReplayControllers.delete(sessionId);
     }
-    // Clear hijack flag too in case the originating sendMessage() already
-    // finished (its finally also clears, but if it cleared during the await on
-    // restoreMessages — before switchSession re-set the flag — only this
-    // cleanup will remove the now-stale entry).
-    hijackedStreams.delete(sessionId);
+    // Clear hijack flag only when sendMessage has already finished for this
+    // session. If sendMessage is still streaming, its reader needs the flag to
+    // stay set — otherwise we fall into mechanism D: replay's finally (often
+    // triggered by a newer replay aborting this one on a double-click, or by
+    // this replay's own 'done' arriving slightly before sendMessage's 'done'
+    // drains) clears hijack mid-stream; sendMessage's processEvent then sees
+    // hijacked=false on the remaining live text/done events, creates a second
+    // assistantEl, and calls addUsageInfo — producing a second bubble and a
+    // second usage row in parallel with the replay's own. sendMessage's own
+    // finally already clears the flag when the stream ends, so skipping here
+    // while it's still in flight is safe.
+    if (!streamingSessions.has(sessionId)) {
+      hijackedStreams.delete(sessionId);
+    }
     if (currentSessionId === sessionId) removeTypingIndicator();
   }
 }
@@ -4676,13 +4706,13 @@ async function sendMessage(skipRender = false) {
     if (el) el.remove();
   }
 
-  // Debug logging for missing output diagnosis
+  // In-memory ring buffer (exposed as window._lastSSELog) so post-hoc
+  // diagnostics can reconstruct the event sequence when a render bug is
+  // reported — don't remove without a replacement.
   const sseLog = [];
   window._lastSSELog = sseLog;
   function logSSE(action, detail) {
-    const entry = { t: Date.now(), action, detail, textLen: currentText.length, hasEl: !!assistantEl };
-    sseLog.push(entry);
-    console.log(`[SSE] ${action}`, detail, `textLen=${currentText.length} hasEl=${!!assistantEl}`);
+    sseLog.push({ t: Date.now(), action, detail, textLen: currentText.length, hasEl: !!assistantEl });
   }
 
   function processEvent(type, data) {
