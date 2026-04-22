@@ -1,7 +1,45 @@
 import { spawn, ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { config, getAllowedPaths } from '../config';
 import { StreamEvent, ClaudeRunnerOptions } from '../types';
+
+// Claude CLI hashes cwd → project dir under ~/.claude/projects/ by replacing
+// '/' and '.' with '-'. Observed: /Users/jsedwick/.claude → -Users-jsedwick--claude
+function projectDirForCwd(cwd: string): string {
+  const hash = cwd.replace(/[/.]/g, '-');
+  return path.join(os.homedir(), '.claude', 'projects', hash);
+}
+
+// --fork-session reads the parent session's JSONL from the project dir derived
+// from the spawn cwd. When the fork moves to a new cwd, copy the parent file
+// over first — otherwise Claude returns error_during_execution with a fresh
+// (bogus) session_id and no text, which the bridge used to persist and surface
+// to the user as silent failure. No-op if the file is already in place or the
+// parent can't be located.
+function ensureForkSessionAvailable(parentClaudeSessionId: string, newCwd: string): void {
+  const targetDir = projectDirForCwd(newCwd);
+  const targetJsonl = path.join(targetDir, `${parentClaudeSessionId}.jsonl`);
+  if (fs.existsSync(targetJsonl)) return;
+  const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+  let sourceJsonl: string | null = null;
+  try {
+    for (const entry of fs.readdirSync(projectsRoot)) {
+      const candidate = path.join(projectsRoot, entry, `${parentClaudeSessionId}.jsonl`);
+      if (fs.existsSync(candidate)) { sourceJsonl = candidate; break; }
+    }
+  } catch {}
+  if (!sourceJsonl) return;
+  try {
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.copyFileSync(sourceJsonl, targetJsonl);
+    console.log(`[fork-copy:${parentClaudeSessionId.slice(0, 8)}] ${sourceJsonl} → ${targetJsonl}`);
+  } catch (err) {
+    console.error(`[fork-copy:${parentClaudeSessionId.slice(0, 8)}] copy failed:`, err);
+  }
+}
 
 const activeSessions = new Map<string, ChildProcess>();
 // Maps app session ID → tracking ID for cancel support (exported for shutdown cleanup)
@@ -206,6 +244,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   if (sessionId) {
     args.push('--resume', sessionId);
   } else if (forkFromSessionId) {
+    ensureForkSessionAvailable(forkFromSessionId, workingDir || config.workingDir);
     args.push('--resume', forkFromSessionId, '--fork-session');
   }
 
