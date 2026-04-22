@@ -860,8 +860,6 @@ router.get('/kb/resolve-link', (req: Request, res: Response) => {
     return;
   }
 
-  const target = name.toLowerCase();
-
   // 1. Check same directory as context file
   if (context) {
     const contextDir = path.dirname(context);
@@ -873,12 +871,29 @@ router.get('/kb/resolve-link', (req: Request, res: Response) => {
     }
   }
 
-  // 2. Search all vaults via cached index
+  // 2. Path-style names (e.g. "projects/foo/project", "projects/foo/commits/abc1234")
+  //    resolve as vault-relative paths — the flat bare-name index can't handle these
+  //    because every project.md collides on the key "project".
+  if (name.includes('/')) {
+    const root = getObsidianRoot();
+    for (const vault of getObsidianVaults()) {
+      const candidate = path.join(root, vault, name + '.md');
+      const resolved = validateKbPath(candidate);
+      if (resolved && fs.existsSync(resolved)) {
+        res.json({ path: resolved, name: path.basename(resolved, '.md') });
+        return;
+      }
+    }
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  // 3. Bare-name lookup via cached index
   if (!wikiLinkCache) {
     wikiLinkCache = buildWikiLinkIndex();
   }
 
-  const found = wikiLinkCache.get(target);
+  const found = wikiLinkCache.get(name.toLowerCase());
   if (found && fs.existsSync(found)) {
     res.json({ path: found, name: path.basename(found, '.md') });
     return;

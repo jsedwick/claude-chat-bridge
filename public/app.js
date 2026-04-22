@@ -6771,7 +6771,10 @@ function linkifyVaultPaths(escapedText) {
     const linked = slugs.map(slug => {
       slug = slug.trim();
       if (!slug) return '';
-      const filePath = `${VAULT_NAMES[0]}/${dir}/${slug}.md`;
+      // Projects live at projects/<slug>/project.md (nested); topics/decisions are flat at <dir>/<slug>.md
+      const filePath = dir === 'projects'
+        ? `${VAULT_NAMES[0]}/${dir}/${slug}/project.md`
+        : `${VAULT_NAMES[0]}/${dir}/${slug}.md`;
       const resolved = resolveVaultPath(filePath);
       return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(slug)}</span>`;
     }).join(', ');
