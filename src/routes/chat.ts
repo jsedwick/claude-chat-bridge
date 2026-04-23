@@ -165,7 +165,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           // With monitors, proc.on('close') (and thus onClose) can be delayed
           // indefinitely, leaving claudeSessionId unset and allowing the busy
           // check to be bypassed on subsequent messages.
-          if (doneData.session_id) {
+          // Skip persistence on error results: the CLI emits a fresh session_id
+          // on error_during_execution (e.g., failed fork), and persisting it
+          // poisons the session with a bogus resume target.
+          if (doneData.session_id && !doneData.is_error) {
             updateSession(sessionId, {
               claudeSessionId: doneData.session_id,
               lastMessage: message.substring(0, 200),

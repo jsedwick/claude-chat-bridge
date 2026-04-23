@@ -377,6 +377,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
             type: 'done',
             data: JSON.stringify({
               session_id: parsed.session_id,
+              is_error: parsed.is_error === true,
               duration_ms: parsed.duration_ms,
               cost_usd: cost,
               input_tokens: usage?.input_tokens,
@@ -482,6 +483,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               type: 'done',
               data: JSON.stringify({
                 session_id: parsed.session_id,
+                is_error: parsed.is_error === true,
                 duration_ms: parsed.duration_ms,
                 cost_usd: cost,
                 input_tokens: usage?.input_tokens,
