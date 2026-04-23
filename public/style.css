@@ -5103,11 +5103,21 @@ pre.streaming {
   font-size: 13px;
   cursor: pointer;
   transition: background 0.08s;
+  scroll-margin-top: 36px;
+  scroll-margin-bottom: 4px;
 }
 
-.mention-item:hover,
+.mention-item:hover {
+  background: rgba(74, 158, 255, 0.08);
+}
+
 .mention-item.selected {
-  background: rgba(74, 158, 255, 0.14);
+  background: rgba(74, 158, 255, 0.22);
+  box-shadow: inset 3px 0 0 var(--accent, #4a9eff);
+}
+
+.mention-item.selected:hover {
+  background: rgba(74, 158, 255, 0.28);
 }
 
 .mention-icon {
@@ -5149,13 +5159,14 @@ pre.streaming {
   gap: 6px;
   padding: 6px 12px;
   margin: -4px 0 4px 0;
-  background: rgba(74, 158, 255, 0.10);
+  background: var(--bg-secondary);
+  background-image: linear-gradient(rgba(74, 158, 255, 0.14), rgba(74, 158, 255, 0.14));
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary, var(--text-primary));
   font-size: 12px;
   position: sticky;
-  top: 0;
-  z-index: 1;
+  top: -4px;
+  z-index: 2;
 }
 
 .mention-breadcrumb-arrow {

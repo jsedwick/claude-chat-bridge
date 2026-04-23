@@ -138,35 +138,56 @@ interface CachedIndex {
 }
 const indexCache = new Map<string, CachedIndex>();
 const INDEX_TTL_MS = 30_000;
-const SKIP_DIRS = new Set(['.git', '.obsidian', 'node_modules', 'dist', '.next', '.cache', '.trash', '.DS_Store']);
+const SKIP_DIRS = new Set(['.git', '.obsidian', 'node_modules', 'dist', '.next', '.cache', '.trash', '.DS_Store', 'vendor', 'bower_components', 'vendor_bundled']);
 const MAX_DEPTH = 6;
 const MAX_INDEX_ENTRIES = 50_000;
+const MIN_ENTRIES_PER_ROOT = 2_000;
 
 function buildIndex(roots: Array<{ name?: string; path: string }>): IndexEntry[] {
   const entries: IndexEntry[] = [];
-  function walk(dir: string, depth: number, vault?: string) {
-    if (depth > MAX_DEPTH || entries.length >= MAX_INDEX_ENTRIES) return;
-    let children: fs.Dirent[];
-    try {
-      children = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of children) {
-      if (entries.length >= MAX_INDEX_ENTRIES) return;
-      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
-      const childPath = path.join(dir, e.name);
-      let mtimeMs = 0;
-      try {
-        mtimeMs = fs.statSync(childPath).mtimeMs;
-      } catch {
-        // stat can fail on broken symlinks or permission errors; treat as oldest
-      }
-      entries.push({ name: e.name, path: childPath, isDirectory: e.isDirectory(), vault, mtimeMs });
-      if (e.isDirectory()) walk(childPath, depth + 1, vault);
-    }
-  }
+  // Per-root budget so one bloated root can't starve the others.
+  const perRootBudget = Math.max(
+    MIN_ENTRIES_PER_ROOT,
+    Math.floor(MAX_INDEX_ENTRIES / Math.max(1, roots.length)),
+  );
   for (const root of roots) {
+    const rootCap = entries.length + perRootBudget;
+    // Add the root itself so it is matchable in the picker (e.g. @Documents).
+    let rootMtime = 0;
+    try {
+      rootMtime = fs.statSync(root.path).mtimeMs;
+    } catch {
+      // ignore — we'll still index descendants if readdirSync works
+    }
+    entries.push({
+      name: path.basename(root.path),
+      path: root.path,
+      isDirectory: true,
+      vault: root.name,
+      mtimeMs: rootMtime,
+    });
+    function walk(dir: string, depth: number, vault?: string) {
+      if (depth > MAX_DEPTH || entries.length >= rootCap) return;
+      let children: fs.Dirent[];
+      try {
+        children = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of children) {
+        if (entries.length >= rootCap) return;
+        if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+        const childPath = path.join(dir, e.name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(childPath).mtimeMs;
+        } catch {
+          // stat can fail on broken symlinks or permission errors; treat as oldest
+        }
+        entries.push({ name: e.name, path: childPath, isDirectory: e.isDirectory(), vault, mtimeMs });
+        if (e.isDirectory()) walk(childPath, depth + 1, vault);
+      }
+    }
     walk(root.path, 0, root.name);
   }
   entries.sort((a, b) => b.mtimeMs - a.mtimeMs);

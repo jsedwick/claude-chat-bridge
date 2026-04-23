@@ -2201,6 +2201,12 @@ function escapeMentionHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function scrollSelectedMentionIntoView(el, selectedIdx) {
+  const item = el.querySelector(`.mention-item[data-idx="${selectedIdx}"]`);
+  if (!item) return;
+  requestAnimationFrame(() => item.scrollIntoView({ block: 'nearest' }));
+}
+
 function positionMentionPopover() {
   const rect = messageInput.getBoundingClientRect();
   const el = mentionState.popoverEl;
@@ -2233,6 +2239,7 @@ function renderMentionPopover() {
   }
   positionMentionPopover();
   el.style.display = 'block';
+  scrollSelectedMentionIntoView(el, mentionState.selectedIdx);
 }
 
 async function fetchMentionResults(query, vaultMode) {
@@ -8458,6 +8465,7 @@ function renderWikiPopover() {
   }
   positionWikiPopover();
   el.style.display = 'block';
+  scrollSelectedMentionIntoView(el, wikiLinkState.selectedIdx);
 }
 
 async function fetchWikiCandidates(query) {
