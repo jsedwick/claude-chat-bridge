@@ -116,6 +116,7 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
         sessionMeta.forkedFrom.sessionId,
         sessionMeta.forkedFrom.parentWorkingDir,
         sessionMeta.workingDir,
+        sessionMeta.forkedFrom.messageIndex,
       );
       markForkPointMessage(sessionMeta.forkedFrom.messageIndex);
     }
@@ -3359,7 +3360,7 @@ function startServerRecoveryPolling(disconnectedEl) {
   }, INTERVAL);
 })();
 
-function addForkDivider(parentName, parentId, parentWorkingDir, workingDir) {
+function addForkDivider(parentName, parentId, parentWorkingDir, workingDir, messageIndex) {
   const el = document.createElement('div');
   el.className = 'fork-divider';
   const inner = document.createElement('div');
@@ -3398,7 +3399,16 @@ function addForkDivider(parentName, parentId, parentWorkingDir, workingDir) {
     inner.appendChild(cwdLine);
   }
   el.appendChild(inner);
-  messagesEl.appendChild(el);
+  // Place the divider immediately after the fork-point message so it renders
+  // at the fork boundary even when post-fork messages are already present
+  // (e.g. on page refresh). With no next message (fresh fork), append.
+  const visibleMsgs = messagesEl.querySelectorAll('.message-user, .message-assistant');
+  const nextMsg = typeof messageIndex === 'number' ? visibleMsgs[messageIndex + 1] : null;
+  if (nextMsg) {
+    messagesEl.insertBefore(el, nextMsg);
+  } else {
+    messagesEl.appendChild(el);
+  }
 }
 
 function markForkPointMessage(messageIndex) {
