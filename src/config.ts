@@ -56,11 +56,25 @@ export const config = {
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),
   pluginDir: expandTilde(resolve('CHAT_BRIDGE_PLUGIN_DIR', 'pluginDir',
     path.join(home, 'Projects', 'obsidian-claude-plugin'))),
+  // Path to user-managed trusted-dirs.json (gitignored, populated via /api/trust-dir).
+  // Default lives at the bridge repo root for dev ergonomics; override with env or bridge-config.
+  trustedDirsPath: expandTilde(resolve('CHAT_BRIDGE_TRUSTED_DIRS', 'trustedDirsPath',
+    path.join(__dirname, '..', 'trusted-dirs.json'))),
   // launchd service label — used by /api/settings/restart and the bridge-restart-watch monitor.
   // Default derives from the running user so two installs on the same Mac don't collide.
   serviceLabel: resolve('CHAT_BRIDGE_SERVICE_LABEL', 'serviceLabel',
     `com.${os.userInfo().username}.claude-chat-bridge`),
 };
+
+// Fail loud at startup if mcpConfigPath does not resolve to a readable file.
+// Without it, downstream helpers (getVaultPath, getObsidianRoot, etc.) silently
+// degrade to wrong-data fallbacks instead of surfacing the misconfiguration.
+if (!fs.existsSync(config.mcpConfigPath)) {
+  throw new Error(
+    `Bridge config error: mcpConfigPath does not exist at ${config.mcpConfigPath}.\n` +
+    `Set via CHAT_BRIDGE_MCP_CONFIG env var or "mcpConfigPath" in bridge-config.json.`
+  );
+}
 
 // Derive vault configuration from MCP config (Vault Setup)
 function readMcpVaults(): Array<{ name: string; path: string; mode: string }> {
@@ -88,13 +102,16 @@ export function getObsidianVaults(): string[] {
 }
 
 export function getVaultPath(mode: Mode): string {
-  try {
-    const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
-    const data = JSON.parse(raw);
-    const primary = (data.primaryVaults || []).find((v: any) => v.mode === mode);
-    if (primary) return expandTilde(primary.path);
-  } catch {}
-  return path.join(home, 'Documents', 'Obsidian', mode === 'work' ? 'AI-Work' : 'AI-Home');
+  const raw = fs.readFileSync(config.mcpConfigPath, 'utf-8');
+  const data = JSON.parse(raw);
+  const primary = (data.primaryVaults || []).find((v: any) => v.mode === mode);
+  if (!primary) {
+    throw new Error(
+      `No primaryVaults entry for mode "${mode}" in ${config.mcpConfigPath}. ` +
+      `Add a vault with this mode to .obsidian-mcp.json.`
+    );
+  }
+  return expandTilde(primary.path);
 }
 
 export function getMcpConfigPath(): string {
