@@ -265,7 +265,7 @@ router.post('/update-cli', async (_req: Request, res: Response) => {
 // POST /api/settings/restart — restart the server via launchctl
 router.post('/restart', (_req: Request, res: Response) => {
   const uid = process.getuid?.() ?? 501;
-  const label = 'com.jsedwick.claude-chat-bridge';
+  const label = config.serviceLabel;
   res.json({ restarting: true });
   // Delay kill so the response can be sent
   setTimeout(() => {

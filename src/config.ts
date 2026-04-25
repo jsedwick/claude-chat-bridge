@@ -56,6 +56,10 @@ export const config = {
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),
   pluginDir: expandTilde(resolve('CHAT_BRIDGE_PLUGIN_DIR', 'pluginDir',
     path.join(home, 'Projects', 'obsidian-claude-plugin'))),
+  // launchd service label — used by /api/settings/restart and the bridge-restart-watch monitor.
+  // Default derives from the running user so two installs on the same Mac don't collide.
+  serviceLabel: resolve('CHAT_BRIDGE_SERVICE_LABEL', 'serviceLabel',
+    `com.${os.userInfo().username}.claude-chat-bridge`),
 };
 
 // Derive vault configuration from MCP config (Vault Setup)
