@@ -5137,19 +5137,22 @@ function renderMarkdown(text) {
 }
 
 function linkifyVaultPathsInHtml(html) {
-  // Match absolute vault paths (allow spaces/commas in filenames, non-greedy to .md)
-  html = html.replace(/(\/[^<"']*?\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^<"']*?\.md)/g, (match) => {
-    const short = match.split('/').slice(-3).join('/');
-    return `<span class="tool-file-link" onclick="navigateToKbFile('${match.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
-  });
-  // Match relative vault paths (e.g. "Work/Meeting Notes/file.md", "AI-Work/topics/file.md")
-  // Allow spaces/commas in paths, non-greedy match to .md
-  // Lookbehind excludes paths inside href/onclick attributes (preceded by / " ')
-  html = html.replace(/(?<![/"'])(?<!\w)((?:AI-Work|AI-Home|Work|Home)\/[^<"'\n]*?\.md)/g, (match) => {
-    const resolved = resolveVaultPath(match);
-    const short = match.split('/').slice(-3).join('/');
-    return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
-  });
+  if (VAULT_NAMES_ALT) {
+    // Match absolute vault paths (allow spaces/commas in filenames, non-greedy to .md)
+    const absRe = new RegExp(`(\\/[^<"']*?\\/Documents\\/Obsidian\\/(?:${VAULT_NAMES_ALT})\\/[^<"']*?\\.md)`, 'g');
+    html = html.replace(absRe, (match) => {
+      const short = match.split('/').slice(-3).join('/');
+      return `<span class="tool-file-link" onclick="navigateToKbFile('${match.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
+    });
+    // Match relative vault paths (e.g. "Work/Meeting Notes/file.md", "AI-Work/topics/file.md")
+    // Lookbehind excludes paths inside href/onclick attributes (preceded by / " ')
+    const relRe = new RegExp(`(?<![/"'])(?<!\\w)((?:${VAULT_NAMES_ALT})\\/[^<"'\\n]*?\\.md)`, 'g');
+    html = html.replace(relRe, (match) => {
+      const resolved = resolveVaultPath(match);
+      const short = match.split('/').slice(-3).join('/');
+      return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
+    });
+  }
   // Match vault-internal relative paths (e.g. "sessions/2026-03/file.md", "topics/file.md")
   // These lack a vault name prefix — resolve using first configured vault
   html = html.replace(/(?<![/"'\w])((?:sessions|topics|projects|decisions)\/[^<"'\n]*?\.md)/g, (match) => {
@@ -6703,6 +6706,7 @@ async function kbSearchDocs(query) {
 // Vault path detection and linking (fetched from server config)
 let OBSIDIAN_ROOT = '';
 let VAULT_NAMES = [];
+let VAULT_NAMES_ALT = '';
 let VAULT_PATH_RE = null;
 let VAULT_NAMES_RE = null;
 
@@ -6720,8 +6724,11 @@ async function loadBridgePaths() {
     OBSIDIAN_ROOT = allVaults.length ? allVaults[0].path.replace(/\/[^/]+$/, '') : '';
     if (VAULT_NAMES.length && OBSIDIAN_ROOT) {
       const namesPattern = VAULT_NAMES.map(escapeRegex).join('|');
+      VAULT_NAMES_ALT = namesPattern;
       VAULT_PATH_RE = new RegExp(escapeRegex(OBSIDIAN_ROOT) + '/(' + namesPattern + ')/');
       VAULT_NAMES_RE = new RegExp(`^(?:${namesPattern})\\/`);
+    } else {
+      VAULT_NAMES_ALT = '';
     }
   } catch (err) {
     console.error('Failed to load vault config:', err);
@@ -6758,19 +6765,23 @@ function renderVaultFileLabel(filePath) {
 }
 
 function linkifyVaultPaths(escapedText) {
-  // Match absolute vault file paths in already-escaped tool output (allow spaces/commas)
-  escapedText = escapedText.replace(/(\/[^&lt;\n]*?\/Documents\/Obsidian\/(?:AI-Work|AI-Home|Work|Home)\/[^&lt;\n]*?\.md)/g, (match) => {
-    const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-    const short = realPath.split('/').slice(-3).join('/');
-    return `<span class="tool-file-link" onclick="navigateToKbFile('${realPath.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
-  });
-  // Match relative vault paths (e.g. "Work/Meeting Notes/file.md")
-  escapedText = escapedText.replace(/(?<![\/\w])((?:AI-Work|AI-Home|Work|Home)\/[^&lt;\n]*?\.md)/g, (match) => {
-    const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-    const resolved = resolveVaultPath(realPath);
-    const short = realPath.split('/').slice(-3).join('/');
-    return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
-  });
+  if (VAULT_NAMES_ALT) {
+    // Match absolute vault file paths in already-escaped tool output (allow spaces/commas)
+    const absEscRe = new RegExp(`(\\/[^&lt;\\n]*?\\/Documents\\/Obsidian\\/(?:${VAULT_NAMES_ALT})\\/[^&lt;\\n]*?\\.md)`, 'g');
+    escapedText = escapedText.replace(absEscRe, (match) => {
+      const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      const short = realPath.split('/').slice(-3).join('/');
+      return `<span class="tool-file-link" onclick="navigateToKbFile('${realPath.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
+    });
+    // Match relative vault paths (e.g. "Work/Meeting Notes/file.md")
+    const relEscRe = new RegExp(`(?<![\\/\\w])((?:${VAULT_NAMES_ALT})\\/[^&lt;\\n]*?\\.md)`, 'g');
+    escapedText = escapedText.replace(relEscRe, (match) => {
+      const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      const resolved = resolveVaultPath(realPath);
+      const short = realPath.split('/').slice(-3).join('/');
+      return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
+    });
+  }
   // Match vault-internal relative paths (e.g. "sessions/2026-03/file.md", "topics/file.md")
   escapedText = escapedText.replace(/(?<![\/\w])((?:sessions|topics|projects|decisions)\/[^&lt;\n]*?\.md)/g, (match) => {
     const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
