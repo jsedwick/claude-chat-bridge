@@ -5161,19 +5161,19 @@ function linkifyVaultPathsInHtml(html) {
     const short = match.split('/').slice(-2).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
   });
-  // Match labeled slug references from session close output (e.g. "Topics Updated slug-name")
-  // Handles comma-separated slugs and wraps each one as a link
+  // Match labeled slug references from session close output (e.g. "Topics Updated slug-name").
+  // Decisions live at decisions/<projectSlug>/<slug>.md and projects at projects/<slug>/project.md,
+  // so route through navigateWikiLink — its /api/vault/kb/resolve-link endpoint handles the
+  // bare-name lookup (decisions, topics) and the path-style lookup (projects) on the server.
   html = html.replace(/(Topics (?:Updated|Created)|Projects Linked|Decisions (?:Made|Recorded))\s+([\w][\w ,-]*[\w-])/g, (match, label, slugsPart) => {
-    const dirMap = { 'Topics Updated': 'topics', 'Topics Created': 'topics', 'Projects Linked': 'projects', 'Decisions Made': 'decisions', 'Decisions Recorded': 'decisions' };
-    const dir = dirMap[label];
-    if (!dir || !VAULT_NAMES.length) return match;
+    if (!VAULT_NAMES.length) return match;
     const slugs = slugsPart.split(/,\s*/);
     const linked = slugs.map(slug => {
       slug = slug.trim();
       if (!slug) return '';
-      const filePath = `${VAULT_NAMES[0]}/${dir}/${slug}.md`;
-      const resolved = resolveVaultPath(filePath);
-      return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${slug}</span>`;
+      const target = label === 'Projects Linked' ? `projects/${slug}/project` : slug;
+      const escaped = target.replace(/"/g, '&quot;');
+      return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)" title="Open in Knowledge Base">${escapeHtml(slug)}</span>`;
     }).join(', ');
     return `${label} ${linked}`;
   });
@@ -6790,21 +6790,20 @@ function linkifyVaultPaths(escapedText) {
     const short = realPath.split('/').slice(-2).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
   });
-  // Match labeled slug references (e.g. "Topics Updated slug-name")
+  // Match labeled slug references (e.g. "Topics Updated slug-name").
+  // Decisions live at decisions/<projectSlug>/<slug>.md, so the dir+slug shortcut
+  // can't construct the right path client-side. Route through navigateWikiLink
+  // and let /api/vault/kb/resolve-link handle bare-name (decisions, topics) and
+  // path-style (projects) resolution on the server.
   escapedText = escapedText.replace(/(Topics (?:Updated|Created)|Projects Linked|Decisions (?:Made|Recorded))\s+([\w][\w ,-]*[\w-])/g, (match, label, slugsPart) => {
-    const dirMap = { 'Topics Updated': 'topics', 'Topics Created': 'topics', 'Projects Linked': 'projects', 'Decisions Made': 'decisions', 'Decisions Recorded': 'decisions' };
-    const dir = dirMap[label];
-    if (!dir || !VAULT_NAMES.length) return match;
+    if (!VAULT_NAMES.length) return match;
     const slugs = slugsPart.split(/,\s*/);
     const linked = slugs.map(slug => {
       slug = slug.trim();
       if (!slug) return '';
-      // Projects live at projects/<slug>/project.md (nested); topics/decisions are flat at <dir>/<slug>.md
-      const filePath = dir === 'projects'
-        ? `${VAULT_NAMES[0]}/${dir}/${slug}/project.md`
-        : `${VAULT_NAMES[0]}/${dir}/${slug}.md`;
-      const resolved = resolveVaultPath(filePath);
-      return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(slug)}</span>`;
+      const target = label === 'Projects Linked' ? `projects/${slug}/project` : slug;
+      const escaped = target.replace(/"/g, '&quot;');
+      return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)" title="Open in Knowledge Base">${escapeHtml(slug)}</span>`;
     }).join(', ');
     return `${label} ${linked}`;
   });
