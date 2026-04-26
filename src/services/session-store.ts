@@ -1,6 +1,6 @@
 import fs from 'fs';
 import crypto from 'crypto';
-import { config, getMode } from '../config';
+import { config, Mode } from '../config';
 import { ChatSession, ChatMessage } from '../types';
 
 let sessions: ChatSession[] = [];
@@ -15,7 +15,11 @@ function load(): void {
 }
 
 function save(): void {
-  fs.writeFileSync(config.sessionStorePath, JSON.stringify(sessions, null, 2));
+  // Write to temp + rename so a crash mid-write can't truncate the multi-MB
+  // session store. fs.renameSync is atomic on POSIX.
+  const tmp = `${config.sessionStorePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(sessions, null, 2));
+  fs.renameSync(tmp, config.sessionStorePath);
 }
 
 // Load on module init
@@ -35,14 +39,19 @@ export function getSession(id: string): ChatSession | undefined {
   return sessions.find(s => s.id === id);
 }
 
-export function createSession(name?: string, workingDir?: string, model?: string): ChatSession {
+export function createSession(opts: {
+  mode: Mode;
+  name?: string;
+  workingDir?: string;
+  model?: string;
+}): ChatSession {
   const session: ChatSession = {
     id: crypto.randomUUID(),
     claudeSessionId: null,
-    name: name || `Chat ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
-    model: model || undefined,
-    mode: getMode(),
-    workingDir: workingDir || undefined,
+    name: opts.name || `Chat ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+    model: opts.model || undefined,
+    mode: opts.mode,
+    workingDir: opts.workingDir || undefined,
     created: new Date().toISOString(),
     lastActivity: new Date().toISOString(),
     lastMessage: '',

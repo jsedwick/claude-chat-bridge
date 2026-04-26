@@ -25,7 +25,10 @@ let switchSessionSeq = 0;
 const restoreMessageTokens = new Map();
 const sessionInputDrafts = new Map(); // preserve input text per session
 const pendingMessages = new Map(); // queued messages per session (sent when stream completes)
-let currentMode = 'work';
+let currentMode = (() => {
+  const saved = localStorage.getItem('chat-bridge-mode');
+  return (saved === 'work' || saved === 'personal') ? saved : 'work';
+})();
 let pendingPermissionId = null;
 let permissionPollInterval = null;
 const permissionQueue = []; // queue for parallel permission requests
@@ -179,36 +182,23 @@ function getSelectedModel() {
   return modelSelect.value;
 }
 
-// Mode management
-async function loadMode() {
-  try {
-    const res = await fetchWithRetry('/api/sessions/mode/current', {}, { retries: 1 });
-    const { mode } = await res.json();
-    currentMode = mode;
-    updateModeTabsUI(mode);
-  } catch {}
-}
-
+// Mode management — mode is per-client state persisted in localStorage. The
+// bridge no longer maintains a server-wide mode; every mode-aware request
+// passes mode explicitly (in the create body or as ?mode=).
 async function setMode(mode) {
   if (mode === currentMode) return;
-  // Show loading state on mode tabs
   document.querySelectorAll('.mode-tab').forEach(t => t.classList.add('switching'));
   sessionListEl.innerHTML = '<div class="sidebar-loading">Loading sessions…</div>';
   try {
-    const res = await fetchWithRetry('/api/sessions/mode/current', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
-    }, { retries: 1 });
-    const result = await res.json();
-    currentMode = result.mode;
-    updateModeTabsUI(result.mode);
+    currentMode = mode;
+    localStorage.setItem('chat-bridge-mode', mode);
+    updateModeTabsUI(mode);
 
     // Deselect current chat if it doesn't belong to this mode
     if (currentSessionId) {
       try {
         const s = await (await fetchWithRetry(`/api/sessions/${currentSessionId}`)).json();
-        if ((s.mode || 'work') !== result.mode) {
+        if ((s.mode || 'work') !== mode) {
           currentSessionId = null;
           chatTitle.textContent = getAppTitle();
           currentWorkingDir = '';
@@ -233,9 +223,6 @@ async function setMode(mode) {
     if (activeTopicsTab) loadWelcomeTopics();
   } catch (err) {
     console.error('Failed to switch mode:', err);
-    // Revert to previous mode tab on failure
-    updateModeTabsUI(currentMode);
-    await loadSessions();
   } finally {
     document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('switching'));
   }
@@ -484,17 +471,11 @@ let pendingAgentToolIds = new Set();
   }
 })();
 
-// Initialize — always start in work mode on page load
+// Initialize — mode is restored from localStorage at script-init time (see
+// `currentMode` declaration). Page load no longer touches any server-side
+// mode state, so opening a second tab can't flip the first tab's mode.
 (async () => {
-  try {
-    await fetchWithRetry('/api/sessions/mode/current', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'work' }),
-    });
-  } catch {}
-  currentMode = 'work';
-  updateModeTabsUI('work');
+  updateModeTabsUI(currentMode);
   await loadBridgePaths();
   loadSessions();
   startActiveSessionPolling();
@@ -607,7 +588,7 @@ const ACTION_ICONS = {
 async function fetchFlyoutData(type) {
   if (type === 'tasks' || type === 'close') return null; // Static flyouts, no API needed
   try {
-    const res = await fetchWithRetry(`/api/vault/${type}`);
+    const res = await fetchWithRetry(`/api/vault/${type}?mode=${currentMode}`);
     return await res.json();
   } catch { return []; }
 }
@@ -2065,7 +2046,7 @@ async function loadWelcomeSessions() {
     if (!c.children.length) c.innerHTML = '<div class="welcome-loading">Loading sessions…</div>';
   });
   try {
-    const res = await fetchWithRetry(`/api/vault/sessions?currentDir=${encodeURIComponent(currentWorkingDir)}`, {}, { retries: 1 });
+    const res = await fetchWithRetry(`/api/vault/sessions?mode=${currentMode}&currentDir=${encodeURIComponent(currentWorkingDir)}`, {}, { retries: 1 });
     const data = await res.json();
     const groups = data && data.groups;
     if (!groups || groups.length === 0) {
@@ -2099,7 +2080,7 @@ async function loadWelcomeTopics() {
     if (!c.children.length || !c.dataset.loaded) c.innerHTML = '<div class="welcome-loading">Loading topics…</div>';
   });
   try {
-    const res = await fetchWithRetry('/api/vault/topics', {}, { retries: 1 });
+    const res = await fetchWithRetry(`/api/vault/topics?mode=${currentMode}`, {}, { retries: 1 });
     const data = await res.json();
     const topics = data && data.topics;
     if (!topics || topics.length === 0) {
@@ -2247,6 +2228,7 @@ async function fetchMentionResults(query, vaultMode) {
   const seq = ++mentionState.fetchSeq;
   const endpoint = vaultMode ? '/api/sessions/dirs/vault-search' : '/api/sessions/dirs/search';
   const params = new URLSearchParams({ q: query, limit: '20' });
+  if (vaultMode) params.set('mode', currentMode);
   if (mentionState.scopedDir) params.set('scope', mentionState.scopedDir);
   try {
     const r = await fetch(`${endpoint}?${params.toString()}`);
@@ -2990,7 +2972,7 @@ async function createNewSession() {
     const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel() }),
+      body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel(), mode: currentMode }),
     });
     const session = await res.json();
 
@@ -7674,7 +7656,7 @@ async function startFromTopic() {
     const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir: selectedNewChatDir || currentWorkingDir }),
+      body: JSON.stringify({ workingDir: selectedNewChatDir || currentWorkingDir, mode: currentMode }),
     });
     const session = await res.json();
 
@@ -7724,7 +7706,7 @@ async function continueFromSession() {
     const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir }),
+      body: JSON.stringify({ workingDir, mode: currentMode }),
     });
     const session = await res.json();
 
@@ -8491,7 +8473,7 @@ function renderWikiPopover() {
 async function fetchWikiCandidates(query) {
   const seq = ++wikiLinkState.fetchSeq;
   try {
-    const r = await fetch(`/api/vault/kb/link-candidates?q=${encodeURIComponent(query)}&limit=20`);
+    const r = await fetch(`/api/vault/kb/link-candidates?mode=${currentMode}&q=${encodeURIComponent(query)}&limit=20`);
     if (seq !== wikiLinkState.fetchSeq) return;
     if (!r.ok) return;
     const results = await r.json();

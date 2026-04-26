@@ -16,7 +16,11 @@ function loadBridgeConfig(): Record<string, any> {
 }
 
 function saveBridgeConfig(data: Record<string, any>): void {
-  fs.writeFileSync(bridgeConfigPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  // Write to a temp file in the same directory, then rename — atomic on POSIX,
+  // so a crash mid-write can't leave a half-written bridge-config.json.
+  const tmp = `${bridgeConfigPath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  fs.renameSync(tmp, bridgeConfigPath);
 }
 
 export { loadBridgeConfig, saveBridgeConfig, bridgeConfigPath };
@@ -50,7 +54,6 @@ export const config = {
   autoArchiveAfterMs: 7 * 24 * 60 * 60 * 1000, // 7 days
   autoDeleteAfterMs: 30 * 24 * 60 * 60 * 1000, // 30 days
   maxTrashedSessions: 10, // FIFO cap on trash
-  defaultMode: 'work' as Mode,
   // Path to .obsidian-mcp.json — resolved from: env var > bridge-config.json > default
   mcpConfigPath: expandTilde(resolve('CHAT_BRIDGE_MCP_CONFIG', 'mcpConfigPath',
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),
@@ -158,13 +161,7 @@ export function getBridgePaths(): Record<string, any> {
   };
 }
 
-// Global mutable mode state
-let currentMode: Mode = config.defaultMode;
-
-export function getMode(): Mode {
-  return currentMode;
-}
-
-export function setMode(mode: Mode): void {
-  currentMode = mode;
+// Validate a string is a valid Mode. Returns null if not — callers should 400.
+export function parseMode(value: unknown): Mode | null {
+  return value === 'work' || value === 'personal' ? value : null;
 }

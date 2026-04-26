@@ -19,6 +19,19 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Access log: one line per HTTP request to stdout (which launchd captures into
+// chat-bridge.log). Skipped for SSE streams since those are long-lived and the
+// payloads are already richly logged at the event level.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/chat/')) { next(); return; }
+  const start = Date.now();
+  res.on('finish', () => {
+    const ip = req.socket.remoteAddress || '-';
+    console.log(`[http] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms ${ip}`);
+  });
+  next();
+});
+
 // Static files — no caching to ensure latest code is always served
 app.use(express.static(path.join(__dirname, '..', 'public'), {
   etag: false,

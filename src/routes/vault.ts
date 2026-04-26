@@ -2,13 +2,18 @@ import { Router, Request, Response } from 'express';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getMode, getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults } from '../config';
+import { getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults, parseMode } from '../config';
 
 const router = Router();
 
-// List available workflows for the current mode's vault (supports nested folders as categories)
-router.get('/workflows', (_req: Request, res: Response) => {
-  const vaultPath = getVaultPath(getMode());
+// List available workflows for the requested mode's vault (supports nested folders as categories)
+router.get('/workflows', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
+  const vaultPath = getVaultPath(mode);
   const workflowsDir = path.join(vaultPath, 'workflows');
 
   try {
@@ -45,9 +50,14 @@ router.get('/workflows', (_req: Request, res: Response) => {
   }
 });
 
-// List active persistent issues for the current mode's vault
-router.get('/issues', (_req: Request, res: Response) => {
-  const vaultPath = getVaultPath(getMode());
+// List active persistent issues for the requested mode's vault
+router.get('/issues', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
+  const vaultPath = getVaultPath(mode);
   const issuesDir = path.join(vaultPath, 'persistent-issues');
 
   try {
@@ -141,8 +151,13 @@ function scanVaultSessions(vaultPath: string): VaultSession[] {
 }
 
 router.get('/sessions', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
   const currentDir = (req.query.currentDir as string) || '';
-  const vaultPath = getVaultPath(getMode());
+  const vaultPath = getVaultPath(mode);
   const sessions = scanVaultSessions(vaultPath);
 
   // Group by workingDir; sessions without one go into a special ungrouped bucket
@@ -228,8 +243,13 @@ function scanVaultTopics(vaultPath: string): VaultTopic[] {
   return results;
 }
 
-router.get('/topics', (_req: Request, res: Response) => {
-  const vaultPath = getVaultPath(getMode());
+router.get('/topics', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
+  const vaultPath = getVaultPath(mode);
   const topics = scanVaultTopics(vaultPath);
 
   // Sort by most recently modified, take top 50
@@ -810,10 +830,10 @@ function buildLinkCandidates(vaults: Array<{ name: string; path: string }>): Lin
   return results;
 }
 
-function getLinkCandidates(): LinkCandidate[] {
-  const vaults = getActiveModeVaults(getMode());
+function getLinkCandidates(mode: 'work' | 'personal'): LinkCandidate[] {
+  const vaults = getActiveModeVaults(mode);
   if (vaults.length === 0) return [];
-  const key = getMode() + ':' + vaults.map(v => v.path).join('|');
+  const key = mode + ':' + vaults.map(v => v.path).join('|');
   const cached = linkCandidateCache.get(key);
   if (cached && Date.now() - cached.builtAt < LINK_CANDIDATE_TTL_MS) return cached.entries;
   const entries = buildLinkCandidates(vaults);
@@ -824,9 +844,14 @@ function getLinkCandidates(): LinkCandidate[] {
 // Wiki-link autocomplete: return active-mode vault .md filenames matching the query,
 // ranked exact > prefix > substring, then by recency.
 router.get('/kb/link-candidates', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
   const q = ((req.query.q as string) || '').trim().toLowerCase();
   const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
-  const entries = getLinkCandidates();
+  const entries = getLinkCandidates(mode);
   if (entries.length === 0) {
     res.json([]);
     return;

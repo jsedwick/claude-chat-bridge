@@ -17,12 +17,13 @@ function projectDirForCwd(cwd: string): string {
 // from the spawn cwd. When the fork moves to a new cwd, copy the parent file
 // over first — otherwise Claude returns error_during_execution with a fresh
 // (bogus) session_id and no text, which the bridge used to persist and surface
-// to the user as silent failure. No-op if the file is already in place or the
-// parent can't be located.
-function ensureForkSessionAvailable(parentClaudeSessionId: string, newCwd: string): void {
+// to the user as silent failure. Returns the path of a copy this call created
+// (so the caller can clean it up after the child captures its own session_id),
+// or null if no copy was made (already in place or parent not found).
+function ensureForkSessionAvailable(parentClaudeSessionId: string, newCwd: string): string | null {
   const targetDir = projectDirForCwd(newCwd);
   const targetJsonl = path.join(targetDir, `${parentClaudeSessionId}.jsonl`);
-  if (fs.existsSync(targetJsonl)) return;
+  if (fs.existsSync(targetJsonl)) return null;
   const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
   let sourceJsonl: string | null = null;
   try {
@@ -31,13 +32,15 @@ function ensureForkSessionAvailable(parentClaudeSessionId: string, newCwd: strin
       if (fs.existsSync(candidate)) { sourceJsonl = candidate; break; }
     }
   } catch {}
-  if (!sourceJsonl) return;
+  if (!sourceJsonl) return null;
   try {
     fs.mkdirSync(targetDir, { recursive: true });
     fs.copyFileSync(sourceJsonl, targetJsonl);
     console.log(`[fork-copy:${parentClaudeSessionId.slice(0, 8)}] ${sourceJsonl} → ${targetJsonl}`);
+    return targetJsonl;
   } catch (err) {
     console.error(`[fork-copy:${parentClaudeSessionId.slice(0, 8)}] copy failed:`, err);
+    return null;
   }
 }
 
@@ -241,10 +244,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     args.push('--append-system-prompt', `You are in ${mode} mode. Run /vault:${mode} at the start of this session to load the correct vault context.`);
   }
 
+  let forkCopyPath: string | null = null;
   if (sessionId) {
     args.push('--resume', sessionId);
   } else if (forkFromSessionId) {
-    ensureForkSessionAvailable(forkFromSessionId, workingDir || config.workingDir);
+    forkCopyPath = ensureForkSessionAvailable(forkFromSessionId, workingDir || config.workingDir);
     args.push('--resume', forkFromSessionId, '--fork-session');
   }
 
@@ -288,6 +292,8 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   let capturedSessionId: string | null = sessionId || null;
   let authFailed = false;
+  // Set true once we see a non-error result event; used to gate fork-copy cleanup.
+  let resultSucceeded = false;
   let buffer = '';
 
   proc.stdout!.on('data', (chunk: Buffer) => {
@@ -371,6 +377,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         // Capture session ID from result event
         if (parsed.type === 'result' && parsed.session_id) {
           capturedSessionId = parsed.session_id;
+          resultSucceeded = parsed.is_error !== true;
           const usage = parsed.usage;
           const cost = parsed.total_cost_usd;
           emitToStream(appSessionId, {
@@ -477,6 +484,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           }
           if (parsed.type === 'result' && parsed.session_id) {
             capturedSessionId = parsed.session_id;
+            resultSucceeded = parsed.is_error !== true;
             const usage = parsed.usage;
             const cost = parsed.total_cost_usd;
             emitToStream(appSessionId, {
@@ -506,6 +514,20 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
     if (code !== 0 && code !== null && !authFailed) {
       emitToStream(appSessionId, { type: 'error', data: `Claude process exited with code ${code}` });
+    }
+
+    // Fork-session copy cleanup: once the child has captured its own session_id
+    // from a successful result, the parent JSONL we seeded into the child's
+    // project dir is no longer load-bearing — Claude has written the child's
+    // own JSONL alongside it. Skip on error so a retry can reuse the copy.
+    if (forkCopyPath && resultSucceeded && capturedSessionId && capturedSessionId !== forkFromSessionId) {
+      try {
+        fs.unlinkSync(forkCopyPath);
+        console.log(`[fork-copy] cleaned ${forkCopyPath}`);
+      } catch (err) {
+        console.error(`[fork-copy] cleanup failed for ${forkCopyPath}:`, err);
+      }
+      forkCopyPath = null;
     }
 
     // Remove the initial listener and close the stream

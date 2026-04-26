@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, trashSession, restoreSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
-import { getMode, setMode, Mode, config, getAllowedPaths, getActiveModeVaults } from '../config';
+import { config, getAllowedPaths, getActiveModeVaults, parseMode } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
 import { isDirectoryTrusted } from '../services/permissions';
@@ -35,7 +35,14 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
-  const { name, workingDir, model } = req.body || {};
+  const { name, workingDir, model, mode } = req.body || {};
+  // Mode must be explicit — the bridge no longer maintains a server-wide
+  // "current mode," so a client that doesn't send one is a bug, not a default.
+  const parsedMode = parseMode(mode);
+  if (!parsedMode) {
+    res.status(400).json({ error: 'mode required: "work" or "personal"' });
+    return;
+  }
   // Validate workingDir — must be an existing directory
   if (workingDir) {
     try {
@@ -49,7 +56,12 @@ router.post('/', (req: Request, res: Response) => {
       return;
     }
   }
-  const session = createSession(name, workingDir || undefined, model || undefined);
+  const session = createSession({
+    mode: parsedMode,
+    name,
+    workingDir: workingDir || undefined,
+    model: model || undefined,
+  });
   const trusted = workingDir ? isDirectoryTrusted(workingDir) : true;
   res.status(201).json({ ...session, directoryTrusted: trusted });
 });
@@ -260,18 +272,25 @@ router.get('/dirs/search', (req: Request, res: Response) => {
   })));
 });
 
-// Search files/directories across all vaults of the current mode for @vault: autocomplete.
-// Optional `scope=<abs-path>` narrows to descendants of a directory under one of those vaults.
+// Search files/directories across all vaults of the requested mode for @vault: autocomplete.
+// Mode is required and comes from the client (?mode=work|personal); the bridge no longer
+// has a server-wide mode. Optional `scope=<abs-path>` narrows to descendants of a directory
+// under one of those vaults.
 router.get('/dirs/vault-search', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
   const q = (req.query.q as string) || '';
   const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
   const scope = (req.query.scope as string) || '';
-  const vaults = getActiveModeVaults(getMode());
+  const vaults = getActiveModeVaults(mode);
   if (vaults.length === 0) {
     res.json([]);
     return;
   }
-  const cacheKey = 'vault:' + getMode() + ':' + vaults.map(v => v.path).join('|');
+  const cacheKey = 'vault:' + mode + ':' + vaults.map(v => v.path).join('|');
   let entries = getOrBuildIndex(cacheKey, vaults);
   if (scope) {
     const scoped = filterEntriesByScope(entries, scope, vaults.map(v => v.path));
@@ -292,21 +311,6 @@ router.get('/dirs/vault-search', (req: Request, res: Response) => {
 // Active sessions endpoint (must be before /:id to avoid param capture)
 router.get('/active', (_req: Request, res: Response) => {
   res.json(getActiveAppSessionIds());
-});
-
-// Mode endpoints (must be before /:id to avoid param capture)
-router.get('/mode/current', (_req: Request, res: Response) => {
-  res.json({ mode: getMode() });
-});
-
-router.post('/mode/current', (req: Request, res: Response) => {
-  const { mode } = req.body || {};
-  if (mode !== 'work' && mode !== 'personal') {
-    res.status(400).json({ error: 'Mode must be "work" or "personal"' });
-    return;
-  }
-  setMode(mode as Mode);
-  res.json({ mode: getMode() });
 });
 
 // Get git diff for a file since a session started
