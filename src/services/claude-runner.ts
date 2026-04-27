@@ -221,7 +221,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--permission-mode', 'auto',
+    '--permission-mode', config.permissionMode,
     '--plugin-dir', config.pluginDir,
   ];
 

@@ -49,7 +49,8 @@ export const config = {
   maxConcurrentSessions: 3,
   sessionStorePath: path.join(__dirname, '..', 'chat-sessions.json'),
   claudePath: expandTilde(resolve('CHAT_BRIDGE_CLAUDE_PATH', 'claudePath', path.join(home, '.local', 'bin', 'claude'))),
-  permissionMode: 'bypassPermissions' as const,
+  // bypassPermissions is universally available; auto requires org-level opt-in.
+  permissionMode: resolve('CHAT_BRIDGE_PERMISSION_MODE', 'permissionMode', 'bypassPermissions'),
   sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
   autoArchiveAfterMs: 7 * 24 * 60 * 60 * 1000, // 7 days
   autoDeleteAfterMs: 30 * 24 * 60 * 60 * 1000, // 30 days
