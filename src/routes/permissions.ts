@@ -29,8 +29,14 @@ router.post('/request', async (req: Request, res: Response) => {
   // Look up the app session from Claude's session ID
   const appSessionId = getAppSessionByClaudeId(session_id);
   if (!appSessionId) {
-    // No active bridge session — auto-allow (might be terminal usage)
-    res.json({ decision: 'allow' });
+    // Unknown session — fail closed. The hook script (permission-bridge-hook.sh)
+    // already exits 0 when CHAT_BRIDGE_SESSION is unset, so terminal usage never
+    // reaches this endpoint. Anything that does is either (a) an unauthorized
+    // caller hitting the API directly, or (b) a sub-second race between Claude's
+    // init event and its first tool call where claudeToAppMap isn't populated yet.
+    // (a) must deny; (b) is rare and recoverable by retry.
+    console.log(`[permissions] deny (unknown session): ${session_id}`);
+    res.json({ decision: 'deny' });
     return;
   }
 

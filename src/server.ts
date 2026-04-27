@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -16,7 +15,11 @@ import { resolveShellEnv } from './services/shell-env';
 
 const app = express();
 
-app.use(cors());
+// No CORS middleware: the frontend is served same-origin from this server,
+// the hook script uses curl (no Origin header), and nothing else legitimately
+// makes cross-origin browser calls to this API. Without an Access-Control-Allow-Origin
+// header, browsers block cross-origin reads, which prevents drive-by attacks
+// from arbitrary tabs reaching localhost or the Tailscale IP.
 app.use(express.json({ limit: '10mb' }));
 
 // Access log: one line per HTTP request to stdout (which launchd captures into

@@ -401,13 +401,15 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           // With plugin monitors, the CLI process outlives the response indefinitely,
           // leaving the session in activeSessions/appSessionMap (blocks new sessions,
           // causes sidebar pulse, and allows duplicate message sends).
+          //
+          // Intentionally do NOT delete claudeToAppMap here: monitors that fire
+          // tool calls after the result event still need their permission requests
+          // to resolve to the right app session. The lookup table is cleaned up
+          // in proc.on('close') when the actual claude process exits.
           activeSessions.delete(trackingId);
           appSessionMap.delete(appSessionId);
-          if (capturedSessionId) {
-            claudeToAppMap.delete(capturedSessionId);
-            if (trackingId !== capturedSessionId) {
-              activeSessions.delete(capturedSessionId);
-            }
+          if (capturedSessionId && trackingId !== capturedSessionId) {
+            activeSessions.delete(capturedSessionId);
           }
           // Remove this listener so events from a future process on the same
           // session don't trigger duplicate saves via this closure's onEvent.
