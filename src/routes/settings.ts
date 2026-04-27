@@ -46,6 +46,62 @@ function extractVersion(raw: string): string {
   return match ? match[1] : raw.trim();
 }
 
+interface SourceVersion {
+  name: string;
+  path: string;
+  sha: string | null;
+  commitDate: string | null;
+  dirty: boolean | null;
+  packageVersion: string | null;
+  buildId: string | null;
+  builtAt: string | null;
+  error: string | null;
+}
+
+async function getSourceVersion(name: string, dir: string): Promise<SourceVersion> {
+  const result: SourceVersion = {
+    name,
+    path: dir,
+    sha: null,
+    commitDate: null,
+    dirty: null,
+    packageVersion: null,
+    buildId: null,
+    builtAt: null,
+    error: null,
+  };
+
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', '--short=12', 'HEAD'], shellExecOpts({ cwd: dir, timeout: 5000 }));
+    result.sha = stdout.trim();
+  } catch (err: any) {
+    result.error = err.message || 'git rev-parse failed';
+  }
+
+  try {
+    const { stdout } = await execFileAsync('git', ['log', '-1', '--format=%cI', 'HEAD'], shellExecOpts({ cwd: dir, timeout: 5000 }));
+    result.commitDate = stdout.trim() || null;
+  } catch { /* commit date is optional */ }
+
+  try {
+    const { stdout } = await execFileAsync('git', ['status', '--porcelain', '--untracked-files=no'], shellExecOpts({ cwd: dir, timeout: 5000 }));
+    result.dirty = stdout.trim().length > 0;
+  } catch { /* dirty flag is optional */ }
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8'));
+    if (typeof pkg.version === 'string') result.packageVersion = pkg.version;
+  } catch { /* package.json is optional */ }
+
+  try {
+    const buildIdData = JSON.parse(fs.readFileSync(path.join(dir, 'dist', '.build-id'), 'utf-8'));
+    if (typeof buildIdData.buildId === 'string') result.buildId = buildIdData.buildId;
+    if (typeof buildIdData.builtAt === 'string') result.builtAt = buildIdData.builtAt;
+  } catch { /* only obsidian-mcp-server publishes a build-id today */ }
+
+  return result;
+}
+
 const router = Router();
 
 // GET /api/settings — read .obsidian-mcp.json + config path status
@@ -197,6 +253,20 @@ router.get('/version', async (_req: Request, res: Response) => {
     lastSeenVersion,
     versionChanged,
   });
+});
+
+// GET /api/settings/source-versions — git SHA + build info for the running bridge and MCP server.
+// Used by the Updates panel for at-a-glance parity comparison across machines.
+router.get('/source-versions', async (_req: Request, res: Response) => {
+  const bridgeDir = path.resolve(__dirname, '..', '..');
+  const mcpDir = path.dirname(config.mcpConfigPath);
+  const pluginDir = config.pluginDir;
+  const projects = await Promise.all([
+    getSourceVersion('claude-chat-bridge', bridgeDir),
+    getSourceVersion('obsidian-mcp-server', mcpDir),
+    getSourceVersion('obsidian-claude-plugin', pluginDir),
+  ]);
+  res.json({ projects });
 });
 
 // POST /api/settings/git-pull — run git pull and npm run build on both project directories

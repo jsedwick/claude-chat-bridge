@@ -5949,6 +5949,11 @@ async function renderUpdatesSettings(container) {
       </div>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">Source Versions</div>
+      <div class="settings-section-desc">Currently running build of the bridge and MCP server. Compare these with another machine to confirm you're on the same version.</div>
+      <div id="source-versions-content"><div class="version-loading">Loading...</div></div>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">Project Source Updates</div>
       <div class="settings-section-desc">Pull the latest changes from git, build, and restart the server.</div>
       <div id="git-pull-status"></div>
@@ -5962,6 +5967,8 @@ async function renderUpdatesSettings(container) {
       </div>
     </div>
   `;
+
+  loadSourceVersions(container);
 
   try {
     const res = await fetchWithRetry('/api/settings/version');
@@ -6035,6 +6042,52 @@ async function renderUpdatesSettings(container) {
       });
     } catch {}
   }
+}
+
+async function loadSourceVersions(container) {
+  const el = container.querySelector('#source-versions-content');
+  if (!el) return;
+  let data;
+  try {
+    const res = await fetchWithRetry('/api/settings/source-versions');
+    data = await res.json();
+  } catch {
+    el.innerHTML = '<div class="version-error">Failed to load source versions.</div>';
+    return;
+  }
+  el.innerHTML = (data.projects || []).map(p => {
+    let shaPart;
+    if (p.sha) {
+      shaPart = `<code style="font-family:var(--font-mono,ui-monospace,monospace)">${escapeHtml(p.sha)}</code>` +
+        (p.dirty ? ' <span class="version-badge version-badge-update" title="Uncommitted local changes">dirty</span>' : '');
+    } else if (p.error) {
+      shaPart = `<span class="version-error">${escapeHtml(p.error)}</span>`;
+    } else {
+      shaPart = 'Unknown';
+    }
+    const commitFmt = p.commitDate ? new Date(p.commitDate).toLocaleString() : '—';
+    const builtFmt = p.builtAt ? new Date(p.builtAt).toLocaleString() : null;
+    const buildIdRow = p.buildId
+      ? `<div class="version-row"><span class="version-label">Build ID</span><span class="version-value"><code style="font-family:var(--font-mono,ui-monospace,monospace)">${escapeHtml(p.buildId)}</code></span></div>`
+      : '';
+    const builtRow = builtFmt
+      ? `<div class="version-row"><span class="version-label">Built</span><span class="version-value">${escapeHtml(builtFmt)}</span></div>`
+      : '';
+    return `
+      <div class="version-info" style="margin-bottom:12px">
+        <div class="version-row">
+          <span class="version-label">${escapeHtml(p.name)}</span>
+          <span class="version-value">${shaPart}</span>
+        </div>
+        <div class="version-row">
+          <span class="version-label">Commit date</span>
+          <span class="version-value">${escapeHtml(commitFmt)}</span>
+        </div>
+        ${buildIdRow}
+        ${builtRow}
+      </div>
+    `;
+  }).join('');
 }
 
 async function checkVersionUpdate() {
