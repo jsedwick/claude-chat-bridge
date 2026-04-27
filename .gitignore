@@ -3,5 +3,4 @@ dist/
 certs/
 chat-sessions.json
 bridge-config.json
-trusted-dirs.json
 *.log

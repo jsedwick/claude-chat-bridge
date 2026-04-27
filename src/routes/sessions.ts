@@ -6,7 +6,6 @@ import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSess
 import { config, getAllowedPaths, getActiveModeVaults, parseMode } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
-import { isDirectoryTrusted } from '../services/permissions';
 
 const router = Router();
 
@@ -62,8 +61,7 @@ router.post('/', (req: Request, res: Response) => {
     workingDir: workingDir || undefined,
     model: model || undefined,
   });
-  const trusted = workingDir ? isDirectoryTrusted(workingDir) : true;
-  res.status(201).json({ ...session, directoryTrusted: trusted });
+  res.status(201).json(session);
 });
 
 // Allowed root directories for the directory picker
@@ -504,8 +502,7 @@ router.post('/:id/fork', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Session not found or invalid message index' });
     return;
   }
-  const trusted = forked.workingDir ? isDirectoryTrusted(forked.workingDir) : true;
-  res.status(201).json({ ...forked, directoryTrusted: trusted });
+  res.status(201).json(forked);
 });
 
 router.get('/:id/forks', (req: Request, res: Response) => {

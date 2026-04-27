@@ -59,10 +59,6 @@ export const config = {
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),
   pluginDir: expandTilde(resolve('CHAT_BRIDGE_PLUGIN_DIR', 'pluginDir',
     path.join(home, 'Projects', 'obsidian-claude-plugin'))),
-  // Path to user-managed trusted-dirs.json (gitignored, populated via /api/trust-dir).
-  // Default lives at the bridge repo root for dev ergonomics; override with env or bridge-config.
-  trustedDirsPath: expandTilde(resolve('CHAT_BRIDGE_TRUSTED_DIRS', 'trustedDirsPath',
-    path.join(__dirname, '..', 'trusted-dirs.json'))),
   // launchd service label — used by /api/settings/restart and the bridge-restart-watch monitor.
   // Default derives from the running user so two installs on the same Mac don't collide.
   serviceLabel: resolve('CHAT_BRIDGE_SERVICE_LABEL', 'serviceLabel',

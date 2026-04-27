@@ -575,24 +575,6 @@
     </div>
   </div>
 
-  <!-- Directory Trust Dialog -->
-  <div id="trust-overlay" class="permission-overlay" style="display:none">
-    <div class="permission-dialog">
-      <div class="permission-header">Trust Project Directory?</div>
-      <div class="permission-body">
-        <div class="permission-tool">Do you trust the files in this directory?</div>
-        <div class="permission-detail" id="trust-dir-path" style="word-break:break-all"></div>
-        <div style="margin-top:8px;font-size:0.85em;opacity:0.7">
-          Claude will be able to read and modify files in this directory without additional prompts.
-        </div>
-      </div>
-      <div class="permission-actions">
-        <button class="permission-btn permission-btn-deny" onclick="respondDirectoryTrust(false)">Don't Trust</button>
-        <button class="permission-btn permission-btn-allow" onclick="respondDirectoryTrust(true)">Trust</button>
-      </div>
-    </div>
-  </div>
-
   <script src="/app.js"></script>
 </body>
 </html>

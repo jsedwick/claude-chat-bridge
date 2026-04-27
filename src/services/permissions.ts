@@ -1,7 +1,5 @@
 import crypto from 'crypto';
 import path from 'path';
-import fs from 'fs';
-import { config } from '../config';
 
 export interface PermissionRequest {
   id: string;
@@ -122,44 +120,6 @@ const BASH_ASK_PATTERNS = [
   /\bfdisk\b/,
   />\s*\/(?!dev\/null\b)/,             // redirect to absolute path (but not /dev/null)
 ];
-
-// ---------------------------------------------------------------------------
-// Directory trust
-// ---------------------------------------------------------------------------
-// trusted-dirs.json is user-managed and gitignored. See trusted-dirs.example.json
-// for format. Override the path via CHAT_BRIDGE_TRUSTED_DIRS or trustedDirsPath
-// in bridge-config.json. Missing file is treated as "no trusted dirs" — the
-// file is created on first trustDirectory() call.
-function loadTrustedDirs(): Set<string> {
-  try {
-    const data = JSON.parse(fs.readFileSync(config.trustedDirsPath, 'utf-8'));
-    return new Set(Array.isArray(data) ? data : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function saveTrustedDirs(dirs: Set<string>): void {
-  fs.writeFileSync(config.trustedDirsPath, JSON.stringify([...dirs], null, 2) + '\n');
-}
-
-const trustedDirs = loadTrustedDirs();
-
-export function isDirectoryTrusted(dir: string): boolean {
-  const resolved = path.resolve(dir);
-  // Check if this dir or any parent is trusted
-  for (const trusted of trustedDirs) {
-    if (resolved === trusted || resolved.startsWith(trusted + '/')) {
-      return true;
-    }
-  }
-  return false;
-}
-
-export function trustDirectory(dir: string): void {
-  trustedDirs.add(path.resolve(dir));
-  saveTrustedDirs(trustedDirs);
-}
 
 // ---------------------------------------------------------------------------
 // Permission decision logic

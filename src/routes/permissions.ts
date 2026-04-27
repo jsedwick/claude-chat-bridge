@@ -6,8 +6,6 @@ import {
   checkPermission,
   isNeverAllowed,
   isSessionAllowed,
-  isDirectoryTrusted,
-  trustDirectory,
   createPermissionRequest,
   resolvePermission,
   getPendingForSession,
@@ -176,34 +174,6 @@ router.post('/respond', (req: Request, res: Response) => {
     console.warn(`[permissions] /respond FAILED: no pending permission for ${requestId}`);
     res.status(404).json({ error: 'No pending permission with that ID' });
   }
-});
-
-// ---------------------------------------------------------------------------
-// Directory trust endpoints
-// ---------------------------------------------------------------------------
-
-// Check if a directory is trusted
-router.get('/directory-trust', (req: Request, res: Response) => {
-  const dir = req.query.dir as string;
-  if (!dir) {
-    res.status(400).json({ error: 'dir query parameter required' });
-    return;
-  }
-
-  res.json({ dir, trusted: isDirectoryTrusted(dir) });
-});
-
-// Trust a directory
-router.post('/directory-trust', (req: Request, res: Response) => {
-  const { dir } = req.body;
-  if (!dir) {
-    res.status(400).json({ error: 'dir required' });
-    return;
-  }
-
-  trustDirectory(dir);
-  console.log(`[permissions] directory trusted: ${dir}`);
-  res.json({ status: 'ok', dir });
 });
 
 export default router;
