@@ -5950,7 +5950,7 @@ async function renderUpdatesSettings(container) {
     </div>
     <div class="settings-section">
       <div class="settings-section-title">Source Versions</div>
-      <div class="settings-section-desc">Currently running build of the bridge and MCP server. Compare these with another machine to confirm you're on the same version.</div>
+      <div class="settings-section-desc">Currently running build of the bridge and MCP server.</div>
       <div id="source-versions-content"><div class="version-loading">Loading...</div></div>
     </div>
     <div class="settings-section">
@@ -6058,33 +6058,35 @@ async function loadSourceVersions(container) {
   el.innerHTML = (data.projects || []).map(p => {
     let shaPart;
     if (p.sha) {
-      shaPart = `<code style="font-family:var(--font-mono,ui-monospace,monospace)">${escapeHtml(p.sha)}</code>` +
+      shaPart = `<code class="source-version-sha-code">${escapeHtml(p.sha)}</code>` +
         (p.dirty ? ' <span class="version-badge version-badge-update" title="Uncommitted local changes">dirty</span>' : '');
     } else if (p.error) {
       shaPart = `<span class="version-error">${escapeHtml(p.error)}</span>`;
     } else {
-      shaPart = 'Unknown';
+      shaPart = '<span class="source-version-detail-value">Unknown</span>';
     }
     const commitFmt = p.commitDate ? new Date(p.commitDate).toLocaleString() : '—';
     const builtFmt = p.builtAt ? new Date(p.builtAt).toLocaleString() : null;
     const buildIdRow = p.buildId
-      ? `<div class="version-row"><span class="version-label">Build ID</span><span class="version-value"><code style="font-family:var(--font-mono,ui-monospace,monospace)">${escapeHtml(p.buildId)}</code></span></div>`
+      ? `<div class="source-version-detail"><span class="source-version-detail-label">Build ID</span><span class="source-version-detail-value"><code class="source-version-sha-code">${escapeHtml(p.buildId)}</code></span></div>`
       : '';
     const builtRow = builtFmt
-      ? `<div class="version-row"><span class="version-label">Built</span><span class="version-value">${escapeHtml(builtFmt)}</span></div>`
+      ? `<div class="source-version-detail"><span class="source-version-detail-label">Built</span><span class="source-version-detail-value">${escapeHtml(builtFmt)}</span></div>`
       : '';
     return `
-      <div class="version-info" style="margin-bottom:12px">
-        <div class="version-row">
-          <span class="version-label">${escapeHtml(p.name)}</span>
-          <span class="version-value">${shaPart}</span>
+      <div class="source-version-card">
+        <div class="source-version-card-header">
+          <span class="source-version-name">${escapeHtml(p.name)}</span>
+          <span class="source-version-sha">${shaPart}</span>
         </div>
-        <div class="version-row">
-          <span class="version-label">Commit date</span>
-          <span class="version-value">${escapeHtml(commitFmt)}</span>
+        <div class="source-version-card-body">
+          <div class="source-version-detail">
+            <span class="source-version-detail-label">Commit date</span>
+            <span class="source-version-detail-value">${escapeHtml(commitFmt)}</span>
+          </div>
+          ${buildIdRow}
+          ${builtRow}
         </div>
-        ${buildIdRow}
-        ${builtRow}
       </div>
     `;
   }).join('');
