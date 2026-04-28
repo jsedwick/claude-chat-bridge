@@ -1433,12 +1433,42 @@ html, body {
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  z-index: 101;
+  z-index: 201;
+}
+
+/* Transparent hover bridge across the 4px visual gap so the cursor can
+   transit from the parent item to the flyout without losing :hover. */
+.msg-action-flyout::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -6px;
+  width: 6px;
 }
 
 .msg-action-menu-item-wrap:hover .msg-action-flyout,
 .msg-action-menu-item-wrap:focus-within .msg-action-flyout {
   display: block;
+}
+
+/* Narrow viewports: the fixed sidebar overlays the left edge, so a leftward
+   flyout gets clipped behind it. Flip downward instead. */
+@media (max-width: 767px) {
+  .msg-action-flyout {
+    top: 100%;
+    right: 0;
+    margin-right: 0;
+    margin-top: 4px;
+  }
+  .msg-action-flyout::before {
+    top: -6px;
+    right: 0;
+    left: 0;
+    bottom: auto;
+    width: auto;
+    height: 6px;
+  }
 }
 
 /* Fork divider */
