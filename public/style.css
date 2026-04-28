@@ -523,6 +523,33 @@ html, body {
   min-width: 0;
 }
 
+/* Wraps messages + input so the chat-details-dim can cover them as a unit
+   without affecting the chat-header / session-details-panel above. */
+.chat-content {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Dims chat content while session details panel is open; click to close. */
+.chat-details-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.chat-details-dim.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .chat-header {
   display: flex;
   align-items: center;

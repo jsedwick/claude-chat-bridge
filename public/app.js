@@ -205,7 +205,7 @@ async function setMode(mode) {
           welcomeEl.style.display = '';
           inputArea.style.display = 'none';
           document.querySelector('.dir-picker-wrapper').style.display = 'none';
-          document.getElementById('session-details-panel').style.display = 'none';
+          hideSessionDetails();
           clearMessages();
         }
       } catch {}
@@ -2539,7 +2539,7 @@ async function archiveSessionItem(id) {
       welcomeEl.style.display = '';
       inputArea.style.display = 'none';
       document.querySelector('.dir-picker-wrapper').style.display = 'none';
-      document.getElementById('session-details-panel').style.display = 'none';
+      hideSessionDetails();
       clearMessages();
     }
     loadSessions();
@@ -2607,7 +2607,7 @@ async function permanentlyDeleteSessionItem(id) {
       welcomeEl.style.display = '';
       inputArea.style.display = 'none';
       document.querySelector('.dir-picker-wrapper').style.display = 'none';
-      document.getElementById('session-details-panel').style.display = 'none';
+      hideSessionDetails();
       clearMessages();
     }
     loadSessions();
@@ -2768,11 +2768,20 @@ function toggleSessionDetails() {
   document.getElementById('title-menu').style.display = 'none';
   const panel = document.getElementById('session-details-panel');
   if (panel.style.display !== 'none') {
-    panel.style.display = 'none';
+    hideSessionDetails();
     return;
   }
   panel.style.display = 'block';
+  const dim = document.getElementById('chat-details-dim');
+  if (dim) dim.classList.add('active');
   buildSessionFileList();
+}
+
+function hideSessionDetails() {
+  const panel = document.getElementById('session-details-panel');
+  if (panel) panel.style.display = 'none';
+  const dim = document.getElementById('chat-details-dim');
+  if (dim) dim.classList.remove('active');
 }
 
 function buildSessionFileList() {
@@ -2983,7 +2992,7 @@ async function createNewSession() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
-    document.getElementById('session-details-panel').style.display = 'none';
+    hideSessionDetails();
     clearMessages();
     loadSessions();
     // Reset sidebar dir picker for next time
@@ -3033,7 +3042,7 @@ async function switchSession(id) {
   currentSessionCreated = session.created || '';
   currentClosedAt = session.closedAt || '';
   // Hide details panel when switching sessions
-  document.getElementById('session-details-panel').style.display = 'none';
+  hideSessionDetails();
   // Restore session-specific model selection
   if (session.model) {
     modelSelect.value = session.model;
@@ -3102,7 +3111,7 @@ async function deleteSessionItem(id) {
       welcomeEl.style.display = '';
       inputArea.style.display = 'none';
       document.querySelector('.dir-picker-wrapper').style.display = 'none';
-      document.getElementById('session-details-panel').style.display = 'none';
+      hideSessionDetails();
       clearMessages();
     }
     loadSessions();
@@ -7719,7 +7728,7 @@ async function startFromTopic() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
-    document.getElementById('session-details-panel').style.display = 'none';
+    hideSessionDetails();
     clearMessages();
     loadSessions();
     switchView('sessions');
@@ -7765,7 +7774,7 @@ async function continueFromSession() {
     welcomeEl.style.display = 'none';
     inputArea.style.display = 'block';
     document.querySelector('.dir-picker-wrapper').style.display = '';
-    document.getElementById('session-details-panel').style.display = 'none';
+    hideSessionDetails();
     clearMessages();
     loadSessions();
     switchView('sessions');
