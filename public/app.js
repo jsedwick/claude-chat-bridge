@@ -5114,17 +5114,6 @@ marked.use({
 });
 
 function renderMarkdown(text) {
-  // Pre-process [[wiki-links]] into wiki-link spans before marked parses.
-  // Mirrors renderKbMarkdown so vault references Claude writes in chat
-  // (e.g. `[[topic-slug]]`) resolve and open in the KB pane on click.
-  text = text.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
-    const parts = inner.split('|');
-    const target = parts[0].trim();
-    const display = (parts[1] || parts[0]).trim();
-    const escaped = target.replace(/"/g, '&quot;');
-    return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)">${escapeHtml(display)}</span>`;
-  });
-
   // Handle unclosed code block (still streaming) — close it temporarily for parsing
   const unclosedMatch = text.match(/```(\w*)\n([^`]*)$/);
   if (unclosedMatch) {
@@ -5147,11 +5136,30 @@ function renderMarkdown(text) {
       after = after.replace(/<\/div>\s*$/, '');
       html = before + after;
     }
-    return linkifyVaultPathsInHtml(html);
+    return linkifyVaultPathsInHtml(linkifyWikiLinksInHtml(html));
   }
 
   let html = marked.parse(text);
-  return linkifyVaultPathsInHtml(html);
+  return linkifyVaultPathsInHtml(linkifyWikiLinksInHtml(html));
+}
+
+// Replace [[wiki-link]] tokens with clickable spans, post-render. Running this
+// AFTER marked.parse prevents the injected <span> tags from being HTML-escaped
+// when the wiki-link sits inside an indented or fenced code block (the
+// pre-render version produced literal "<span class=...>" text in chat). The
+// leading alternative consumes <code>/<pre> blocks whole so wiki-links inside
+// code stay literal.
+function linkifyWikiLinksInHtml(html) {
+  return html.replace(/(<(code|pre)\b[^>]*>[\s\S]*?<\/\2>)|\[\[([^\]]+)\]\]/g,
+    (match, codeBlock, _tag, inner) => {
+      if (codeBlock) return codeBlock;
+      const parts = inner.split('|');
+      const target = parts[0].trim();
+      const display = (parts[1] || parts[0]).trim();
+      const escaped = target.replace(/"/g, '&quot;');
+      return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)">${escapeHtml(display)}</span>`;
+    }
+  );
 }
 
 function linkifyVaultPathsInHtml(html) {
@@ -8200,17 +8208,10 @@ function renderKbMarkdown(text) {
     body = text.slice(fmMatch[0].length);
   }
 
-  // Pre-process wiki-links into HTML spans before marked parsing
-  const withLinks = body.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
-    const parts = inner.split('|');
-    const target = parts[0].trim();
-    const display = (parts[1] || parts[0]).trim();
-    const escaped = target.replace(/"/g, '&quot;');
-    return `<span class="wiki-link" data-target="${escaped}" onclick="navigateWikiLink(this)">${escapeHtml(display)}</span>`;
-  });
-
-  // Parse with marked (reuse existing marked instance)
-  const rendered = marked.parse(withLinks);
+  // Parse with marked, then linkify [[wiki-link]] tokens. Doing this post-render
+  // (rather than pre-render) keeps wiki-links inside indented or fenced code
+  // blocks as literal text instead of having their injected <span> escaped.
+  const rendered = linkifyWikiLinksInHtml(marked.parse(body));
   return frontmatterHtml + rendered;
 }
 
