@@ -30,6 +30,7 @@ export interface ChatSession {
     sessionName: string;
     messageIndex: number;
     parentWorkingDir?: string;
+    direction?: 'up' | 'down';
   };
 }
 
@@ -47,6 +48,10 @@ export interface ClaudeRunnerOptions {
   mode?: 'work' | 'personal';
   workingDir?: string;
   attachments?: Array<{ filename: string; path: string }>;
+  // Prior conversation messages injected into the system prompt as historical
+  // context. Used on the first turn of an amnesiac fork-down so Claude can
+  // respond coherently without --resume'ing the parent session.
+  priorContext?: ChatMessage[];
   onEvent: (event: StreamEvent) => void;
   onClose: (claudeSessionId: string | null) => void;
 }

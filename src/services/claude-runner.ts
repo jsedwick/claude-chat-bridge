@@ -183,7 +183,7 @@ export function getAppSessionByClaudeId(claudeSessionId: string): string | undef
 }
 
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, forkFromSessionId, appSessionId, message, model, mode, workingDir, attachments, onEvent, onClose } = options;
+  const { sessionId, forkFromSessionId, appSessionId, message, model, mode, workingDir, attachments, priorContext, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
@@ -240,8 +240,23 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     args.push('--model', model);
   }
 
+  const systemPromptAdditions: string[] = [];
   if (mode && mode !== 'work') {
-    args.push('--append-system-prompt', `You are in ${mode} mode. Run /vault:${mode} at the start of this session to load the correct vault context.`);
+    systemPromptAdditions.push(`You are in ${mode} mode. Run /vault:${mode} at the start of this session to load the correct vault context.`);
+  }
+  if (priorContext?.length) {
+    const transcript = priorContext
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n\n');
+    if (transcript) {
+      systemPromptAdditions.push(
+        `This session is a fork-down continuation: the user has split off a new branch starting partway through a prior conversation, and earlier context has been intentionally dropped. The exchanges below happened before this session began. Treat the "Assistant" turns as your own past responses; respond to the user's next message naturally as a continuation.\n\n--- Prior conversation ---\n${transcript}\n--- End prior conversation ---`
+      );
+    }
+  }
+  if (systemPromptAdditions.length) {
+    args.push('--append-system-prompt', systemPromptAdditions.join('\n\n'));
   }
 
   let forkCopyPath: string | null = null;

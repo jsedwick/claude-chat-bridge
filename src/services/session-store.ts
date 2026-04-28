@@ -202,27 +202,28 @@ export function forkSession(
   sourceId: string,
   messageIndex: number,
   overrideWorkingDir?: string,
+  direction: 'up' | 'down' = 'up',
 ): ChatSession | undefined | 'max_depth' {
   const source = sessions.find(s => s.id === sourceId);
   if (!source) return undefined;
   if (getForkDepth(sourceId) >= MAX_FORK_DEPTH) return 'max_depth';
   if (!source.messages || messageIndex < 0 || messageIndex >= source.messages.length) return undefined;
 
-  // Copy messages up to and including messageIndex
-  // But we need to map DOM message indices (user + assistant only) to the full messages array
-  // which also includes tool, tool_result, and usage messages
+  // Map DOM message index (user + assistant only) to full messages array index,
+  // which also includes tool, tool_result, and usage messages.
+  // Fork-up keeps [0, sliceEnd) — through the fork-point message + its trailing tool turns.
+  // Fork-down keeps [sliceStart, end) — from the fork-point message through end of session.
   let visibleCount = -1;
+  let sliceStart = -1;
   let sliceEnd = 0;
   for (let i = 0; i < source.messages.length; i++) {
     const role = source.messages[i].role;
     if (role === 'user' || role === 'assistant') {
       visibleCount++;
     }
-    if (visibleCount === messageIndex) {
-      // Include all messages up through the next visible message (or end)
-      // This captures tool/tool_result messages that belong to this assistant turn
+    if (visibleCount === messageIndex && (role === 'user' || role === 'assistant')) {
+      sliceStart = i;
       sliceEnd = i + 1;
-      // Continue to grab trailing tool/tool_result/usage for this turn
       for (let j = i + 1; j < source.messages.length; j++) {
         const r = source.messages[j].role;
         if (r === 'user' || r === 'assistant') break;
@@ -232,25 +233,36 @@ export function forkSession(
     }
   }
 
-  if (visibleCount < messageIndex) return undefined;
+  if (sliceStart < 0) return undefined;
+
+  const now = new Date().toISOString();
+  const isDown = direction === 'down';
+  const slicedMessages = isDown
+    ? source.messages.slice(sliceStart).map(m => ({ ...m }))
+    : source.messages.slice(0, sliceEnd).map(m => ({ ...m }));
 
   const forked: ChatSession = {
     id: crypto.randomUUID(),
     claudeSessionId: null,
-    name: `${source.name} (fork)`,
+    name: `${source.name} (fork ${isDown ? 'down' : 'up'})`,
     model: source.model,
     mode: source.mode,
     workingDir: overrideWorkingDir || source.workingDir,
-    created: new Date().toISOString(),
-    lastActivity: new Date().toISOString(),
+    // Fork-down inherits the parent's session start time so it groups with the
+    // original session in date-based listings, even though Claude itself starts
+    // amnesiac (no --resume) and only gets the kept content via a system-prompt
+    // primer on the first message.
+    created: isDown ? source.created : now,
+    lastActivity: now,
     lastMessage: source.lastMessage,
-    messageCount: sliceEnd,
-    messages: source.messages.slice(0, sliceEnd).map(m => ({ ...m })),
+    messageCount: slicedMessages.length,
+    messages: slicedMessages,
     forkedFrom: {
       sessionId: source.id,
       sessionName: source.name,
       messageIndex,
       parentWorkingDir: source.workingDir,
+      direction,
     },
   };
   sessions.push(forked);

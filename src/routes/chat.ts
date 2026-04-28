@@ -34,6 +34,15 @@ router.post('/:sessionId', (req: Request, res: Response) => {
   });
   res.flushHeaders();
 
+  // Capture the kept-from-parent messages BEFORE appending the user's first
+  // message — used to prime Claude's context on the first turn of a fork-down
+  // session, which doesn't --resume the parent's transcript.
+  const isFreshForkDown =
+    !session.claudeSessionId &&
+    session.forkedFrom?.direction === 'down' &&
+    session.messages.length > 0;
+  const priorContext = isFreshForkDown ? [...session.messages] : undefined;
+
   // Save user message server-side
   addMessage(sessionId, 'user', message);
 
@@ -68,9 +77,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
 
   let assistantText = '';
 
-  // For forked sessions on their first message, resume from parent's Claude session with --fork-session
+  // For forked sessions on their first message, resume from parent's Claude session with --fork-session.
+  // Fork-down is intentionally amnesiac: it skips the resume so Claude starts with no parent context.
   let forkFromClaudeId: string | undefined;
-  if (!session.claudeSessionId && session.forkedFrom) {
+  if (!session.claudeSessionId && session.forkedFrom && session.forkedFrom.direction !== 'down') {
     const parentSession = getSession(session.forkedFrom.sessionId);
     if (parentSession?.claudeSessionId) {
       forkFromClaudeId = parentSession.claudeSessionId;
@@ -86,6 +96,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     mode: session.mode || undefined,
     workingDir: session.workingDir || undefined,
     attachments: attachments || undefined,
+    priorContext,
     onEvent: (event) => {
       // Handle _update tool_use events (from assistant message with complete data)
       // Update persistence AND send to client so it can refresh tool details (input)

@@ -3557,20 +3557,60 @@ function ensureCopyButton(el) {
       menu.appendChild(speakItem);
     }
 
-    // Fork action (only if there's an active session and not at max fork depth)
+    // Fork action — parent item with hover flyout for "up"/"down" choice.
+    // Click on parent = fork up (default). Hover reveals explicit Fork up / Fork down.
     if (currentForkDepth < 2) {
+      const forkWrap = document.createElement('div');
+      forkWrap.className = 'msg-action-menu-item-wrap has-flyout';
+
+      const forkIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>';
+
       const forkItem = document.createElement('button');
-      forkItem.className = 'msg-action-menu-item';
-      forkItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg> Fork from here';
+      forkItem.className = 'msg-action-menu-item msg-action-menu-item-parent';
+      forkItem.innerHTML = `${forkIcon} Fork from here<span class="msg-action-flyout-caret">▸</span>`;
       forkItem.onclick = async (e) => {
         e.stopPropagation();
         closeAllMsgActionMenus();
         if (!currentSessionId) return;
         const msgIndex = getMsgIndex(el);
         if (msgIndex < 0) return;
-        await forkSession(currentSessionId, msgIndex);
+        await forkSession(currentSessionId, msgIndex, 'up');
       };
-      menu.appendChild(forkItem);
+      forkWrap.appendChild(forkItem);
+
+      const flyout = document.createElement('div');
+      flyout.className = 'msg-action-flyout';
+
+      const upItem = document.createElement('button');
+      upItem.className = 'msg-action-menu-item';
+      upItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Fork up';
+      upItem.title = 'Branch a new session containing this message and everything before it';
+      upItem.onclick = async (e) => {
+        e.stopPropagation();
+        closeAllMsgActionMenus();
+        if (!currentSessionId) return;
+        const msgIndex = getMsgIndex(el);
+        if (msgIndex < 0) return;
+        await forkSession(currentSessionId, msgIndex, 'up');
+      };
+      flyout.appendChild(upItem);
+
+      const downItem = document.createElement('button');
+      downItem.className = 'msg-action-menu-item';
+      downItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg> Fork down';
+      downItem.title = 'Start a fresh amnesiac session — no prior context, but grouped with this session by date';
+      downItem.onclick = async (e) => {
+        e.stopPropagation();
+        closeAllMsgActionMenus();
+        if (!currentSessionId) return;
+        const msgIndex = getMsgIndex(el);
+        if (msgIndex < 0) return;
+        await forkSession(currentSessionId, msgIndex, 'down');
+      };
+      flyout.appendChild(downItem);
+
+      forkWrap.appendChild(flyout);
+      menu.appendChild(forkWrap);
     }
 
     btn.onclick = (e) => {
@@ -3608,12 +3648,12 @@ function getMsgIndex(el) {
   return -1;
 }
 
-async function forkSession(sessionId, msgIndex) {
+async function forkSession(sessionId, msgIndex, direction = 'up') {
   try {
     const res = await fetch(`/api/sessions/${sessionId}/fork`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageIndex: msgIndex }),
+      body: JSON.stringify({ messageIndex: msgIndex, direction }),
     });
     if (!res.ok) {
       const err = await res.json();

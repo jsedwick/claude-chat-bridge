@@ -468,9 +468,13 @@ router.put('/:id/handoff', (req: Request, res: Response) => {
 });
 
 router.post('/:id/fork', (req: Request, res: Response) => {
-  const { messageIndex, workingDir } = req.body || {};
+  const { messageIndex, workingDir, direction } = req.body || {};
   if (typeof messageIndex !== 'number' || messageIndex < 0) {
     res.status(400).json({ error: 'messageIndex is required and must be a non-negative number' });
+    return;
+  }
+  if (direction !== undefined && direction !== 'up' && direction !== 'down') {
+    res.status(400).json({ error: "direction must be 'up' or 'down'" });
     return;
   }
   if (workingDir !== undefined && workingDir !== null) {
@@ -493,6 +497,7 @@ router.post('/:id/fork', (req: Request, res: Response) => {
     req.params.id as string,
     messageIndex,
     typeof workingDir === 'string' ? workingDir : undefined,
+    direction === 'down' ? 'down' : 'up',
   );
   if (forked === 'max_depth') {
     res.status(400).json({ error: 'Maximum fork depth reached (5 levels)' });
