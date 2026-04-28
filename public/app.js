@@ -5173,6 +5173,13 @@ markedRenderer.link = function({ href, text }) {
   return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
 };
 
+// Escape raw HTML tokens. KB commit pages embed verbatim commit messages in
+// H1/Summary; bare <pre>/<code> in that text would otherwise be parsed as a
+// real block-level HTML opener and swallow the rest of the document.
+markedRenderer.html = function({ text }) {
+  return escapeHtml(text);
+};
+
 marked.use({
   renderer: markedRenderer,
   breaks: true,
