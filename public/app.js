@@ -82,6 +82,9 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
     if (isStale()) return;
     const messages = await res.json();
     if (isStale()) return;
+    // Reset accumulator for this session — replay below will rebuild it from
+    // stored usage messages, so revisiting a session doesn't double-count.
+    sessionUsageTotals.delete(sessionId);
     let renderLimit = messages.length;
     if (upToLastUser) {
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -109,7 +112,7 @@ async function restoreMessages(sessionId, sessionMeta, opts = {}) {
           addToolOutput(result.tool_use_id, result.content);
         } catch {}
       } else if (msg.role === 'usage') {
-        addUsageInfo(msg.content);
+        addUsageInfo(msg.content, sessionId);
       }
     }
     // Show fork-point divider and mark the fork-point message if this is a forked session
@@ -4117,6 +4120,15 @@ function renderCloseSessionStructured(data) {
         parts.push(`<div class="struct-result-card"><div class="struct-snippets">${escapeHtml(w)}</div></div>`);
       }
     }
+    // Session token totals — placeholder element keyed by sessionId so later
+    // `done` events (including the close turn's own usage) can refresh it via
+    // refreshCloseCardTokenSummaries().
+    if (currentSessionId) {
+      const totals = sessionUsageTotals.get(currentSessionId);
+      const summary = formatSessionTokenSummary(totals);
+      const text = summary ? `Session totals: ${summary}` : '';
+      parts.push(`<div class="struct-meta struct-totals" data-totals-for="${escapeHtml(currentSessionId)}">${escapeHtml(text)}</div>`);
+    }
   }
   return parts.join('\n');
 }
@@ -4202,9 +4214,53 @@ function addThinkingIndicator() {
   return el;
 }
 
-function addUsageInfo(data) {
+// Per-session running token totals. Built up by addUsageInfo() on every `done`
+// event (live or replayed via restoreMessages). Surfaced in the close-session
+// Phase 2 card; refreshed in-place when later turns add to the total.
+const sessionUsageTotals = new Map();
+
+function accumulateSessionUsage(sessionId, info) {
+  if (!sessionId || !info) return;
+  let totals = sessionUsageTotals.get(sessionId);
+  if (!totals) {
+    totals = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0, turns: 0 };
+    sessionUsageTotals.set(sessionId, totals);
+  }
+  totals.input += info.input_tokens || 0;
+  totals.output += info.output_tokens || 0;
+  totals.cacheCreation += info.cache_creation_input_tokens || 0;
+  totals.cacheRead += info.cache_read_input_tokens || 0;
+  totals.costUsd += info.total_cost_usd || 0;
+  totals.turns += 1;
+}
+
+function formatSessionTokenSummary(totals) {
+  if (!totals || totals.turns === 0) return '';
+  const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+  const fresh = totals.input + totals.cacheCreation;
+  const cache = totals.cacheRead;
+  const totalIn = fresh + cache;
+  const inStr = cache > 0
+    ? `${fmt(totalIn)} in (${fmt(fresh)} fresh + ${fmt(cache)} cache hit)`
+    : `${fmt(totalIn)} in`;
+  let summary = `${inStr} · ${fmt(totals.output)} out`;
+  if (totals.costUsd > 0) summary += ` · ${totals.costUsd.toFixed(2)}`;
+  return summary;
+}
+
+function refreshCloseCardTokenSummaries(sessionId) {
+  if (!sessionId) return;
+  const totals = sessionUsageTotals.get(sessionId);
+  const summary = formatSessionTokenSummary(totals);
+  if (!summary) return;
+  const targets = messagesEl.querySelectorAll(`.struct-totals[data-totals-for="${CSS.escape(sessionId)}"]`);
+  targets.forEach((el) => { el.textContent = `Session totals: ${summary}`; });
+}
+
+function addUsageInfo(data, sessionId = currentSessionId) {
   try {
     const info = JSON.parse(data);
+    accumulateSessionUsage(sessionId, info);
     const totalInput = (info.input_tokens || 0)
       + (info.cache_creation_input_tokens || 0)
       + (info.cache_read_input_tokens || 0);
@@ -4218,6 +4274,7 @@ function addUsageInfo(data) {
       el.textContent = parts.join(' \u00b7 ');
       messagesEl.appendChild(el);
     }
+    refreshCloseCardTokenSummaries(sessionId);
   } catch {}
 }
 
