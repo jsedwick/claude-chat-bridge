@@ -6634,6 +6634,9 @@ let kbCurrentFile = null;     // { path, name, content }
 let kbIsEditing = false;
 let kbShowingDiff = false;
 let kbEditor = null;          // Toast UI Editor instance
+let kbPlainTextarea = null;   // Fallback <textarea> for files with raw HTML — Toast UI corrupts those
+let kbUsingPlainTextarea = false;
+let kbEditOriginalBodyLen = 0; // length of editContent at edit-open, for autosave shrink-guard
 let kbFrontmatter = '';       // Stashed frontmatter (stripped before editor, restored on save)
 let kbHistory = [];           // Navigation history stack for back button
 let kbEntryPoint = null;      // { sessionId } — session user jumped from into KB, consumed by Back when kbHistory is empty
@@ -8739,6 +8742,30 @@ async function toggleKbEdit() {
   }
   showFrontmatterEditor(fmYaml);
 
+  kbEditOriginalBodyLen = editContent.length;
+
+  const editorEl = document.getElementById('kb-editor');
+  editorEl.innerHTML = '';
+
+  // Toast UI Editor (both WYSIWYG and markdown modes) corrupts files containing
+  // raw HTML tokens — ProseMirror's parse → serialize round-trip drops content,
+  // and the autosave tick writes back the stripped result. For those files, use
+  // a plain <textarea>: no parser, no round-trip, no data loss.
+  const rawHtmlProbe = /<(pre|code|img|script|iframe|div|span|b|i|br|hr)[\s>/]/i;
+  kbUsingPlainTextarea = rawHtmlProbe.test(editContent);
+
+  if (kbUsingPlainTextarea) {
+    kbPlainTextarea = document.createElement('textarea');
+    kbPlainTextarea.className = 'kb-plain-textarea';
+    kbPlainTextarea.value = editContent;
+    kbPlainTextarea.spellcheck = false;
+    kbPlainTextarea.style.cssText = 'width:100%;height:calc(100vh - 160px);box-sizing:border-box;font-family:var(--font-mono);font-size:13px;line-height:1.5;padding:12px;border:none;outline:none;resize:none;background:var(--bg-input);color:var(--text-primary);white-space:pre-wrap;overflow:auto;';
+    editorEl.appendChild(kbPlainTextarea);
+    kbPlainTextarea.addEventListener('input', scheduleKbAutosave);
+    kbPlainTextarea.focus();
+    return;
+  }
+
   // Fetch templates if not cached, then build toolbar
   if (kbTemplatesCache === null) await fetchKbTemplates();
 
@@ -8749,8 +8776,6 @@ async function toggleKbEdit() {
     command: 'insertTemplate',
   }] : [];
 
-  const editorEl = document.getElementById('kb-editor');
-  editorEl.innerHTML = '';
   kbEditor = new toastui.Editor({
     el: editorEl,
     initialEditType: 'wysiwyg',
@@ -8806,14 +8831,17 @@ function cancelKbEdit() {
   clearTimeout(kbAutosaveTimer);
   kbIsEditing = false;
   kbFrontmatter = '';
+  kbEditOriginalBodyLen = 0;
   hideFrontmatterEditor();
 
-  // Destroy Toast UI Editor instance
+  // Tear down whichever editor surface is active
   if (kbEditor) {
     kbEditor.destroy();
     kbEditor = null;
-    document.getElementById('kb-editor').innerHTML = '';
   }
+  kbPlainTextarea = null;
+  kbUsingPlainTextarea = false;
+  document.getElementById('kb-editor').innerHTML = '';
 
   document.getElementById('kb-rendered').style.display = '';
   document.getElementById('kb-diff').style.display = 'none';
@@ -8965,9 +8993,24 @@ function showKbSaveStatus(text, type = 'info') {
 }
 
 async function kbAutosave() {
-  if (!kbEditor || !kbCurrentFile || !kbIsEditing) return;
-  const rawContent = kbEditor.getMarkdown();
-  const editorContent = cleanToastMarkdown(rawContent);
+  if (!kbCurrentFile || !kbIsEditing) return;
+  let editorContent;
+  if (kbUsingPlainTextarea) {
+    if (!kbPlainTextarea) return;
+    editorContent = kbPlainTextarea.value;
+  } else {
+    if (!kbEditor) return;
+    editorContent = cleanToastMarkdown(kbEditor.getMarkdown());
+  }
+  // Catastrophic-shrink guard: refuse to save when a non-trivial body was
+  // loaded but the editor now reports near-empty content. Targets the actual
+  // failure mode (Toast UI parse failure → empty editor → autosave wipe).
+  // Tight enough that it never fires on legitimate large deletions: the user
+  // would have to reduce a 500+ char doc to under 50 trimmed chars.
+  if (kbEditOriginalBodyLen > 500 && editorContent.trim().length < 50) {
+    showKbSaveStatus('Save aborted: editor reports empty content', 'error');
+    return;
+  }
   const content = getCurrentFrontmatter() + editorContent;
   // Skip save if content hasn't actually changed
   if (content === kbCurrentFile.content) return;
@@ -8998,8 +9041,16 @@ function scheduleKbAutosave() {
 
 async function saveKbFile() {
   clearTimeout(kbAutosaveTimer);
-  const rawContent = kbEditor ? kbEditor.getMarkdown() : '';
-  const editorContent = cleanToastMarkdown(rawContent);
+  let editorContent;
+  if (kbUsingPlainTextarea) {
+    editorContent = kbPlainTextarea ? kbPlainTextarea.value : '';
+  } else {
+    editorContent = kbEditor ? cleanToastMarkdown(kbEditor.getMarkdown()) : '';
+  }
+  if (kbEditOriginalBodyLen > 500 && editorContent.trim().length < 50) {
+    showKbSaveStatus('Save aborted: editor reports empty content', 'error');
+    return;
+  }
   const content = getCurrentFrontmatter() + editorContent;
   try {
     const res = await fetchWithRetry('/api/vault/kb/file', {

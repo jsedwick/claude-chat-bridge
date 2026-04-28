@@ -507,7 +507,7 @@ router.get('/kb/diff', (req: Request, res: Response) => {
 
 // Write to an existing markdown file
 router.put('/kb/file', (req: Request, res: Response) => {
-  const { path: filePath, content } = req.body;
+  const { path: filePath, content, force } = req.body;
   if (!filePath || typeof content !== 'string') {
     res.status(400).json({ error: 'Path and content required' });
     return;
@@ -522,6 +522,33 @@ router.put('/kb/file', (req: Request, res: Response) => {
   if (!fs.existsSync(resolved)) {
     res.status(404).json({ error: 'File does not exist' });
     return;
+  }
+
+  // Catastrophic-shrink guard: refuse to overwrite a substantial file with a
+  // near-empty payload. Defends against editor corruption (Toast UI parse
+  // failures, autosave wipes) at the trust boundary, regardless of which
+  // client sent the write. Bypass with `force: true` in the body for
+  // legitimate large deletions.
+  if (force !== true) {
+    try {
+      const currentSize = fs.statSync(resolved).size;
+      if (
+        currentSize > 500 &&
+        content.length < currentSize * 0.5 &&
+        currentSize - content.length > 500
+      ) {
+        res.status(409).json({
+          error: 'Refusing to overwrite substantial file with near-empty payload',
+          code: 'SHRINK_REJECTED',
+          currentSize,
+          incomingSize: content.length,
+          hint: 'If this shrink is intentional, retry with { force: true } in the request body',
+        });
+        return;
+      }
+    } catch {
+      // stat failed — let writeFileSync surface the underlying error below
+    }
   }
 
   try {
