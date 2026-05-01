@@ -183,7 +183,7 @@ export function getAppSessionByClaudeId(claudeSessionId: string): string | undef
 }
 
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, forkFromSessionId, appSessionId, message, model, mode, workingDir, attachments, priorContext, onEvent, onClose } = options;
+  const { sessionId, forkFromSessionId, appSessionId, message, model, effort, mode, workingDir, attachments, priorContext, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
@@ -238,6 +238,10 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   if (model) {
     args.push('--model', model);
+  }
+
+  if (effort) {
+    args.push('--effort', effort);
   }
 
   const systemPromptAdditions: string[] = [];

@@ -505,6 +505,65 @@ router.get('/kb/diff', (req: Request, res: Response) => {
   }
 });
 
+// Revert a file to its content at a specific commit
+router.post('/kb/revert', (req: Request, res: Response) => {
+  const { path: filePath, commitHash } = req.body;
+  if (!filePath || !commitHash) {
+    res.status(400).json({ error: 'Path and commitHash required' });
+    return;
+  }
+  if (!/^[a-f0-9]{6,40}$/.test(commitHash)) {
+    res.status(400).json({ error: 'Invalid commit hash' });
+    return;
+  }
+
+  const resolved = validateKbPath(filePath);
+  if (!resolved || !resolved.endsWith('.md')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+  if (!fs.existsSync(resolved)) {
+    res.status(404).json({ error: 'File does not exist' });
+    return;
+  }
+
+  let repoDir: string;
+  try {
+    repoDir = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: path.dirname(resolved),
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+  } catch {
+    res.status(400).json({ error: 'Not a git repository' });
+    return;
+  }
+
+  const relativePath = path.relative(repoDir, resolved);
+
+  let content: string;
+  try {
+    content = execFileSync('git', ['show', `${commitHash}:${relativePath}`], {
+      cwd: repoDir,
+      encoding: 'utf-8',
+      timeout: 10000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+  } catch {
+    res.status(404).json({ error: 'File not found in that commit' });
+    return;
+  }
+
+  try {
+    fs.writeFileSync(resolved, content, 'utf-8');
+    wikiLinkCache = null;
+    linkCandidateCache.clear();
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Write to an existing markdown file
 router.put('/kb/file', (req: Request, res: Response) => {
   const { path: filePath, content, force } = req.body;

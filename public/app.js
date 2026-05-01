@@ -152,7 +152,10 @@ const sidebar = document.getElementById('sidebar');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
 const sessionListEl = document.getElementById('session-list');
 
-const modelSelect = document.getElementById('model-select');
+const modelEffortPicker = document.getElementById('model-effort-picker');
+const modelEffortBtn = document.getElementById('model-effort-btn');
+const modelEffortBtnLabel = document.getElementById('model-effort-btn-label');
+const modelEffortMenu = document.getElementById('model-effort-menu');
 const sidebarDirPicker = document.getElementById('sidebar-dir-picker');
 const sidebarDirBtn = document.querySelector('.btn-sidebar-dir');
 const newChatBtn = document.getElementById('new-chat-btn');
@@ -165,25 +168,165 @@ function getAppTitle() {
 chatTitle.textContent = getAppTitle();
 document.title = getAppTitle();
 
-// Restore saved model
-const savedModel = localStorage.getItem('chat-bridge-model') || 'opus';
-modelSelect.value = savedModel;
+// Model + effort selection state. `selectedEffort === ''` means "use Claude's
+// built-in default" — backend omits --effort entirely so upstream changes to
+// the default propagate without a client release.
+const MODEL_OPTIONS = [
+  { value: 'opus', label: 'Opus' },
+  { value: 'sonnet', label: 'Sonnet' },
+];
+const EFFORT_OPTIONS = [
+  { value: '', label: 'Default' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'xHigh' },
+  { value: 'max', label: 'Max' },
+];
+const VALID_EFFORTS = new Set(EFFORT_OPTIONS.map(o => o.value).filter(Boolean));
 
-function saveModel(value) {
-  localStorage.setItem('chat-bridge-model', value);
-  // Persist to current session
+let selectedModel = (() => {
+  const saved = localStorage.getItem('chat-bridge-model');
+  return MODEL_OPTIONS.some(m => m.value === saved) ? saved : 'opus';
+})();
+let selectedEffort = (() => {
+  const saved = localStorage.getItem('chat-bridge-effort');
+  return VALID_EFFORTS.has(saved) ? saved : '';
+})();
+
+function effortLabelFor(value) {
+  const opt = EFFORT_OPTIONS.find(o => o.value === value);
+  return opt ? opt.label : 'Default';
+}
+
+function modelLabelFor(value) {
+  const opt = MODEL_OPTIONS.find(m => m.value === value);
+  return opt ? opt.label : value;
+}
+
+function renderModelEffortButton() {
+  const modelLabel = modelLabelFor(selectedModel);
+  if (selectedEffort) {
+    modelEffortBtnLabel.innerHTML = `${escapeHtml(modelLabel)}<span class="model-effort-btn-effort">${escapeHtml(effortLabelFor(selectedEffort))}</span>`;
+  } else {
+    modelEffortBtnLabel.textContent = modelLabel;
+  }
+}
+
+function renderModelEffortMenu() {
+  const html = MODEL_OPTIONS.map(model => {
+    const isCurrentModel = model.value === selectedModel;
+    const metaLabel = isCurrentModel
+      ? (selectedEffort ? effortLabelFor(selectedEffort) : 'Default')
+      : '';
+    const efforts = EFFORT_OPTIONS.map(eff => {
+      const isCurrent = isCurrentModel && eff.value === selectedEffort;
+      return `<button type="button" class="model-effort-effort" role="menuitemradio"
+                aria-current="${isCurrent}"
+                data-model="${model.value}" data-effort="${eff.value}">${escapeHtml(eff.label)}</button>`;
+    }).join('');
+    return `
+      <div class="model-effort-row" role="menuitem" tabindex="0"
+           data-model="${model.value}"
+           aria-current="${isCurrentModel}">
+        <span class="model-effort-row-label">${escapeHtml(model.label)}</span>
+        ${metaLabel ? `<span class="model-effort-row-meta">${escapeHtml(metaLabel)}</span>` : ''}
+        <svg class="model-effort-row-arrow" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+        <div class="model-effort-flyout" role="menu">${efforts}</div>
+      </div>`;
+  }).join('');
+  modelEffortMenu.innerHTML = html;
+}
+
+function openModelEffortMenu() {
+  renderModelEffortMenu();
+  modelEffortMenu.hidden = false;
+  modelEffortBtn.setAttribute('aria-expanded', 'true');
+  document.addEventListener('click', onModelEffortDocClick, true);
+  document.addEventListener('keydown', onModelEffortKeydown, true);
+}
+
+function closeModelEffortMenu() {
+  modelEffortMenu.hidden = true;
+  modelEffortBtn.setAttribute('aria-expanded', 'false');
+  modelEffortMenu.querySelectorAll('.model-effort-row.is-open').forEach(r => r.classList.remove('is-open'));
+  document.removeEventListener('click', onModelEffortDocClick, true);
+  document.removeEventListener('keydown', onModelEffortKeydown, true);
+}
+
+function onModelEffortDocClick(e) {
+  if (!modelEffortPicker.contains(e.target)) closeModelEffortMenu();
+}
+
+function onModelEffortKeydown(e) {
+  if (e.key === 'Escape') {
+    closeModelEffortMenu();
+    modelEffortBtn.focus();
+  }
+}
+
+function toggleModelEffortMenu(e) {
+  if (e) e.stopPropagation();
+  if (modelEffortMenu.hidden) openModelEffortMenu();
+  else closeModelEffortMenu();
+}
+
+modelEffortMenu.addEventListener('click', (e) => {
+  const effortBtn = e.target.closest('.model-effort-effort');
+  if (effortBtn) {
+    e.stopPropagation();
+    const model = effortBtn.dataset.model;
+    const effort = effortBtn.dataset.effort || '';
+    commitModelEffort(model, effort);
+    closeModelEffortMenu();
+    return;
+  }
+  // Click on a model row toggles its flyout (touch / click-driven UX)
+  const row = e.target.closest('.model-effort-row');
+  if (row) {
+    e.stopPropagation();
+    const wasOpen = row.classList.contains('is-open');
+    modelEffortMenu.querySelectorAll('.model-effort-row.is-open').forEach(r => r.classList.remove('is-open'));
+    if (!wasOpen) row.classList.add('is-open');
+  }
+});
+
+function commitModelEffort(model, effort) {
+  if (!MODEL_OPTIONS.some(m => m.value === model)) return;
+  const normalizedEffort = VALID_EFFORTS.has(effort) ? effort : '';
+  selectedModel = model;
+  selectedEffort = normalizedEffort;
+  localStorage.setItem('chat-bridge-model', selectedModel);
+  if (selectedEffort) {
+    localStorage.setItem('chat-bridge-effort', selectedEffort);
+  } else {
+    localStorage.removeItem('chat-bridge-effort');
+  }
+  renderModelEffortButton();
   if (currentSessionId) {
     fetchWithRetry(`/api/sessions/${currentSessionId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: value }),
+      body: JSON.stringify({ model: selectedModel, effort: selectedEffort || null }),
     }).catch(() => {});
   }
 }
 
-function getSelectedModel() {
-  return modelSelect.value;
+// Backward-compat shim — preserved for any external callers; new code should
+// call commitModelEffort() directly.
+function saveModel(value) {
+  commitModelEffort(value, selectedEffort);
 }
+
+function getSelectedModel() {
+  return selectedModel;
+}
+
+function getSelectedEffort() {
+  return selectedEffort;
+}
+
+renderModelEffortButton();
 
 // Mode management — mode is per-client state persisted in localStorage. The
 // bridge no longer maintains a server-wide mode; every mode-aware request
@@ -2984,7 +3127,7 @@ async function createNewSession() {
     const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel(), mode: currentMode }),
+      body: JSON.stringify({ workingDir: selectedNewChatDir, model: getSelectedModel(), effort: getSelectedEffort() || null, mode: currentMode }),
     });
     const session = await res.json();
 
@@ -3046,11 +3189,20 @@ async function switchSession(id) {
   currentClosedAt = session.closedAt || '';
   // Hide details panel when switching sessions
   hideSessionDetails();
-  // Restore session-specific model selection
-  if (session.model) {
-    modelSelect.value = session.model;
-    localStorage.setItem('chat-bridge-model', session.model);
+  // Restore session-specific model + effort selection
+  if (session.model && MODEL_OPTIONS.some(m => m.value === session.model)) {
+    selectedModel = session.model;
+    localStorage.setItem('chat-bridge-model', selectedModel);
   }
+  if (session.effort && VALID_EFFORTS.has(session.effort)) {
+    selectedEffort = session.effort;
+    localStorage.setItem('chat-bridge-effort', selectedEffort);
+  } else if (session.effort === undefined || session.effort === null) {
+    // Older sessions without an effort field — leave the user's last picked
+    // effort intact rather than clobbering it with whatever this session was
+    // last sent at. (PATCHing back is handled on commit.)
+  }
+  renderModelEffortButton();
   welcomeEl.style.display = 'none';
   inputArea.style.display = 'block';
   document.querySelector('.dir-picker-wrapper').style.display = '';
@@ -3247,6 +3399,7 @@ async function drainQueuedMessage(sessionId, text, attachments) {
       body: JSON.stringify({
         message: text || 'Please analyze the attached image(s).',
         model: getSelectedModel(),
+        effort: getSelectedEffort() || null,
         attachments,
       }),
     });
@@ -5030,6 +5183,7 @@ async function sendMessage(skipRender = false) {
       body: JSON.stringify({
         message: text || 'Please analyze the attached image(s).',
         model: getSelectedModel(),
+        effort: getSelectedEffort() || null,
         attachments: messageAttachments,
       }),
     });
@@ -7949,6 +8103,8 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     document.getElementById('kb-welcome').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
     document.getElementById('kb-diff').style.display = 'none';
+    document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
+    document.getElementById('kb-revert-wrapper').style.display = 'none';
     document.getElementById('kb-diff-btn').style.display = '';
     document.getElementById('kb-edit-btn').style.display = '';
     document.getElementById('kb-editor').style.display = 'none';
@@ -8354,8 +8510,18 @@ document.getElementById('kb-rendered')?.addEventListener('click', async (e) => {
   }
 });
 
+// Stashes for continue-session / start-from-topic / action-bar visibility
+// while diff view temporarily replaces the right-hand action button.
+let kbDiffPriorContinueDisplay = '';
+let kbDiffPriorTopicDisplay = '';
+let kbDiffPriorActionBarDisplay = '';
+
 async function toggleKbDiff() {
   if (!kbCurrentFile) return;
+  const continueWrapper = document.getElementById('kb-continue-session-wrapper');
+  const topicWrapper = document.getElementById('kb-start-from-topic-wrapper');
+  const revertWrapper = document.getElementById('kb-revert-wrapper');
+  const actionBar = document.getElementById('kb-action-bar');
 
   // If already showing diff, switch back to rendered view
   if (kbShowingDiff) {
@@ -8363,6 +8529,10 @@ async function toggleKbDiff() {
     document.getElementById('kb-diff').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
     document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
+    revertWrapper.style.display = 'none';
+    continueWrapper.style.display = kbDiffPriorContinueDisplay;
+    topicWrapper.style.display = kbDiffPriorTopicDisplay;
+    actionBar.style.display = kbDiffPriorActionBarDisplay;
     return;
   }
 
@@ -8372,6 +8542,13 @@ async function toggleKbDiff() {
   document.getElementById('kb-diff-btn').classList.add('kb-action-btn-active');
   document.getElementById('kb-diff').innerHTML = '<div class="kb-diff-loading">Loading diff...</div>';
 
+  // Stash, then hide the contextual right-hand buttons while diff is active
+  kbDiffPriorContinueDisplay = continueWrapper.style.display;
+  kbDiffPriorTopicDisplay = topicWrapper.style.display;
+  kbDiffPriorActionBarDisplay = actionBar.style.display;
+  continueWrapper.style.display = 'none';
+  topicWrapper.style.display = 'none';
+
   try {
     const res = await fetchWithRetry(`/api/vault/kb/diff?path=${encodeURIComponent(kbCurrentFile.path)}`);
     const data = await res.json();
@@ -8379,14 +8556,57 @@ async function toggleKbDiff() {
     if (!data.diff) {
       document.getElementById('kb-diff').innerHTML =
         `<div class="kb-diff-empty">${escapeHtml(data.message || 'No diff available')}</div>`;
+      revertWrapper.style.display = 'none';
       return;
     }
 
     document.getElementById('kb-diff').innerHTML = renderDiff(data.diff);
+
+    const commitMatch = data.diff.match(/^commit ([a-f0-9]+)/);
+    if (commitMatch) {
+      const revertBtn = document.getElementById('kb-revert-btn');
+      revertBtn.dataset.commitHash = commitMatch[1];
+      revertWrapper.style.display = '';
+      actionBar.style.display = '';
+    } else {
+      revertWrapper.style.display = 'none';
+    }
   } catch (err) {
     console.error('Failed to load diff:', err);
     document.getElementById('kb-diff').innerHTML =
       '<div class="kb-diff-empty">Failed to load diff</div>';
+    revertWrapper.style.display = 'none';
+  }
+}
+
+async function revertKbFile() {
+  if (!kbCurrentFile) return;
+  const revertBtn = document.getElementById('kb-revert-btn');
+  const commitHash = revertBtn.dataset.commitHash;
+  if (!commitHash) {
+    alert('No commit available to revert to.');
+    return;
+  }
+  const short = commitHash.slice(0, 7);
+  if (!confirm(`Revert "${kbCurrentFile.name}" to commit ${short}? Any unsaved changes will be lost.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetchWithRetry('/api/vault/kb/revert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: kbCurrentFile.path, commitHash }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      alert(`Revert failed: ${data.error || res.statusText}`);
+      return;
+    }
+    await loadKbFile(kbCurrentFile.path, { skipHistory: true });
+  } catch (err) {
+    console.error('Failed to revert:', err);
+    alert('Failed to revert file.');
   }
 }
 

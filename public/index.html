@@ -146,10 +146,15 @@
           </button>
         </div>
       </div>
-      <select id="model-select" class="model-select" onchange="saveModel(this.value)">
-        <option value="opus">Opus</option>
-        <option value="sonnet">Sonnet</option>
-      </select>
+      <div class="model-effort-picker" id="model-effort-picker">
+        <button id="model-effort-btn" class="model-effort-btn" type="button"
+                aria-haspopup="menu" aria-expanded="false"
+                onclick="toggleModelEffortMenu(event)">
+          <span id="model-effort-btn-label">Opus</span>
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div id="model-effort-menu" class="model-effort-menu" role="menu" hidden></div>
+      </div>
     </header>
 
     <!-- Session details panel -->
@@ -508,6 +513,15 @@
                 <polygon points="5 3 19 12 5 21 5 3"/>
               </svg>
               <span>Start Session from Topic</span>
+            </button>
+          </div>
+          <div id="kb-revert-wrapper" style="display:none">
+            <button id="kb-revert-btn" class="kb-continue-session-btn" onclick="revertKbFile()" aria-label="Revert">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="1 4 1 10 7 10"/>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+              </svg>
+              <span>Revert</span>
             </button>
           </div>
         </div>

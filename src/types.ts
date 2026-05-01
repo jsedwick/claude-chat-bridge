@@ -4,11 +4,20 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+export function isEffortLevel(v: unknown): v is EffortLevel {
+  return typeof v === 'string' && (EFFORT_LEVELS as readonly string[]).includes(v);
+}
+
 export interface ChatSession {
   id: string;
   claudeSessionId: string | null;
   name: string;
   model?: string;
+  effort?: EffortLevel;
   mode: 'work' | 'personal';
   workingDir?: string;
   created: string;
@@ -45,6 +54,7 @@ export interface ClaudeRunnerOptions {
   appSessionId: string;
   message: string;
   model?: string;
+  effort?: EffortLevel;
   mode?: 'work' | 'personal';
   workingDir?: string;
   attachments?: Array<{ filename: string; path: string }>;

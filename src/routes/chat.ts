@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStreamBuffer, subscribeWithBuffer } from '../services/claude-runner';
 import { getSession, updateSession, addMessage, updateToolMessage } from '../services/session-store';
+import { isEffortLevel } from '../types';
 
 const router = Router();
 
 router.post('/:sessionId', (req: Request, res: Response) => {
   const sessionId = req.params.sessionId as string;
-  const { message, model, attachments } = req.body;
+  const { message, model, effort, attachments } = req.body;
 
   if (!message || typeof message !== 'string') {
     res.status(400).json({ error: 'Message is required' });
@@ -51,6 +52,19 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     updateSession(sessionId, { model });
   }
 
+  // Per-message effort: persist last selection so reloads/restores see the same value.
+  // Sentinel "" / null clears any prior effort (revert to Claude's built-in default).
+  const effortChanged =
+    effort === null || effort === ''
+      ? session.effort !== undefined
+      : isEffortLevel(effort) && session.effort !== effort;
+  if (effortChanged) {
+    updateSession(sessionId, { effort: isEffortLevel(effort) ? effort : undefined });
+  }
+  const resolvedEffort = isEffortLevel(effort)
+    ? effort
+    : (effort === null || effort === '' ? undefined : session.effort);
+
   let clientDisconnected = false;
 
   let sseEventCount = 0;
@@ -93,6 +107,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     appSessionId: sessionId,
     message: message,
     model: model || undefined,
+    effort: resolvedEffort,
     mode: session.mode || undefined,
     workingDir: session.workingDir || undefined,
     attachments: attachments || undefined,

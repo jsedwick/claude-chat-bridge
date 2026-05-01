@@ -1,7 +1,7 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import { config, Mode } from '../config';
-import { ChatSession, ChatMessage } from '../types';
+import { ChatSession, ChatMessage, EffortLevel } from '../types';
 
 let sessions: ChatSession[] = [];
 
@@ -44,12 +44,14 @@ export function createSession(opts: {
   name?: string;
   workingDir?: string;
   model?: string;
+  effort?: EffortLevel;
 }): ChatSession {
   const session: ChatSession = {
     id: crypto.randomUUID(),
     claudeSessionId: null,
     name: opts.name || `Chat ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
     model: opts.model || undefined,
+    effort: opts.effort || undefined,
     mode: opts.mode,
     workingDir: opts.workingDir || undefined,
     created: new Date().toISOString(),
@@ -246,6 +248,7 @@ export function forkSession(
     claudeSessionId: null,
     name: `${source.name} (fork ${isDown ? 'down' : 'up'})`,
     model: source.model,
+    effort: source.effort,
     mode: source.mode,
     workingDir: overrideWorkingDir || source.workingDir,
     // Fork-down inherits the parent's session start time so it groups with the

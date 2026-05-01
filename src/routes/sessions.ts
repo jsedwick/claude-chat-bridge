@@ -6,6 +6,7 @@ import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSess
 import { config, getAllowedPaths, getActiveModeVaults, parseMode } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
+import { isEffortLevel } from '../types';
 
 const router = Router();
 
@@ -34,12 +35,16 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 router.post('/', (req: Request, res: Response) => {
-  const { name, workingDir, model, mode } = req.body || {};
+  const { name, workingDir, model, effort, mode } = req.body || {};
   // Mode must be explicit — the bridge no longer maintains a server-wide
   // "current mode," so a client that doesn't send one is a bug, not a default.
   const parsedMode = parseMode(mode);
   if (!parsedMode) {
     res.status(400).json({ error: 'mode required: "work" or "personal"' });
+    return;
+  }
+  if (effort !== undefined && effort !== null && effort !== '' && !isEffortLevel(effort)) {
+    res.status(400).json({ error: 'effort must be one of: low, medium, high, xhigh, max' });
     return;
   }
   // Validate workingDir — must be an existing directory
@@ -60,6 +65,7 @@ router.post('/', (req: Request, res: Response) => {
     name,
     workingDir: workingDir || undefined,
     model: model || undefined,
+    effort: isEffortLevel(effort) ? effort : undefined,
   });
   res.status(201).json(session);
 });
@@ -576,10 +582,20 @@ router.get('/:id/messages', (req: Request, res: Response) => {
 });
 
 router.patch('/:id', (req: Request, res: Response) => {
-  const { name, workingDir, model } = req.body || {};
+  const { name, workingDir, model, effort } = req.body || {};
   const updates: Record<string, unknown> = {};
   if (name && typeof name === 'string') updates.name = name.trim();
   if (model && typeof model === 'string') updates.model = model;
+  if (effort !== undefined) {
+    if (effort === null || effort === '') {
+      updates.effort = undefined;
+    } else if (isEffortLevel(effort)) {
+      updates.effort = effort;
+    } else {
+      res.status(400).json({ error: 'effort must be one of: low, medium, high, xhigh, max' });
+      return;
+    }
+  }
   if (workingDir !== undefined) {
     if (workingDir) {
       try {
