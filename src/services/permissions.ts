@@ -23,17 +23,14 @@ interface PendingPermission {
 // ---------------------------------------------------------------------------
 
 // Tools that are never allowed in bridge context — auto-deny without prompting.
-// These are scheduling/remote-control tools designed for interactive CLI sessions.
-// In -p mode the process exits before any timer fires, but --resume now resurrects
-// unexpired scheduled tasks (v2.1.110), so we block creation entirely to prevent
-// zombie tasks that get resurrected on every message but never execute.
-const NEVER_ALLOW_TOOLS = new Set([
-  'ScheduleWakeup',   // delayed re-execution (min 60s) — process exits before it fires
-  'CronCreate',       // persistent cron triggers — no daemon to run them in -p mode
-  'CronDelete',       // no crons to delete, but block for consistency
-  'CronList',         // harmless read, but signals intent to use crons
-  'RemoteTrigger',    // remote agent execution — out of scope for bridge
-]);
+// Currently empty: scheduling/remote-control tools (ScheduleWakeup, CronCreate,
+// CronDelete, CronList, RemoteTrigger) used to be hardcoded denies because in
+// -p mode the process exits before timers fire and --resume (v2.1.110) could
+// resurrect unexpired tasks as zombies. The auto-deny was silent (no UI prompt),
+// which masked the failure as a "transient glitch." For now we let these tools
+// fall through to the ask flow so the UI surfaces a prompt; revisit if --resume
+// zombie tasks become a real problem in practice.
+const NEVER_ALLOW_TOOLS = new Set<string>();
 
 // Tools that are always safe (read-only / session-local) — never prompt
 const ALWAYS_ALLOW_TOOLS = new Set([
