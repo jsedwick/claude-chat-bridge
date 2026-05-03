@@ -7298,12 +7298,13 @@ function dismissKbContextMenu() {
   if (kbContextMenuEl) kbContextMenuEl.style.display = 'none';
 }
 
-function showKbContextMenu(x, y, entry, depth) {
+function showKbContextMenu(x, y, entry, depth, opts = {}) {
   const menu = getOrCreateKbContextMenu();
   menu.innerHTML = '';
 
   const isDir = entry.type === 'directory';
   const isRootVault = depth === 0 && isDir;
+  const skipRename = !!opts.skipRename;
 
   const items = [];
 
@@ -7323,7 +7324,7 @@ function showKbContextMenu(x, y, entry, depth) {
     items.push({ label: 'New Folder', action: () => createKbDir(entry.path) });
   }
 
-  if (!isRootVault) {
+  if (!isRootVault && !skipRename) {
     items.push({ label: 'Rename', action: () => {
       const treeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
       if (!treeItem) return;
@@ -8285,6 +8286,24 @@ function renderKbBookmarksList() {
     item.appendChild(nameSpan);
     item.appendChild(removeBtn);
     item.addEventListener('click', () => loadKbFile(bm.path));
+
+    const entry = { type: 'file', path: bm.path, name: bm.name };
+    item.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showKbContextMenu(e.clientX, e.clientY, entry, 1, { skipRename: true });
+    });
+    let _touchTimer;
+    item.addEventListener('touchstart', (e) => {
+      _touchTimer = setTimeout(() => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        showKbContextMenu(touch.clientX, touch.clientY, entry, 1, { skipRename: true });
+      }, 500);
+    }, { passive: false });
+    item.addEventListener('touchend', () => clearTimeout(_touchTimer));
+    item.addEventListener('touchmove', () => clearTimeout(_touchTimer));
+
     container.appendChild(item);
   }
 }
