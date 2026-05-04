@@ -375,6 +375,7 @@ async function setMode(mode) {
 }
 
 function updateModeTabsUI(mode) {
+  document.documentElement.setAttribute('data-mode', mode);
   document.querySelectorAll('.mode-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.mode === mode);
   });

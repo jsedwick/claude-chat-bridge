@@ -558,6 +558,38 @@ html, body {
   border-bottom: 1px solid var(--border);
   min-height: 52px;
   padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  transition: background 0.2s, border-bottom-color 0.2s;
+}
+
+/* Tint the top bar to match the active mode (work=blue, personal=green) so
+   the user can identify the context at a glance. The tint is layered over
+   bg-secondary so the surrounding shell stays consistent. */
+[data-mode="work"] .chat-header {
+  background:
+    linear-gradient(rgba(107, 179, 255, 0.14), rgba(107, 179, 255, 0.14)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(107, 179, 255, 0.45);
+}
+
+[data-mode="personal"] .chat-header {
+  background:
+    linear-gradient(rgba(107, 223, 176, 0.14), rgba(107, 223, 176, 0.14)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(107, 223, 176, 0.45);
+}
+
+[data-theme="light"][data-mode="work"] .chat-header {
+  background:
+    linear-gradient(rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.10)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(37, 99, 235, 0.4);
+}
+
+[data-theme="light"][data-mode="personal"] .chat-header {
+  background:
+    linear-gradient(rgba(5, 150, 105, 0.10), rgba(5, 150, 105, 0.10)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(5, 150, 105, 0.4);
 }
 
 .btn-menu {
