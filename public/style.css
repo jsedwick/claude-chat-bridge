@@ -2648,6 +2648,28 @@ pre.streaming {
   color: var(--text-primary);
 }
 
+/* Context-window meter — sits in the input area, sibling to .reference-preview.
+   Hidden under 75% (set inline by JS); amber 75-89%; red >=90%. */
+.ctx-meter {
+  max-width: 800px;
+  margin: 0 auto 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.ctx-meter--danger {
+  background: rgba(220, 38, 38, 0.15);
+  border-color: rgba(220, 38, 38, 0.5);
+  color: var(--error);
+}
+
 /* Input Area */
 .input-area {
   padding: 12px 16px;
@@ -4303,6 +4325,26 @@ pre.streaming {
 
 .kb-tree-children.collapsed {
   display: none;
+}
+
+/* Tint each root-level vault subtree by its mode so the user can identify the
+   owning context at a glance. Same color tokens as the chat-header tint, with
+   lower alpha because the band covers a tall region. */
+[data-vault-mode] {
+  margin: 2px 0;
+  border-radius: 6px;
+}
+[data-vault-mode="work"] {
+  background: rgba(107, 179, 255, 0.06);
+}
+[data-vault-mode="personal"] {
+  background: rgba(107, 223, 176, 0.06);
+}
+[data-theme="light"] [data-vault-mode="work"] {
+  background: rgba(37, 99, 235, 0.05);
+}
+[data-theme="light"] [data-vault-mode="personal"] {
+  background: rgba(5, 150, 105, 0.05);
 }
 
 /* Drag and drop */

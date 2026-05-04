@@ -3240,6 +3240,7 @@ async function switchSession(id) {
   }
   if (sidebar.classList.contains('open')) toggleSidebar();
   messageInput.focus();
+  refreshContextMeter();
   // Immediately check for pending permission on this session (don't wait for 2s poll)
   if (!pendingPermissionId && permissionBlockedSessions.has(id)) {
     try {
@@ -4411,10 +4412,63 @@ function refreshCloseCardTokenSummaries(sessionId) {
   targets.forEach((el) => { el.textContent = `Session totals: ${summary}`; });
 }
 
+// Per-session latest context-window fill. Each turn's prompt size
+// (input + cache_read + cache_creation) reflects how full the window is RIGHT
+// NOW — we keep the latest, not a running sum. Limit comes from
+// info.model_usage[model].contextWindow on the result event.
+const sessionContextState = new Map();
+
+function captureContextState(sessionId, info) {
+  if (!sessionId || !info) return;
+  const used = (info.input_tokens || 0)
+    + (info.cache_read_input_tokens || 0)
+    + (info.cache_creation_input_tokens || 0);
+  if (!used) return;
+  const modelUsage = info.model_usage;
+  if (!modelUsage) return;
+  // Pick the model with the largest input — the one doing the bulk of the
+  // turn. Multi-model turns (sub-agents) are rare; falling back to the first
+  // key is fine if input_tokens are missing.
+  let chosen = null;
+  let chosenInput = -1;
+  for (const [model, mu] of Object.entries(modelUsage)) {
+    const i = (mu?.inputTokens || 0) + (mu?.cacheReadInputTokens || 0) + (mu?.cacheCreationInputTokens || 0);
+    if (i > chosenInput) { chosen = model; chosenInput = i; }
+  }
+  if (!chosen) chosen = Object.keys(modelUsage)[0];
+  const contextWindow = modelUsage[chosen]?.contextWindow;
+  if (!contextWindow) return;
+  sessionContextState.set(sessionId, { used, contextWindow, model: chosen });
+}
+
+function refreshContextMeter() {
+  const meter = document.getElementById('ctx-meter');
+  if (!meter) return;
+  const state = currentSessionId ? sessionContextState.get(currentSessionId) : null;
+  if (!state || !state.contextWindow) {
+    meter.style.display = 'none';
+    return;
+  }
+  const pct = state.used / state.contextWindow;
+  if (pct < 0.75) {
+    meter.style.display = 'none';
+    return;
+  }
+  meter.style.display = '';
+  meter.classList.toggle('ctx-meter--danger', pct >= 0.90);
+  const pctNum = Math.round(pct * 100);
+  const usedK = (state.used / 1000).toFixed(0);
+  const limitK = Math.round(state.contextWindow / 1000);
+  meter.textContent = `Context: ${pctNum}% (${usedK}k / ${limitK}k)`;
+  meter.title = `Approaching context-window limit for ${state.model}. Consider /compact or starting a new session.`;
+}
+
 function addUsageInfo(data, sessionId = currentSessionId) {
   try {
     const info = JSON.parse(data);
     accumulateSessionUsage(sessionId, info);
+    captureContextState(sessionId, info);
+    if (sessionId === currentSessionId) refreshContextMeter();
     const totalInput = (info.input_tokens || 0)
       + (info.cache_creation_input_tokens || 0)
       + (info.cache_read_input_tokens || 0);
@@ -7318,7 +7372,7 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
       const childrenContainer = dirItem.parentElement.querySelector('.kb-tree-children');
       if (chevron && childrenContainer) {
         const indent = dirItem.querySelector('.kb-tree-indent');
-        const d = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+        const d = indent ? Math.round(parseInt(indent.style.width) / 24) : 0;
         createKbFile(entry.path, childrenContainer, chevron, d);
       }
     }});
@@ -7658,7 +7712,7 @@ async function reloadKbSubtree(dirPath) {
 
   // Determine depth from indentation
   const indent = dirItem.querySelector('.kb-tree-indent');
-  const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+  const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 24) : 0;
 
   childrenContainer.innerHTML = '';
   for (const child of data.entries) {
@@ -7668,6 +7722,11 @@ async function reloadKbSubtree(dirPath) {
 
 function createKbTreeNode(entry, depth) {
   const wrapper = document.createElement('div');
+  // Tint the entire vault subtree by mode (work=blue, personal=green). Only set
+  // on depth-0 nodes so nested children inherit the band rather than stacking.
+  if (depth === 0 && entry.vaultMode) {
+    wrapper.dataset.vaultMode = entry.vaultMode;
+  }
 
   const item = document.createElement('div');
   item.className = 'kb-tree-item' + (entry.type === 'file' ? ' kb-tree-file' : '');
@@ -7731,7 +7790,7 @@ function createKbTreeNode(entry, depth) {
   if (depth > 0) {
     const indent = document.createElement('span');
     indent.className = 'kb-tree-indent';
-    indent.style.width = (depth * 16) + 'px';
+    indent.style.width = (depth * 24) + 'px';
     item.appendChild(indent);
   }
 
@@ -8046,7 +8105,7 @@ async function expandKbPathTo(filePath) {
       const data = await loadKbTree(dirPath);
       if (data) {
         const indent = dirItem.querySelector('.kb-tree-indent');
-        const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+        const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 24) : 0;
         childrenContainer.innerHTML = '';
         for (const child of data.entries) {
           childrenContainer.appendChild(createKbTreeNode(child, parentDepth + 1));
@@ -8054,7 +8113,7 @@ async function expandKbPathTo(filePath) {
       }
     } else if (childrenContainer.children.length === 0) {
       const indent = dirItem.querySelector('.kb-tree-indent');
-      const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 16) : 0;
+      const parentDepth = indent ? Math.round(parseInt(indent.style.width) / 24) : 0;
       const entries = kbTreeCache.get(dirPath);
       for (const child of entries) {
         childrenContainer.appendChild(createKbTreeNode(child, parentDepth + 1));

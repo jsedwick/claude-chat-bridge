@@ -136,6 +136,16 @@ export function getActiveModeVaults(mode: Mode): Array<{ name: string; path: str
     .map(v => ({ name: v.name, path: v.path }));
 }
 
+export function getVaultModeForPath(absPath: string): Mode | null {
+  const vaults = readMcpVaults();
+  for (const v of vaults) {
+    if (absPath === v.path || absPath.startsWith(v.path + path.sep)) {
+      return v.mode === 'work' || v.mode === 'personal' ? v.mode : null;
+    }
+  }
+  return null;
+}
+
 export function setMcpConfigPath(newPath: string): void {
   config.mcpConfigPath = newPath;
   setBridgeConfigValue('mcpConfigPath', newPath);

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults, parseMode } from '../config';
+import { getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults, getVaultModeForPath, parseMode } from '../config';
 
 const router = Router();
 
@@ -409,11 +409,15 @@ router.get('/kb/tree', (req: Request, res: Response) => {
         if (e.isFile()) return e.name.endsWith('.md');
         return e.isDirectory();
       })
-      .map(e => ({
-        name: e.isFile() ? e.name.replace(/\.md$/, '') : e.name,
-        path: path.join(resolved, e.name),
-        type: e.isDirectory() ? 'directory' as const : 'file' as const,
-      }))
+      .map(e => {
+        const fullPath = path.join(resolved, e.name);
+        return {
+          name: e.isFile() ? e.name.replace(/\.md$/, '') : e.name,
+          path: fullPath,
+          type: e.isDirectory() ? 'directory' as const : 'file' as const,
+          vaultMode: getVaultModeForPath(fullPath),
+        };
+      })
       .sort((a, b) => {
         if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
         return a.name.localeCompare(b.name);

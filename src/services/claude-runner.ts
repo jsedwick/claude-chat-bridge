@@ -410,6 +410,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               output_tokens: usage?.output_tokens,
               cache_creation_input_tokens: usage?.cache_creation_input_tokens,
               cache_read_input_tokens: usage?.cache_read_input_tokens,
+              model_usage: parsed.modelUsage,
               // Include final response text for recovery when text_delta events are lost
               result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
               trace_id: traceId,
@@ -519,6 +520,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
                 output_tokens: usage?.output_tokens,
                 cache_creation_input_tokens: usage?.cache_creation_input_tokens,
                 cache_read_input_tokens: usage?.cache_read_input_tokens,
+                model_usage: parsed.modelUsage,
                 result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
                 trace_id: traceId,
               }),
