@@ -314,6 +314,18 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   // Set true once we see a non-error result event; used to gate fork-copy cleanup.
   let resultSucceeded = false;
   let buffer = '';
+  // Track the LAST assistant message's per-API-call usage. The `result` event's
+  // top-level usage is rolled up across every API round-trip in the turn — for
+  // tool-heavy turns, cache_read_input_tokens is summed across calls and can
+  // exceed the actual context window. The last assistant event's usage reflects
+  // the post-turn occupancy of one API call, which is what the meter wants.
+  let lastTurnUsage: {
+    model?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  } | null = null;
 
   proc.stdout!.on('data', (chunk: Buffer) => {
     buffer += chunk.toString();
@@ -375,6 +387,19 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           claudeToAppMap.set(parsed.session_id, appSessionId);
         }
 
+        // Capture per-API-call usage from each assistant event. Overwriting on
+        // every event leaves us with the LAST call's usage at result time.
+        if (parsed.type === 'assistant' && parsed.message?.usage) {
+          const u = parsed.message.usage;
+          lastTurnUsage = {
+            model: parsed.message.model,
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cache_creation_input_tokens: u.cache_creation_input_tokens,
+            cache_read_input_tokens: u.cache_read_input_tokens,
+          };
+        }
+
         // Detect authentication failure
         if (parsed.type === 'assistant' && parsed.error === 'authentication_failed') {
           authFailed = true;
@@ -411,6 +436,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               cache_creation_input_tokens: usage?.cache_creation_input_tokens,
               cache_read_input_tokens: usage?.cache_read_input_tokens,
               model_usage: parsed.modelUsage,
+              last_turn_usage: lastTurnUsage,
               // Include final response text for recovery when text_delta events are lost
               result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
               trace_id: traceId,
@@ -504,6 +530,16 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               emitToStream(appSessionId, event);
             }
           }
+          if (parsed.type === 'assistant' && parsed.message?.usage) {
+            const u = parsed.message.usage;
+            lastTurnUsage = {
+              model: parsed.message.model,
+              input_tokens: u.input_tokens,
+              output_tokens: u.output_tokens,
+              cache_creation_input_tokens: u.cache_creation_input_tokens,
+              cache_read_input_tokens: u.cache_read_input_tokens,
+            };
+          }
           if (parsed.type === 'result' && parsed.session_id) {
             capturedSessionId = parsed.session_id;
             resultSucceeded = parsed.is_error !== true;
@@ -521,6 +557,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
                 cache_creation_input_tokens: usage?.cache_creation_input_tokens,
                 cache_read_input_tokens: usage?.cache_read_input_tokens,
                 model_usage: parsed.modelUsage,
+                last_turn_usage: lastTurnUsage,
                 result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
                 trace_id: traceId,
               }),

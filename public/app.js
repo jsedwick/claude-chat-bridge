@@ -4412,30 +4412,51 @@ function refreshCloseCardTokenSummaries(sessionId) {
   targets.forEach((el) => { el.textContent = `Session totals: ${summary}`; });
 }
 
-// Per-session latest context-window fill. Each turn's prompt size
-// (input + cache_read + cache_creation) reflects how full the window is RIGHT
-// NOW — we keep the latest, not a running sum. Limit comes from
-// info.model_usage[model].contextWindow on the result event.
+// Per-session latest context-window fill. The `result` event's top-level usage
+// is rolled up across every API round-trip in the turn, so cache_read inflates
+// on tool-heavy turns and the meter reads >100%. Prefer info.last_turn_usage
+// (the LAST assistant call's per-API-call usage, captured runner-side) — that
+// reflects the actual post-turn occupancy of one window. Add output_tokens so
+// we account for the response that just landed in context.
 const sessionContextState = new Map();
 
 function captureContextState(sessionId, info) {
   if (!sessionId || !info) return;
-  const used = (info.input_tokens || 0)
-    + (info.cache_read_input_tokens || 0)
-    + (info.cache_creation_input_tokens || 0);
-  if (!used) return;
   const modelUsage = info.model_usage;
   if (!modelUsage) return;
-  // Pick the model with the largest input — the one doing the bulk of the
-  // turn. Multi-model turns (sub-agents) are rare; falling back to the first
-  // key is fine if input_tokens are missing.
+
+  const lt = info.last_turn_usage;
+  let used = 0;
   let chosen = null;
-  let chosenInput = -1;
-  for (const [model, mu] of Object.entries(modelUsage)) {
-    const i = (mu?.inputTokens || 0) + (mu?.cacheReadInputTokens || 0) + (mu?.cacheCreationInputTokens || 0);
-    if (i > chosenInput) { chosen = model; chosenInput = i; }
+
+  if (lt) {
+    used = (lt.input_tokens || 0)
+      + (lt.cache_read_input_tokens || 0)
+      + (lt.cache_creation_input_tokens || 0)
+      + (lt.output_tokens || 0);
+    chosen = lt.model || null;
   }
-  if (!chosen) chosen = Object.keys(modelUsage)[0];
+
+  // Fallback for older runners or if the assistant event didn't carry usage.
+  // Constrain to one model's per-model totals so we don't sum across sub-agents.
+  if (!used) {
+    let chosenInput = -1;
+    for (const [model, mu] of Object.entries(modelUsage)) {
+      const i = (mu?.inputTokens || 0) + (mu?.cacheReadInputTokens || 0) + (mu?.cacheCreationInputTokens || 0);
+      if (i > chosenInput) { chosen = model; chosenInput = i; }
+    }
+    if (!chosen) chosen = Object.keys(modelUsage)[0];
+    const mu = modelUsage[chosen];
+    if (mu) {
+      used = (mu.inputTokens || 0)
+        + (mu.cacheReadInputTokens || 0)
+        + (mu.cacheCreationInputTokens || 0)
+        + (mu.outputTokens || 0);
+    }
+  }
+
+  if (!used) return;
+  if (!chosen || !modelUsage[chosen]) chosen = Object.keys(modelUsage)[0];
   const contextWindow = modelUsage[chosen]?.contextWindow;
   if (!contextWindow) return;
   sessionContextState.set(sessionId, { used, contextWindow, model: chosen });
