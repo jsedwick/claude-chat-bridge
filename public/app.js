@@ -7231,6 +7231,8 @@ async function deleteKbFile(filePath, dirPath) {
       saveKbBookmarks();
       if (kbShowingBookmarks) renderKbBookmarksList();
     }
+    // Refresh recent files list if active (file may be in it)
+    if (kbShowingRecent) loadKbRecentFiles();
     // Refresh tree
     kbTreeCache.delete(dirPath);
     await reloadKbSubtree(dirPath);
@@ -8520,6 +8522,24 @@ async function loadKbRecentFiles() {
       item.appendChild(icon);
       item.appendChild(textWrap);
       item.addEventListener('click', () => loadKbFile(file.path));
+
+      const entry = { type: 'file', path: file.path, name: file.name };
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showKbContextMenu(e.clientX, e.clientY, entry, 1, { skipRename: true });
+      });
+      let _touchTimer;
+      item.addEventListener('touchstart', (e) => {
+        _touchTimer = setTimeout(() => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          showKbContextMenu(touch.clientX, touch.clientY, entry, 1, { skipRename: true });
+        }, 500);
+      }, { passive: false });
+      item.addEventListener('touchend', () => clearTimeout(_touchTimer));
+      item.addEventListener('touchmove', () => clearTimeout(_touchTimer));
+
       container.appendChild(item);
     }
   } catch (err) {
