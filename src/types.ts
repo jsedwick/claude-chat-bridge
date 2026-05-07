@@ -52,6 +52,10 @@ export interface ClaudeRunnerOptions {
   sessionId?: string;
   forkFromSessionId?: string;
   appSessionId: string;
+  // Parent bridge ChatSession.id when this spawn is for a forked session.
+  // Exported as CHAT_BRIDGE_FORKED_FROM so obsidian-mcp-server can walk the
+  // recovery-file lineage chain (Decision 070) and capture pre-fork edits.
+  forkedFromAppSessionId?: string;
   message: string;
   model?: string;
   effort?: EffortLevel;

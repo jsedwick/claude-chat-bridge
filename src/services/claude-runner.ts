@@ -183,7 +183,7 @@ export function getAppSessionByClaudeId(claudeSessionId: string): string | undef
 }
 
 export function runClaude(options: ClaudeRunnerOptions): void {
-  const { sessionId, forkFromSessionId, appSessionId, message, model, effort, mode, workingDir, attachments, priorContext, onEvent, onClose } = options;
+  const { sessionId, forkFromSessionId, appSessionId, forkedFromAppSessionId, message, model, effort, mode, workingDir, attachments, priorContext, onEvent, onClose } = options;
 
   if (activeSessions.size >= config.maxConcurrentSessions && !activeSessions.has(sessionId || '')) {
     onEvent({ type: 'error', data: `Max concurrent sessions (${config.maxConcurrentSessions}) reached. Try again later.` });
@@ -284,7 +284,13 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   const proc = spawn(config.claudePath, args, {
     cwd: workingDir || config.workingDir,
-    env: { ...process.env, CHAT_BRIDGE_SESSION: appSessionId, TRACEPARENT: traceparent, ...(mode ? { VAULT_MODE: mode } : {}) },
+    env: {
+      ...process.env,
+      CHAT_BRIDGE_SESSION: appSessionId,
+      TRACEPARENT: traceparent,
+      ...(forkedFromAppSessionId ? { CHAT_BRIDGE_FORKED_FROM: forkedFromAppSessionId } : {}),
+      ...(mode ? { VAULT_MODE: mode } : {}),
+    },
     stdio: [hasImages ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   });
 

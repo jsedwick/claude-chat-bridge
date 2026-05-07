@@ -105,6 +105,13 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     sessionId: session.claudeSessionId || undefined,
     forkFromSessionId: forkFromClaudeId,
     appSessionId: sessionId,
+    // Decision 070: only propagate forked-from for fork-up. Fork-down is
+    // intentionally amnesiac — the user explicitly dropped earlier context,
+    // so the new session shouldn't inherit pre-fork filesAccessed/trackers.
+    forkedFromAppSessionId:
+      session.forkedFrom && session.forkedFrom.direction !== 'down'
+        ? session.forkedFrom.sessionId
+        : undefined,
     message: message,
     model: model || undefined,
     effort: resolvedEffort,
