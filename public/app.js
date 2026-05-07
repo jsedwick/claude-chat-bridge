@@ -2588,6 +2588,7 @@ function renderSessionItem(s, isArchived, { forkDepth = 0, isLastFork = false, f
 
   return `
     <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${isArchived ? 'archived' : ''} ${isTrashed ? 'trashed' : ''} ${s.closedAt ? 'closed' : ''} ${activeSessionIds.has(s.id) ? 'working' : ''} ${forkClasses}"
+         data-session-id="${s.id}"
          onclick="switchSession('${s.id}')"${indentStyle}>
       ${isFork ? '<span class="session-fork-branch"></span>' : ''}
       ${actions}
@@ -2674,7 +2675,13 @@ function toggleArchiveSection() {
   chevron.classList.toggle('expanded', !isOpen);
 }
 
+function setSessionItemPending(id, pending) {
+  const row = document.querySelector(`.session-item[data-session-id="${CSS.escape(id)}"]`);
+  if (row) row.classList.toggle('pending', pending);
+}
+
 async function archiveSessionItem(id) {
+  setSessionItemPending(id, true);
   try {
     await fetchWithRetry(`/api/sessions/${id}/archive`, { method: 'POST' });
     if (currentSessionId === id) {
@@ -2691,15 +2698,18 @@ async function archiveSessionItem(id) {
     }
     loadSessions();
   } catch (err) {
+    setSessionItemPending(id, false);
     console.error('Failed to archive session:', err);
   }
 }
 
 async function unarchiveSessionItem(id) {
+  setSessionItemPending(id, true);
   try {
     await fetchWithRetry(`/api/sessions/${id}/unarchive`, { method: 'POST' });
     loadSessions();
   } catch (err) {
+    setSessionItemPending(id, false);
     console.error('Failed to unarchive session:', err);
   }
 }
@@ -2732,16 +2742,19 @@ function toggleTrashSection() {
 }
 
 async function restoreSessionItem(id) {
+  setSessionItemPending(id, true);
   try {
     await fetchWithRetry(`/api/sessions/${id}/restore`, { method: 'POST' });
     loadSessions();
   } catch (err) {
+    setSessionItemPending(id, false);
     console.error('Failed to restore session:', err);
   }
 }
 
 async function permanentlyDeleteSessionItem(id) {
   if (!confirm('Permanently delete this session? This cannot be undone.')) return;
+  setSessionItemPending(id, true);
   try {
     await fetchWithRetry(`/api/sessions/${id}?permanent=true`, { method: 'DELETE' });
     sessionInputDrafts.delete(id);
@@ -2759,6 +2772,7 @@ async function permanentlyDeleteSessionItem(id) {
     }
     loadSessions();
   } catch (err) {
+    setSessionItemPending(id, false);
     console.error('Failed to permanently delete session:', err);
   }
 }
@@ -3256,6 +3270,7 @@ async function switchSession(id) {
 }
 
 async function deleteSessionItem(id) {
+  setSessionItemPending(id, true);
   try {
     await fetchWithRetry(`/api/sessions/${id}`, { method: 'DELETE' });
     sessionInputDrafts.delete(id);
@@ -3273,6 +3288,7 @@ async function deleteSessionItem(id) {
     }
     loadSessions();
   } catch (err) {
+    setSessionItemPending(id, false);
     console.error('Failed to delete session:', err);
   }
 }

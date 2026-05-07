@@ -215,6 +215,16 @@ html, body {
   border-left: 3px solid var(--accent);
 }
 
+.session-item.pending {
+  pointer-events: none;
+  animation: session-item-pending-pulse 1s ease-in-out infinite;
+}
+
+@keyframes session-item-pending-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.25; }
+}
+
 .session-item-name {
   font-size: 14px;
   font-weight: 500;
