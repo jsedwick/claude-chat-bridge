@@ -3075,18 +3075,150 @@ async function loadHandoffNotes() {
   section.style.display = 'none';
   editor.style.display = 'none';
 
-  if (!currentClosedAt || !currentSessionId) return;
+  if (!currentClosedAt || !currentSessionId) {
+    loadCarryforward();
+    return;
+  }
 
   try {
     const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/handoff`);
     const data = await res.json();
-    if (!data.handoff) return;
+    if (!data.handoff) {
+      loadCarryforward();
+      return;
+    }
 
     display.innerHTML = escapeHtml(data.handoff).replace(/\n/g, '<br>');
     document.getElementById('handoff-textarea').value = data.handoff;
     section.style.display = '';
-    section.classList.add('expanded');
   } catch {}
+
+  loadCarryforward();
+}
+
+// Open Items (carryforward) panel — parses Decision 068 verifier-tagged
+// bullets out of the handoff and lets the user resolve them in place.
+async function loadCarryforward() {
+  const section = document.getElementById('carryforward-section');
+  const list = document.getElementById('carryforward-list');
+  const count = document.getElementById('carryforward-count');
+
+  section.style.display = 'none';
+  list.innerHTML = '';
+  count.textContent = '';
+
+  if (!currentClosedAt || !currentSessionId) return;
+
+  try {
+    const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/carryforward`);
+    const data = await res.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    renderCarryforward(items);
+  } catch {}
+}
+
+function renderCarryforward(items) {
+  const section = document.getElementById('carryforward-section');
+  const list = document.getElementById('carryforward-list');
+  const count = document.getElementById('carryforward-count');
+
+  const open = items.filter(it => !it.resolved);
+  if (items.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = '';
+  count.textContent = `${open.length} open / ${items.length} total`;
+  if (open.length > 0) section.classList.add('expanded');
+
+  list.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = `carryforward-item carryforward-${item.kind}` + (item.resolved ? ' carryforward-resolved' : '');
+
+    const badge = document.createElement('span');
+    badge.className = 'carryforward-badge';
+    badge.textContent = badgeLabel(item.kind);
+    badge.title = badgeTitle(item.kind);
+
+    const body = document.createElement('span');
+    body.className = 'carryforward-body';
+    body.textContent = item.body || item.text;
+
+    row.appendChild(badge);
+    row.appendChild(body);
+
+    if (!item.resolved) {
+      const btn = document.createElement('button');
+      btn.className = 'carryforward-resolve-btn';
+      btn.textContent = 'Resolve';
+      btn.title = 'Mark as [historical] in the handoff';
+      btn.onclick = () => resolveCarryforwardItem(item.text);
+      row.appendChild(btn);
+    }
+
+    list.appendChild(row);
+  }
+}
+
+function toggleCarryforwardHelp() {
+  document.getElementById('carryforward-section').classList.add('expanded');
+  document.getElementById('carryforward-help').classList.toggle('shown');
+}
+
+function badgeLabel(kind) {
+  switch (kind) {
+    case 'historical': return '✓';
+    case 'verify-command': return '⌘';
+    case 'verify-prose': return '?';
+    case 'untagged-forward-looking': return '!';
+    default: return '·';
+  }
+}
+
+function badgeTitle(kind) {
+  switch (kind) {
+    case 'historical': return 'Resolved (historical)';
+    case 'verify-command': return 'Verifiable via shell command';
+    case 'verify-prose': return 'Manual verification required';
+    case 'untagged-forward-looking': return 'No verifier tagged (writer-contract violation)';
+    default: return '';
+  }
+}
+
+async function resolveCarryforwardItem(text) {
+  if (!currentSessionId) return;
+  // Capture scroll so the panel doesn't jump to top when sections rerender.
+  const panel = document.getElementById('session-details-panel');
+  const savedScrollTop = panel ? panel.scrollTop : 0;
+  try {
+    const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/carryforward/resolve`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (Array.isArray(data.items)) {
+      renderCarryforward(data.items);
+      // Refresh handoff display in place — skip loadHandoffNotes (which briefly
+      // toggles section visibility and clamps scrollTop on tall panels).
+      try {
+        const hRes = await fetchWithRetry(`/api/sessions/${currentSessionId}/handoff`);
+        const hData = await hRes.json();
+        if (hData.handoff) {
+          const hDisplay = document.getElementById('handoff-display');
+          hDisplay.innerHTML = escapeHtml(hData.handoff).replace(/\n/g, '<br>');
+          document.getElementById('handoff-textarea').value = hData.handoff;
+        }
+      } catch {}
+      if (panel) {
+        requestAnimationFrame(() => { panel.scrollTop = savedScrollTop; });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to resolve carryforward item:', err);
+  }
 }
 
 function toggleHandoffEdit() {
@@ -3095,6 +3227,8 @@ function toggleHandoffEdit() {
   const btn = document.getElementById('handoff-edit-btn');
 
   if (editor.style.display === 'none') {
+    // Section may be collapsed by default — expand so the textarea is visible.
+    document.getElementById('handoff-section').classList.add('expanded');
     display.style.display = 'none';
     editor.style.display = '';
     btn.textContent = 'Cancel';
@@ -3131,6 +3265,8 @@ async function saveHandoff() {
     const display = document.getElementById('handoff-display');
     display.innerHTML = escapeHtml(handoff).replace(/\n/g, '<br>');
     cancelHandoffEdit();
+    // Manual handoff edits may add/remove/rephrase carryforward bullets — refresh.
+    loadCarryforward();
   } catch (err) {
     console.error('Failed to save handoff:', err);
   }

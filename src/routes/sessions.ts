@@ -434,6 +434,133 @@ router.get('/:id/handoff', (req: Request, res: Response) => {
   res.json({ handoff: null, message: 'No handoff notes found' });
 });
 
+// Parse Decision 068 verifier-tagged carryforward bullets out of handoff prose.
+// Returns one entry per `- [ ]`, `- [x]`, or `- [historical]` bullet, classified
+// by its `**verify:**` suffix (if any).
+type CarryforwardKind = 'historical' | 'verify-command' | 'verify-prose' | 'untagged-forward-looking';
+interface CarryforwardItem {
+  text: string;            // full bullet text after the checkbox
+  body: string;            // bullet text minus the `**verify:** ...` suffix
+  verifier: string | null; // text after `**verify:**`, or null
+  kind: CarryforwardKind;
+  resolved: boolean;       // true for `[historical]` or `[x]`
+}
+
+function parseCarryforwardItems(handoff: string): CarryforwardItem[] {
+  const items: CarryforwardItem[] = [];
+  for (const rawLine of handoff.split('\n')) {
+    const m = rawLine.match(/^- \[([^\]]+)\]\s+(.+)$/);
+    if (!m) continue;
+    const tag = m[1].trim();
+    const text = m[2].trim();
+    const resolved = tag === 'historical' || tag === 'x';
+
+    const verifyIdx = text.indexOf('**verify:**');
+    const body = verifyIdx >= 0 ? text.slice(0, verifyIdx).trim() : text;
+    const verifier = verifyIdx >= 0 ? text.slice(verifyIdx + '**verify:**'.length).trim() : null;
+
+    let kind: CarryforwardKind;
+    if (resolved) {
+      kind = 'historical';
+    } else if (verifier) {
+      kind = /^`/.test(verifier) ? 'verify-command' : 'verify-prose';
+    } else {
+      kind = 'untagged-forward-looking';
+    }
+    items.push({ text, body, verifier, kind, resolved });
+  }
+  return items;
+}
+
+// Resolve handoff text from the same sources as GET /:id/handoff, returning
+// null if we cannot locate it. Used by carryforward endpoints to share lookup.
+function readHandoffForSession(sessionId: string): { handoff: string; filePath: string | null } | null {
+  const session = getSession(sessionId);
+  if (!session || !session.closedAt) return null;
+  if (session.handoff) {
+    return { handoff: session.handoff, filePath: session.sessionFilePath || null };
+  }
+  if (session.sessionFilePath) {
+    try {
+      const content = fs.readFileSync(session.sessionFilePath, 'utf-8');
+      const match = content.match(/## Handoff\n\n([\s\S]*?)(?=\n## |\n---|$)/);
+      if (match && match[1].trim() && match[1].trim() !== '_No handoff notes_') {
+        const handoff = match[1].trim();
+        updateSession(sessionId, { handoff });
+        return { handoff, filePath: session.sessionFilePath };
+      }
+    } catch {}
+  }
+  return null;
+}
+
+// Get parsed carryforward items for a closed session
+router.get('/:id/carryforward', (req: Request, res: Response) => {
+  const sessionId = req.params.id as string;
+  const found = readHandoffForSession(sessionId);
+  if (!found) {
+    res.json({ items: [] });
+    return;
+  }
+  res.json({ items: parseCarryforwardItems(found.handoff) });
+});
+
+// Mark a carryforward item as historical (resolved) by rewriting its bullet
+// in the handoff. Identifies the bullet by its exact text content.
+router.patch('/:id/carryforward/resolve', (req: Request, res: Response) => {
+  const sessionId = req.params.id as string;
+  const session = getSession(sessionId);
+  if (!session) {
+    res.status(404).json({ error: 'Session not found' });
+    return;
+  }
+  const { text } = req.body || {};
+  if (typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'text string required' });
+    return;
+  }
+
+  const found = readHandoffForSession(sessionId);
+  if (!found) {
+    res.status(404).json({ error: 'Handoff not found' });
+    return;
+  }
+
+  const lines = found.handoff.split('\n');
+  let foundIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^- \[([^\]]+)\]\s+(.+)$/);
+    if (!m) continue;
+    if (m[2].trim() === text.trim()) {
+      foundIdx = i;
+      break;
+    }
+  }
+  if (foundIdx === -1) {
+    res.status(404).json({ error: 'Item not found in handoff' });
+    return;
+  }
+
+  const verifyIdx = text.indexOf('**verify:**');
+  const body = (verifyIdx >= 0 ? text.slice(0, verifyIdx) : text).trim();
+  lines[foundIdx] = `- [historical] ${body}`;
+  const newHandoff = lines.join('\n');
+
+  updateSession(sessionId, { handoff: newHandoff });
+  if (found.filePath && fs.existsSync(found.filePath)) {
+    try {
+      let content = fs.readFileSync(found.filePath, 'utf-8');
+      const handoffRegex = /(## Handoff\n\n)([\s\S]*?)(\n## )/;
+      if (handoffRegex.test(content)) {
+        content = content.replace(handoffRegex, (_m, g1, _g2, g3) => `${g1}${newHandoff}\n${g3}`);
+        fs.writeFileSync(found.filePath, content, 'utf-8');
+      }
+    } catch {}
+  }
+
+  res.json({ items: parseCarryforwardItems(newHandoff) });
+});
+
 // Update handoff notes for a closed session
 router.put('/:id/handoff', (req: Request, res: Response) => {
   const session = getSession(req.params.id as string);

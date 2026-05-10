@@ -1083,6 +1083,136 @@ html, body {
   color: var(--text-primary);
 }
 
+/* Carryforward (Open Items) panel */
+.carryforward-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+}
+
+.carryforward-item:last-child {
+  border-bottom: none;
+}
+
+.carryforward-resolved {
+  opacity: 0.5;
+}
+
+.carryforward-resolved .carryforward-body {
+  text-decoration: line-through;
+}
+
+.carryforward-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  cursor: help;
+}
+
+.carryforward-historical .carryforward-badge {
+  background: rgba(120, 200, 120, 0.15);
+  border-color: rgba(120, 200, 120, 0.5);
+  color: rgb(140, 200, 140);
+}
+
+.carryforward-verify-command .carryforward-badge {
+  background: rgba(120, 160, 220, 0.15);
+  border-color: rgba(120, 160, 220, 0.5);
+  color: rgb(140, 180, 230);
+}
+
+.carryforward-verify-prose .carryforward-badge {
+  background: rgba(220, 180, 80, 0.15);
+  border-color: rgba(220, 180, 80, 0.5);
+  color: rgb(230, 195, 110);
+}
+
+.carryforward-untagged-forward-looking .carryforward-badge {
+  background: rgba(220, 100, 100, 0.15);
+  border-color: rgba(220, 100, 100, 0.5);
+  color: rgb(230, 130, 130);
+}
+
+.carryforward-body {
+  flex: 1;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.carryforward-resolve-btn {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.carryforward-resolve-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.carryforward-help-btn {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.carryforward-help-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.carryforward-help {
+  display: none;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.session-details-section.expanded .carryforward-help.shown {
+  display: block;
+}
+
+.carryforward-help code {
+  background: var(--tool-bg);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
 /* Mode tabs in sidebar */
 .mode-tabs {
   display: flex;

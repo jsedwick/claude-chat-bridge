@@ -193,6 +193,18 @@
             </div>
           </div>
         </div>
+        <div id="carryforward-section" class="session-details-section" style="display:none">
+          <div class="session-details-section-header" onclick="this.parentElement.classList.toggle('expanded')">
+            <span class="session-details-chevron">&#9654;</span>
+            <span>Open Items</span>
+            <span id="carryforward-count" class="session-details-count"></span>
+            <button class="carryforward-help-btn" onclick="event.stopPropagation(); toggleCarryforwardHelp()" title="What are Open Items?" aria-label="Help">?</button>
+          </div>
+          <div id="carryforward-help" class="carryforward-help">
+            Tasks Claude flagged for follow-up when this session closed. Click <strong>Resolve</strong> when you've verified one &mdash; it'll be retagged as <code>[historical]</code> in the handoff. Hover a badge to see how each item can be checked.
+          </div>
+          <div id="carryforward-list" class="session-details-list"></div>
+        </div>
       </div>
     </div>
 
