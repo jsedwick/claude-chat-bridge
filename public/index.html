@@ -25,6 +25,7 @@
           </svg>
         </button>
         <div id="sidebar-view-menu" class="sidebar-view-menu" style="display:none">
+          <button class="sidebar-view-option" data-view="home" onclick="goHome()">Home</button>
           <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions</button>
           <button class="sidebar-view-option" data-view="kb" onclick="switchView('kb')">Knowledge Base</button>
           <button class="sidebar-view-option" data-view="settings" onclick="switchView('settings')">Settings</button>
@@ -388,9 +389,11 @@
         <div class="welcome-tabs">
           <button class="welcome-tab active" data-tab="sessions" onclick="switchWelcomeTab('sessions')">Sessions</button>
           <button class="welcome-tab" data-tab="topics" onclick="switchWelcomeTab('topics')">Topics</button>
+          <button class="welcome-tab" data-tab="tasks" onclick="switchWelcomeTab('tasks')">Tasks</button>
         </div>
         <div id="welcome-sessions" class="welcome-sessions welcome-tab-content active"></div>
         <div id="welcome-topics" class="welcome-topics welcome-tab-content" style="display:none"></div>
+        <div id="welcome-tasks" class="welcome-tasks welcome-tab-content" style="display:none"></div>
       </div>
       </div>
     </div>
@@ -497,9 +500,11 @@
         <div class="welcome-tabs">
           <button class="welcome-tab active" data-tab="kb-sessions" onclick="switchKbWelcomeTab('sessions')">Sessions</button>
           <button class="welcome-tab" data-tab="kb-topics" onclick="switchKbWelcomeTab('topics')">Topics</button>
+          <button class="welcome-tab" data-tab="kb-tasks" onclick="switchKbWelcomeTab('tasks')">Tasks</button>
         </div>
         <div id="kb-welcome-sessions" class="welcome-sessions welcome-tab-content active"></div>
         <div id="kb-welcome-topics" class="welcome-topics welcome-tab-content" style="display:none"></div>
+        <div id="kb-welcome-tasks" class="welcome-tasks welcome-tab-content" style="display:none"></div>
       </div>
       <div id="kb-action-bar" class="kb-action-bar" style="display:none">
         <div class="kb-action-bar-left">

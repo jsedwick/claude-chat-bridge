@@ -2166,8 +2166,13 @@ function switchWelcomeTab(tab) {
   document.getElementById('welcome-sessions').classList.toggle('active', tab === 'sessions');
   document.getElementById('welcome-topics').style.display = tab === 'topics' ? '' : 'none';
   document.getElementById('welcome-topics').classList.toggle('active', tab === 'topics');
+  document.getElementById('welcome-tasks').style.display = tab === 'tasks' ? '' : 'none';
+  document.getElementById('welcome-tasks').classList.toggle('active', tab === 'tasks');
   if (tab === 'topics' && !document.getElementById('welcome-topics').dataset.loaded) {
     loadWelcomeTopics();
+  }
+  if (tab === 'tasks' && !document.getElementById('welcome-tasks').dataset.loaded) {
+    loadWelcomeTasks();
   }
 }
 
@@ -2178,8 +2183,13 @@ function switchKbWelcomeTab(tab) {
   document.getElementById('kb-welcome-sessions').classList.toggle('active', tab === 'sessions');
   document.getElementById('kb-welcome-topics').style.display = tab === 'topics' ? '' : 'none';
   document.getElementById('kb-welcome-topics').classList.toggle('active', tab === 'topics');
+  document.getElementById('kb-welcome-tasks').style.display = tab === 'tasks' ? '' : 'none';
+  document.getElementById('kb-welcome-tasks').classList.toggle('active', tab === 'tasks');
   if (tab === 'topics' && !document.getElementById('kb-welcome-topics').dataset.loaded) {
     loadWelcomeTopics();
+  }
+  if (tab === 'tasks' && !document.getElementById('kb-welcome-tasks').dataset.loaded) {
+    loadWelcomeTasks();
   }
 }
 
@@ -2251,6 +2261,284 @@ function openSessionInKb(vaultPath) {
   kbPendingNavigation = vaultPath;
   switchView('kb');
   loadKbFile(vaultPath);
+}
+
+// --- Welcome Tasks tab ---
+
+let welcomeTasksState = { lists: [], defaultList: null, today: null };
+
+function welcomeTasksShowCompleted() {
+  return localStorage.getItem('tasksShowCompleted') === '1';
+}
+
+async function loadWelcomeTasks() {
+  const containers = [
+    document.getElementById('welcome-tasks'),
+    document.getElementById('kb-welcome-tasks'),
+  ].filter(Boolean);
+  if (containers.length === 0) return;
+  containers.forEach(c => {
+    if (!c.children.length || !c.dataset.loaded) c.innerHTML = '<div class="welcome-loading">Loading tasks…</div>';
+  });
+  try {
+    const res = await fetchWithRetry(`/api/vault/tasks?mode=${currentMode}`, {}, { retries: 1 });
+    const data = await res.json();
+    welcomeTasksState = {
+      lists: data.lists || [],
+      defaultList: data.defaultList || null,
+      today: data.today || new Date().toISOString().slice(0, 10),
+    };
+    renderWelcomeTasks();
+    containers.forEach(c => { c.dataset.loaded = '1'; });
+  } catch (err) {
+    console.error('Failed to load tasks:', err);
+    containers.forEach(c => { c.innerHTML = '<p class="welcome-hint">Failed to load tasks.</p>'; });
+  }
+}
+
+function renderWelcomeTasks() {
+  const containers = [
+    document.getElementById('welcome-tasks'),
+    document.getElementById('kb-welcome-tasks'),
+  ].filter(Boolean);
+  if (containers.length === 0) return;
+
+  const lists = welcomeTasksState.lists;
+  const today = welcomeTasksState.today;
+  const showCompleted = welcomeTasksShowCompleted();
+
+  if (lists.length === 0) {
+    containers.forEach(c => { c.innerHTML = '<p class="welcome-hint">No active task lists.</p>'; });
+    return;
+  }
+
+  const header = `
+    <div class="welcome-tasks-header">
+      <button class="welcome-tasks-add-btn" type="button" onclick="toggleAddTaskForm()">+ Add task</button>
+      <label class="welcome-tasks-toggle">
+        <input type="checkbox" id="welcome-tasks-show-completed" ${showCompleted ? 'checked' : ''} onchange="toggleShowCompleted(this.checked)">
+        <span>Show completed</span>
+      </label>
+    </div>
+    <div id="welcome-tasks-add-form" class="welcome-tasks-add-form" style="display:none">${renderAddTaskForm()}</div>
+  `;
+
+  const listsHtml = lists.map(list => renderTaskList(list, today, showCompleted)).join('');
+  const html = header + listsHtml;
+  containers.forEach(c => { c.innerHTML = html; });
+}
+
+function renderTaskList(list, today, showCompleted) {
+  const activeCount = list.tasks.length + list.todo.length;
+  const taskRows = list.tasks.map(t => renderTaskRow(t, list.file, today)).join('');
+  const todoRows = list.todo.length
+    ? `<div class="welcome-tasks-subheader">Todo (no date)</div>` + list.todo.map(t => renderTaskRow(t, list.file, today)).join('')
+    : '';
+  const completedCount = list.completed.length;
+  const completedShown = Math.min(completedCount, 25);
+  const completedLabel = completedCount > 25
+    ? `Completed (showing ${completedShown} of ${completedCount})`
+    : `Completed (${completedCount})`;
+  const completedRows = showCompleted && completedCount
+    ? `<div class="welcome-tasks-subheader welcome-tasks-completed-header">${completedLabel}</div>` +
+      list.completed.slice(0, 25).map(t => renderTaskRow(t, list.file, today)).join('')
+    : '';
+  return `
+    <div class="welcome-task-list" data-file="${escapeHtml(list.file)}">
+      <div class="welcome-task-list-header">
+        <span class="welcome-task-list-name">${escapeHtml(list.name)}</span>
+        <span class="welcome-task-list-count">(${activeCount})</span>
+      </div>
+      ${taskRows}
+      ${todoRows}
+      ${completedRows}
+    </div>
+  `;
+}
+
+function renderTaskRow(task, file, today) {
+  const overdue = task.dueDate && task.dueDate < today && !task.done;
+  const dueToday = task.dueDate && task.dueDate === today && !task.done;
+  const dueChip = task.due
+    ? `<span class="welcome-task-due-chip ${overdue ? 'overdue' : dueToday ? 'today' : 'future'}">${escapeHtml(task.due)}</span>`
+    : '';
+  const priorityChip = task.priority
+    ? `<span class="welcome-task-priority-chip priority-${task.priority}">${task.priority}</span>`
+    : '';
+  const completedChip = task.completed
+    ? `<span class="welcome-task-completed-chip">${escapeHtml(task.completed)}</span>`
+    : '';
+  const rawAttr = task.raw.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const fileAttr = file.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const handler = task.done
+    ? `uncompleteTask(this, '${fileAttr}', this.dataset.raw)`
+    : `completeTask(this, '${fileAttr}', this.dataset.raw)`;
+  return `
+    <div class="welcome-task-row ${task.done ? 'done' : ''}">
+      <input type="checkbox" class="welcome-task-checkbox" data-raw="${rawAttr}" ${task.done ? 'checked' : ''} onchange="${handler}">
+      <span class="welcome-task-desc">${escapeHtml(task.description)}</span>
+      ${dueChip}
+      ${priorityChip}
+      ${completedChip}
+    </div>
+  `;
+}
+
+function renderAddTaskForm() {
+  const lists = welcomeTasksState.lists;
+  const defaultList = welcomeTasksState.defaultList;
+  const listOptions = lists.map(l =>
+    `<option value="${escapeHtml(l.file)}" ${l.file === defaultList ? 'selected' : ''}>${escapeHtml(l.name)}</option>`
+  ).join('');
+  return `
+    <input type="text" id="add-task-desc" class="add-task-input" placeholder="Task description">
+    <div class="add-task-row">
+      <input type="date" id="add-task-due" class="add-task-date" title="Leave blank for todo (no date)">
+      <select id="add-task-priority" class="add-task-priority">
+        <option value="">No priority</option>
+        <option value="high">High</option>
+        <option value="medium" selected>Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <select id="add-task-list" class="add-task-list">${listOptions}</select>
+      <button type="button" class="add-task-submit" onclick="submitAddTask()">Add</button>
+      <button type="button" class="add-task-cancel" onclick="cancelAddTask()">Cancel</button>
+    </div>
+  `;
+}
+
+function toggleAddTaskForm() {
+  document.querySelectorAll('.welcome-tasks-add-form').forEach(form => {
+    if (form.style.display === 'none') {
+      form.style.display = '';
+      const desc = form.querySelector('#add-task-desc');
+      if (desc) desc.focus();
+    } else {
+      form.style.display = 'none';
+    }
+  });
+}
+
+function cancelAddTask() {
+  document.querySelectorAll('.welcome-tasks-add-form').forEach(form => {
+    const desc = form.querySelector('#add-task-desc');
+    const due = form.querySelector('#add-task-due');
+    const priority = form.querySelector('#add-task-priority');
+    if (desc) desc.value = '';
+    if (due) due.value = '';
+    if (priority) priority.value = '';
+    form.style.display = 'none';
+  });
+}
+
+async function submitAddTask() {
+  const form = document.querySelector('.welcome-tasks-add-form[style*="display: "], .welcome-tasks-add-form:not([style*="display: none"])');
+  if (!form) return;
+  const descEl = form.querySelector('#add-task-desc');
+  const dueEl = form.querySelector('#add-task-due');
+  const priorityEl = form.querySelector('#add-task-priority');
+  const listEl = form.querySelector('#add-task-list');
+  if (!descEl || !descEl.value.trim()) {
+    if (descEl) descEl.focus();
+    return;
+  }
+  const body = {
+    task: descEl.value.trim(),
+    due: dueEl && dueEl.value ? dueEl.value : null,
+    priority: priorityEl && priorityEl.value ? priorityEl.value : null,
+    list: listEl ? listEl.value : welcomeTasksState.defaultList,
+  };
+  try {
+    const res = await fetchWithRetry(`/api/vault/tasks?mode=${currentMode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, { retries: 1 });
+    const data = await res.json();
+    if (data.list) {
+      const idx = welcomeTasksState.lists.findIndex(l => l.file === data.list.file);
+      if (idx >= 0) welcomeTasksState.lists[idx] = data.list;
+      else welcomeTasksState.lists.unshift(data.list);
+      descEl.value = '';
+      if (dueEl) dueEl.value = '';
+      renderWelcomeTasks();
+    }
+  } catch (err) {
+    console.error('Failed to add task:', err);
+  }
+}
+
+function toggleShowCompleted(show) {
+  localStorage.setItem('tasksShowCompleted', show ? '1' : '0');
+  renderWelcomeTasks();
+}
+
+async function completeTask(checkbox, file, raw) {
+  if (checkbox._pending) {
+    checkbox.checked = false;
+    return;
+  }
+  checkbox._pending = true;
+  const containers = [
+    document.getElementById('welcome-tasks'),
+    document.getElementById('kb-welcome-tasks'),
+  ].filter(c => c && c.style.display !== 'none');
+  const scroll = containers[0] ? containers[0].scrollTop : 0;
+  try {
+    const res = await fetchWithRetry(`/api/vault/tasks/complete?mode=${currentMode}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, raw }),
+    }, { retries: 1 });
+    const data = await res.json();
+    if (data.list) {
+      const idx = welcomeTasksState.lists.findIndex(l => l.file === data.list.file);
+      if (idx >= 0) welcomeTasksState.lists[idx] = data.list;
+      renderWelcomeTasks();
+      if (containers[0]) {
+        requestAnimationFrame(() => { containers[0].scrollTop = scroll; });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to complete task:', err);
+    checkbox.checked = false;
+  } finally {
+    checkbox._pending = false;
+  }
+}
+
+async function uncompleteTask(checkbox, file, raw) {
+  if (checkbox._pending) {
+    checkbox.checked = true;
+    return;
+  }
+  checkbox._pending = true;
+  const containers = [
+    document.getElementById('welcome-tasks'),
+    document.getElementById('kb-welcome-tasks'),
+  ].filter(c => c && c.style.display !== 'none');
+  const scroll = containers[0] ? containers[0].scrollTop : 0;
+  try {
+    const res = await fetchWithRetry(`/api/vault/tasks/uncomplete?mode=${currentMode}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, raw }),
+    }, { retries: 1 });
+    const data = await res.json();
+    if (data.list) {
+      const idx = welcomeTasksState.lists.findIndex(l => l.file === data.list.file);
+      if (idx >= 0) welcomeTasksState.lists[idx] = data.list;
+      renderWelcomeTasks();
+      if (containers[0]) {
+        requestAnimationFrame(() => { containers[0].scrollTop = scroll; });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to uncomplete task:', err);
+    checkbox.checked = true;
+  } finally {
+    checkbox._pending = false;
+  }
 }
 
 // Auto-resize textarea
@@ -6012,6 +6300,26 @@ function switchView(view) {
     sessionsToolbar.style.display = '';
     chatMain.style.display = '';
   }
+}
+
+function goHome() {
+  if (currentView !== 'sessions') {
+    switchView('sessions');
+  }
+  document.getElementById('sidebar-view-menu').style.display = 'none';
+  currentSessionId = null;
+  chatTitle.textContent = getAppTitle();
+  currentWorkingDir = '';
+  currentSessionCreated = '';
+  currentClosedAt = '';
+  welcomeEl.style.display = '';
+  inputArea.style.display = 'none';
+  document.querySelector('.dir-picker-wrapper').style.display = 'none';
+  hideSessionDetails();
+  clearMessages();
+  messagesEl.scrollTop = 0;
+  loadWelcomeSessions();
+  loadSessions();
 }
 
 function showSettingsSection(section) {

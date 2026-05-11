@@ -1627,6 +1627,12 @@ html, body {
   margin: 0 auto;
 }
 
+.welcome-tasks {
+  text-align: left;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
 .welcome-sessions-title {
   font-size: 14px;
   font-weight: 600;
@@ -1693,6 +1699,232 @@ html, body {
 .welcome-topics .welcome-sessions-title {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+}
+
+/* --- Welcome Tasks tab --- */
+
+.welcome-tasks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.welcome-tasks-add-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.welcome-tasks-add-btn:hover {
+  filter: brightness(1.1);
+}
+
+.welcome-tasks-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.welcome-tasks-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.add-task-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+}
+
+.add-task-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.add-task-date,
+.add-task-priority,
+.add-task-list {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+}
+
+.add-task-list {
+  flex: 1;
+  min-width: 120px;
+}
+
+.add-task-submit {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.add-task-cancel {
+  background: none;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.welcome-task-list {
+  margin-bottom: 16px;
+}
+
+.welcome-task-list-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.welcome-task-list-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.welcome-task-list-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.welcome-tasks-subheader {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 0 4px;
+}
+
+.welcome-tasks-completed-header {
+  opacity: 0.7;
+}
+
+.welcome-task-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.welcome-task-row:hover {
+  background: var(--bg-secondary);
+}
+
+.welcome-task-row.done {
+  opacity: 0.55;
+}
+
+.welcome-task-row.done .welcome-task-desc {
+  text-decoration: line-through;
+}
+
+.welcome-task-checkbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.welcome-task-desc {
+  flex: 1;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.welcome-task-due-chip,
+.welcome-task-priority-chip,
+.welcome-task-completed-chip {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+.welcome-task-due-chip.overdue {
+  background: rgba(220, 60, 60, 0.15);
+  color: #d04545;
+}
+
+.welcome-task-due-chip.today {
+  background: rgba(220, 160, 30, 0.18);
+  color: #b67a16;
+}
+
+.welcome-task-due-chip.future {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.welcome-task-priority-chip.priority-high {
+  background: rgba(220, 60, 60, 0.12);
+  color: #c44545;
+}
+
+.welcome-task-priority-chip.priority-medium {
+  background: rgba(120, 150, 220, 0.15);
+  color: var(--accent);
+}
+
+.welcome-task-priority-chip.priority-low {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.welcome-task-completed-chip {
+  background: rgba(100, 180, 100, 0.15);
+  color: #4a8a4a;
 }
 
 .session-item-dir {

@@ -8,6 +8,7 @@ import chatRoutes from './routes/chat';
 import sessionRoutes from './routes/sessions';
 import permissionRoutes from './routes/permissions';
 import vaultRoutes from './routes/vault';
+import tasksRoutes from './routes/tasks';
 import settingsRoutes from './routes/settings';
 import ttsRoutes from './routes/tts';
 import { startReaper, shutdownAll } from './services/session-reaper';
@@ -50,6 +51,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/vault', vaultRoutes);
+app.use('/api/vault/tasks', tasksRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/tts', ttsRoutes);
 
