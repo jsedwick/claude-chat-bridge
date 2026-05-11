@@ -2990,8 +2990,11 @@ function buildSessionFileList() {
       renderFileList('vault-docs-list', 'vault-docs-count', vaultDocs);
       renderFileList('code-files-list', 'code-files-count', codeFiles);
 
-      // Auto-expand sections that have content
-      document.querySelectorAll('.session-details-section').forEach(section => {
+      // Auto-expand sections that have content. Skip #handoff-section — it has
+      // its own collapsed-by-default behavior (auto-expands on Edit click) and
+      // its list always contains static display/editor children, which would
+      // otherwise force-expand it on every render.
+      document.querySelectorAll('.session-details-section:not(#handoff-section)').forEach(section => {
         const list = section.querySelector('.session-details-list');
         if (list && list.children.length > 0) {
           section.classList.add('expanded');
@@ -3150,6 +3153,13 @@ function renderCarryforward(items) {
     row.appendChild(body);
 
     if (!item.resolved) {
+      const investigateBtn = document.createElement('button');
+      investigateBtn.className = 'carryforward-investigate-btn';
+      investigateBtn.textContent = '🔍';
+      investigateBtn.title = 'Investigate in new session';
+      investigateBtn.onclick = () => investigateOpenItem(item);
+      row.appendChild(investigateBtn);
+
       const btn = document.createElement('button');
       btn.className = 'carryforward-resolve-btn';
       btn.textContent = 'Resolve';
@@ -3184,6 +3194,70 @@ function badgeTitle(kind) {
     case 'verify-prose': return 'Manual verification required';
     case 'untagged-forward-looking': return 'No verifier tagged (writer-contract violation)';
     default: return '';
+  }
+}
+
+// Spawn a new session pre-loaded with a directive to investigate one open
+// carryforward item from the currently-viewed closed session. Mirrors
+// continueFromSession's POST /api/sessions + auto-send pattern, but the second
+// auto-message is the item-specific kickoff prompt instead of a generic
+// "continue this session" instruction.
+async function investigateOpenItem(item) {
+  if (!currentSessionId) return;
+  // Capture source metadata BEFORE creating the new session — the POST below
+  // overwrites currentSessionId, chatTitle, currentWorkingDir, etc.
+  const sourceId = currentSessionId;
+  const sourceName = chatTitle.textContent || '(unnamed)';
+  const sourceWorkingDir = currentWorkingDir;
+
+  if (!sourceWorkingDir) {
+    alert('No working directory found for source session.');
+    return;
+  }
+
+  try {
+    const res = await fetchWithRetry('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingDir: sourceWorkingDir, mode: currentMode }),
+    });
+    const session = await res.json();
+
+    currentSessionId = session.id;
+    chatTitle.textContent = session.name;
+    currentWorkingDir = session.workingDir || '';
+    currentSessionCreated = session.created || '';
+    currentClosedAt = '';
+    welcomeEl.style.display = 'none';
+    inputArea.style.display = 'block';
+    document.querySelector('.dir-picker-wrapper').style.display = '';
+    hideSessionDetails();
+    clearMessages();
+    loadSessions();
+    switchView('sessions');
+
+    const modeCommand = currentMode === 'personal' ? '/vault:personal' : '/vault:work';
+    messageInput.value = modeCommand;
+    await sendMessage();
+
+    const verifier = item.verifier_text ? `[${item.kind}] ${item.verifier_text}` : `[${item.kind}] (no verifier)`;
+    messageInput.value = [
+      `You've been spawned to investigate one open carryforward item from session "${sourceName}" (session ID: \`${sourceId}\`):`,
+      '',
+      `> ${item.text}`,
+      '',
+      `**Verifier:** ${verifier}`,
+      '',
+      `Please use \`get_session_context\` to load the source session's full context, then:`,
+      `1. If the verifier is a command, run it and report what it tells you.`,
+      `2. If verify-prose, do what the verifier text asks (read code, ask me, poke a UI).`,
+      `3. Determine whether the item is (a) already resolved, (b) still owed and actionable, or (c) deferred for a strategic reason.`,
+      '',
+      `The Open Items panel on session \`${sourceId}\` is the manual UI for marking it resolved — we will not auto-close from this session.`,
+    ].join('\n');
+    sendMessage();
+  } catch (err) {
+    console.error('Failed to investigate open item:', err);
   }
 }
 
