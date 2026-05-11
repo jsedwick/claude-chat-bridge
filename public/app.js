@@ -7280,6 +7280,21 @@ async function kbSearchDocs(query) {
         }
         loadKbFile(r.path);
       });
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showKbContextMenu(e.clientX, e.clientY, r, 1);
+      });
+      let _touchTimer;
+      item.addEventListener('touchstart', (e) => {
+        _touchTimer = setTimeout(() => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          showKbContextMenu(touch.clientX, touch.clientY, r, 1);
+        }, 500);
+      }, { passive: false });
+      item.addEventListener('touchend', () => clearTimeout(_touchTimer));
+      item.addEventListener('touchmove', () => clearTimeout(_touchTimer));
       resultsEl.appendChild(item);
     }
   } catch (err) {
