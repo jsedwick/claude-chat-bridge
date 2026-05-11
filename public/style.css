@@ -225,6 +225,10 @@ html, body {
   50% { opacity: 0.25; }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .session-item.pending { animation: none; opacity: 0.5; }
+}
+
 .session-item-name {
   font-size: 14px;
   font-weight: 500;

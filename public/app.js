@@ -2675,9 +2675,23 @@ function toggleArchiveSection() {
   chevron.classList.toggle('expanded', !isOpen);
 }
 
+const sessionItemPendingTimeouts = new Map();
+
 function setSessionItemPending(id, pending) {
   const row = document.querySelector(`.session-item[data-session-id="${CSS.escape(id)}"]`);
   if (row) row.classList.toggle('pending', pending);
+  const existing = sessionItemPendingTimeouts.get(id);
+  if (existing) {
+    clearTimeout(existing);
+    sessionItemPendingTimeouts.delete(id);
+  }
+  if (pending) {
+    sessionItemPendingTimeouts.set(id, setTimeout(() => {
+      const r = document.querySelector(`.session-item[data-session-id="${CSS.escape(id)}"]`);
+      if (r) r.classList.remove('pending');
+      sessionItemPendingTimeouts.delete(id);
+    }, 10000));
+  }
 }
 
 async function archiveSessionItem(id) {
