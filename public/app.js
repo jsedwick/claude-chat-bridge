@@ -367,6 +367,14 @@ async function setMode(mode) {
     // If topics tab is currently active, reload immediately
     const activeTopicsTab = document.querySelector('.welcome-tab.active[data-tab="topics"], .welcome-tab.active[data-tab="kb-topics"]');
     if (activeTopicsTab) loadWelcomeTopics();
+    // Reset tasks loaded flags so they re-fetch for the new mode
+    ['welcome-tasks', 'kb-welcome-tasks'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) delete el.dataset.loaded;
+    });
+    // If tasks tab is currently active, reload immediately
+    const activeTasksTab = document.querySelector('.welcome-tab.active[data-tab="tasks"], .welcome-tab.active[data-tab="kb-tasks"]');
+    if (activeTasksTab) loadWelcomeTasks();
   } catch (err) {
     console.error('Failed to switch mode:', err);
   } finally {
