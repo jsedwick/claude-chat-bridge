@@ -3202,8 +3202,10 @@ function badgeTitle(kind) {
 // continueFromSession's POST /api/sessions + auto-send pattern, but the second
 // auto-message is the item-specific kickoff prompt instead of a generic
 // "continue this session" instruction.
+let investigatePending = false;
+
 async function investigateOpenItem(item) {
-  if (!currentSessionId) return;
+  if (!currentSessionId || investigatePending) return;
   // Capture source metadata BEFORE creating the new session — the POST below
   // overwrites currentSessionId, chatTitle, currentWorkingDir, etc.
   const sourceId = currentSessionId;
@@ -3215,6 +3217,7 @@ async function investigateOpenItem(item) {
     return;
   }
 
+  investigatePending = true;
   try {
     const res = await fetchWithRetry('/api/sessions', {
       method: 'POST',
@@ -3258,6 +3261,8 @@ async function investigateOpenItem(item) {
     sendMessage();
   } catch (err) {
     console.error('Failed to investigate open item:', err);
+  } finally {
+    investigatePending = false;
   }
 }
 
