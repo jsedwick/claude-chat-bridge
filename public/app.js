@@ -3302,7 +3302,10 @@ async function resolveCarryforwardItem(text) {
         if (hData.handoff) {
           const hDisplay = document.getElementById('handoff-display');
           hDisplay.innerHTML = escapeHtml(hData.handoff).replace(/\n/g, '<br>');
-          document.getElementById('handoff-textarea').value = hData.handoff;
+          const hEditor = document.getElementById('handoff-editor');
+          if (hEditor && hEditor.style.display === 'none') {
+            document.getElementById('handoff-textarea').value = hData.handoff;
+          }
         }
       } catch {}
       if (panel) {
