@@ -2267,8 +2267,11 @@ async function loadWelcomeTopics() {
 
 function openSessionInKb(vaultPath) {
   kbPendingNavigation = vaultPath;
+  // External entry to KB — clear in-KB history and skip the history push inside
+  // loadKbFile, same fresh-trip semantics as navigateToKbFile.
+  kbHistory = [];
   switchView('kb');
-  loadKbFile(vaultPath);
+  loadKbFile(vaultPath, { skipHistory: true });
 }
 
 // --- Welcome Tasks tab ---
@@ -7486,8 +7489,12 @@ async function loadKbPreferences() {
       toggleKbRecentView();
     }
 
-    // Restore last open file — skip if a link navigation is already targeting a specific file
-    if (prefs.currentFile && !kbPendingNavigation) {
+    // Restore last open file — skip if a link navigation is already targeting a specific
+    // file (kbPendingNavigation) OR has already committed one (kbCurrentFile). Both checks
+    // are required: loadKbFile() clears kbPendingNavigation the moment its own fetch
+    // resolves, so if it wins the race against this fetch, only kbCurrentFile blocks the
+    // restore from clobbering the user's intended target.
+    if (prefs.currentFile && !kbPendingNavigation && !kbCurrentFile) {
       loadKbFile(prefs.currentFile, { skipHistory: true });
     }
   } catch {
@@ -7665,12 +7672,18 @@ function resolveVaultPath(filePath) {
 
 function navigateToKbFile(filePath) {
   const resolved = resolveVaultPath(filePath);
-  if (currentView === 'sessions' && currentSessionId) {
+  // Fresh trip into KB from a session — discard prior in-KB history AND skip the
+  // history push inside loadKbFile, since the stale kbCurrentFile from the
+  // previous trip would otherwise get pushed onto the freshly-cleared stack and
+  // beat Back to the entry point on first press.
+  const externalEntry = currentView === 'sessions' && currentSessionId;
+  if (externalEntry) {
     kbEntryPoint = { sessionId: currentSessionId };
+    kbHistory = [];
   }
   kbPendingNavigation = resolved;
   switchView('kb');
-  loadKbFile(resolved);
+  loadKbFile(resolved, { skipHistory: externalEntry });
 }
 
 function renderVaultFileLabel(filePath) {
@@ -8738,8 +8751,10 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     const data = await res.json();
     if (data.error) return;
 
-    // Push current file to history before navigating away
-    if (!skipHistory && kbCurrentFile) {
+    // Push current file to history before navigating away. Skip self-pushes (clicking a
+    // link to the file already displayed) — they'd create a phantom "back" target that
+    // navigates to the same place the user is already on.
+    if (!skipHistory && kbCurrentFile && kbCurrentFile.path !== data.path) {
       kbHistory.push(kbCurrentFile.path);
     }
 
