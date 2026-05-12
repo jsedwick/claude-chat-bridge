@@ -360,7 +360,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           resetStreamedText(appSessionId);
         }
 
-        const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
+        const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId), getPendingAskUser(appSessionId));
         if (result) {
           const events = Array.isArray(result) ? result : [result];
           for (const event of events) {
@@ -515,7 +515,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           if (parsed.type === 'user') {
             resetStreamedText(appSessionId);
           }
-          const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId));
+          const result = parseClaudeEvent(parsed, getEmittedToolIds(appSessionId), hasStreamedText(appSessionId), getPendingAskUser(appSessionId));
           if (result) {
             const events = Array.isArray(result) ? result : [result];
             for (const event of events) {
@@ -598,6 +598,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
     // Remove the initial listener and close the stream
     sessionToolUseIds.delete(appSessionId);
+    sessionPendingAskUser.delete(appSessionId);
     stream.listeners.delete(onEvent);
     closeStream(appSessionId);
     onClose(capturedSessionId);
@@ -605,6 +606,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   proc.on('error', (err) => {
     activeSessions.delete(trackingId);
+    sessionPendingAskUser.delete(appSessionId);
     emitToStream(appSessionId, { type: 'error', data: `Failed to spawn claude: ${err.message}` });
     stream.listeners.delete(onEvent);
     closeStream(appSessionId);
@@ -616,6 +618,14 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 const sessionToolUseIds = new Map<string, Set<string>>();
 // Track whether text has been streamed via deltas (to skip duplicate in assistant snapshot)
 const sessionStreamedText = new Map<string, boolean>();
+// Track pending AskUserQuestion tool_uses awaiting full input via input_json_delta.
+// Keyed by appSessionId, then by stream content_block index. AskUserQuestion needs
+// special handling because in -p mode the SDK auto-declines the call (no interactive
+// picker available), so the assistant snapshot carrying the full input often never
+// arrives. Buffering the input_json_delta stream lets us synthesize a complete
+// tool_use event so the client can render clickable option cards.
+interface PendingAskUser { id: string; name: string; partial: string; }
+const sessionPendingAskUser = new Map<string, Map<number, PendingAskUser>>();
 
 function getEmittedToolIds(appSessionId: string): Set<string> {
   let ids = sessionToolUseIds.get(appSessionId);
@@ -638,7 +648,21 @@ function resetStreamedText(appSessionId: string): void {
   sessionStreamedText.delete(appSessionId);
 }
 
-function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>, streamedText: boolean): StreamEvent | StreamEvent[] | null {
+function getPendingAskUser(appSessionId: string): Map<number, PendingAskUser> {
+  let m = sessionPendingAskUser.get(appSessionId);
+  if (!m) {
+    m = new Map();
+    sessionPendingAskUser.set(appSessionId, m);
+  }
+  return m;
+}
+
+function parseClaudeEvent(
+  parsed: any,
+  emittedToolUseIds: Set<string>,
+  streamedText: boolean,
+  pendingAskUser: Map<number, PendingAskUser>,
+): StreamEvent | StreamEvent[] | null {
   // Init event
   if (parsed.type === 'system' && parsed.subtype === 'init') {
     return { type: 'init', data: JSON.stringify({ session_id: parsed.session_id }) };
@@ -695,8 +719,30 @@ function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>, streamedT
       return { type: 'thinking', data: evt.delta.thinking };
     }
 
+    // input_json_delta — accumulate partial JSON for AskUserQuestion so we can
+    // emit a complete tool_use event before the SDK auto-declines the call.
+    if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta') {
+      const pending = pendingAskUser.get(evt.index);
+      if (pending) {
+        pending.partial += (evt.delta.partial_json || '');
+      }
+      return null;
+    }
+
     // Tool use start (from stream)
     if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+      // Defer AskUserQuestion emission until input is fully accumulated. The
+      // SDK declines the call in -p mode (no interactive picker), so the
+      // assistant snapshot that would carry the full input often never arrives.
+      // We synthesize a complete tool_use from content_block_stop instead.
+      if (evt.content_block.name === 'AskUserQuestion') {
+        pendingAskUser.set(evt.index, {
+          id: evt.content_block.id,
+          name: evt.content_block.name,
+          partial: '',
+        });
+        return null;
+      }
       if (emittedToolUseIds.has(evt.content_block.id)) return null;
       emittedToolUseIds.add(evt.content_block.id);
       return {
@@ -706,6 +752,29 @@ function parseClaudeEvent(parsed: any, emittedToolUseIds: Set<string>, streamedT
           name: evt.content_block.name,
         }),
       };
+    }
+
+    // content_block_stop — finalize a deferred AskUserQuestion tool_use with
+    // its accumulated input. Adds to emittedToolUseIds so the assistant
+    // snapshot's later duplicate emission is suppressed (or arrives as _update,
+    // which the client handles idempotently via renderedAskQuestions dedup).
+    if (evt.type === 'content_block_stop') {
+      const pending = pendingAskUser.get(evt.index);
+      if (pending) {
+        pendingAskUser.delete(evt.index);
+        let input: any = {};
+        try {
+          if (pending.partial) input = JSON.parse(pending.partial);
+        } catch (err) {
+          console.warn(`[parseClaudeEvent] AskUserQuestion input parse failed: ${(err as Error).message}; partial=${pending.partial.substring(0, 200)}`);
+        }
+        emittedToolUseIds.add(pending.id);
+        return {
+          type: 'tool_use',
+          data: JSON.stringify({ id: pending.id, name: pending.name, input }),
+        };
+      }
+      return null;
     }
 
     // Tool result (from stream)

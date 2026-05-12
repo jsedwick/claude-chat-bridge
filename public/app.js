@@ -5545,26 +5545,147 @@ async function sendMessage(skipRender = false) {
   let everRenderedText = false; // Track if ANY text was rendered (survives tool_use clears)
   let slowApiTimer = null;
   const renderedAskQuestions = new Set(); // Track AskUserQuestion tool IDs already rendered to chat
+  // Suppress assistant text events for the remainder of the current response cycle.
+  // Set when AskUserQuestion renders clickable cards — Claude's `-p` mode auto-declines
+  // the tool and follows up with "the question prompt didn't go through, let me lay
+  // out the choices inline…", which would be redundant noise underneath the cards.
+  // Cleared on 'done'.
+  let suppressAskUserFallback = false;
+
+  function submitAskUserAnswers(cardEl, payload) {
+    if (cardEl.classList.contains('ask-user-card-submitted')) return;
+    cardEl.classList.add('ask-user-card-submitted');
+
+    // Mark chosen option buttons .selected so the dim-non-selected style picks
+    // the right targets. The Send-answers path already set .selected during
+    // toggling; this covers the single-question single-select auto-submit path
+    // where the click goes straight to submit without a separate select step.
+    const filled = payload.filter(p => p.answers.length > 0);
+    filled.forEach(p => {
+      const labels = new Set(p.answers);
+      cardEl.querySelectorAll('.ask-user-option-btn').forEach(b => {
+        const labelEl = b.querySelector('.ask-user-option-label');
+        if (labelEl && labels.has(labelEl.textContent)) b.classList.add('selected');
+      });
+    });
+    cardEl.querySelectorAll('button').forEach(b => { b.disabled = true; });
+
+    // Submission text: single-question sends just the answer (the question is
+    // already on screen in the card and in the prior assistant turn). Multi-
+    // question prefixes each answer with its header or a truncated question
+    // excerpt so Claude can match answers back to questions.
+    let answerText;
+    if (filled.length === 1) {
+      answerText = filled[0].answers.join(', ');
+    } else {
+      answerText = filled.map(p => {
+        const label = p.q.header || p.q.question.split(/[?:.\n]/)[0].trim().substring(0, 80);
+        return `${label}: ${p.answers.join(', ')}`;
+      }).join('\n');
+    }
+
+    const sent = document.createElement('div');
+    sent.className = 'ask-user-sent-summary';
+    sent.textContent = '→ ' + answerText.replace(/\n/g, ' / ');
+    cardEl.appendChild(sent);
+
+    messageInput.value = answerText;
+    sendMessage();
+  }
 
   function renderAskUserQuestionInChat(toolId, questions) {
     if (renderedAskQuestions.has(toolId)) return;
     renderedAskQuestions.add(toolId);
-    const md = questions.map(q => {
-      const parts = [];
-      if (q.header) parts.push(`**${q.header}**\n`);
-      parts.push(q.question);
-      if (q.multiSelect) parts.push(' *(select multiple)*');
-      parts.push('');
-      for (const opt of (q.options || [])) {
-        const desc = opt.description ? ` — ${opt.description}` : '';
-        parts.push(`- **${opt.label}**${desc}`);
+    if (!Array.isArray(questions) || questions.length === 0) return;
+
+    const container = createAssistantMessage();
+    container.classList.add('ask-user-card');
+
+    const form = document.createElement('div');
+    form.className = 'ask-user-form';
+
+    const selections = new Map(); // qIdx → string[]
+    const isSimpleSingleSelect = questions.length === 1 && !questions[0].multiSelect;
+
+    questions.forEach((q, qIdx) => {
+      selections.set(qIdx, []);
+      const qBlock = document.createElement('div');
+      qBlock.className = 'ask-user-question-block';
+
+      if (q.header) {
+        const tag = document.createElement('div');
+        tag.className = 'ask-user-question-tag';
+        tag.textContent = q.header;
+        qBlock.appendChild(tag);
       }
-      return parts.join('\n');
-    }).join('\n\n---\n\n');
-    const el = createAssistantMessage();
-    el.innerHTML = renderMarkdown(md);
-    ensureCopyButton(el);
+
+      const qText = document.createElement('div');
+      qText.className = 'ask-user-question-text';
+      qText.textContent = q.question + (q.multiSelect ? '  (select multiple)' : '');
+      qBlock.appendChild(qText);
+
+      const optsContainer = document.createElement('div');
+      optsContainer.className = 'ask-user-options';
+
+      (q.options || []).forEach(opt => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ask-user-option-btn';
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'ask-user-option-label';
+        labelSpan.textContent = opt.label;
+        btn.appendChild(labelSpan);
+        if (opt.description) {
+          const descSpan = document.createElement('span');
+          descSpan.className = 'ask-user-option-desc';
+          descSpan.textContent = opt.description;
+          btn.appendChild(descSpan);
+        }
+
+        btn.addEventListener('click', () => {
+          if (isSimpleSingleSelect) {
+            submitAskUserAnswers(container, [{ q, answers: [opt.label] }]);
+            return;
+          }
+          if (q.multiSelect) {
+            const cur = selections.get(qIdx);
+            const i = cur.indexOf(opt.label);
+            if (i === -1) cur.push(opt.label);
+            else cur.splice(i, 1);
+            btn.classList.toggle('selected');
+          } else {
+            selections.set(qIdx, [opt.label]);
+            optsContainer.querySelectorAll('.ask-user-option-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+          }
+        });
+
+        optsContainer.appendChild(btn);
+      });
+
+      qBlock.appendChild(optsContainer);
+      form.appendChild(qBlock);
+    });
+
+    if (!isSimpleSingleSelect) {
+      const submit = document.createElement('button');
+      submit.type = 'button';
+      submit.className = 'ask-user-submit-btn';
+      submit.textContent = 'Send answers';
+      submit.addEventListener('click', () => {
+        const payload = questions.map((q, qIdx) => ({ q, answers: selections.get(qIdx) || [] }));
+        if (!payload.some(p => p.answers.length > 0)) return;
+        submitAskUserAnswers(container, payload);
+      });
+      form.appendChild(submit);
+    }
+
+    container.appendChild(form);
     scrollToBottom();
+    suppressAskUserFallback = true;
+    // Mark turn as having produced visible content so the 'done' result_text
+    // recovery branch doesn't resurrect the suppressed fallback prose.
+    everRenderedText = true;
   }
 
   function showSlowApiIndicator() {
@@ -5621,6 +5742,13 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'text':
+          // After AskUserQuestion renders clickable cards, suppress the assistant's
+          // fallback prose ("the question didn't go through, let me lay out…") for
+          // the remainder of this response cycle. Cleared on 'done'.
+          if (suppressAskUserFallback) {
+            clearSlowApi();
+            break;
+          }
           clearSlowApi();
           ttsFaceSetActivity('idle');
           deactivateToolGroup();
@@ -5750,6 +5878,7 @@ async function sendMessage(skipRender = false) {
 
         case 'done':
           ttsFaceResponseEnd();
+          suppressAskUserFallback = false;
           logSSE('done', { textLen: currentText.length, streamCompleted });
           // Safety net: recover text from result if text_delta events were lost
           try {

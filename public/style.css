@@ -2734,6 +2734,141 @@ pre.streaming {
   margin-top: 1px;
 }
 
+/* Inline AskUserQuestion card — interactive option buttons rendered as an
+   assistant chat message. The user clicks an option to auto-submit the answer
+   as the next user message (single-select) or toggles selections then clicks
+   "Send answers" (multi-select / multi-question). */
+.message.assistant.ask-user-card {
+  border-left: 3px solid #f59e0b;
+}
+
+.ask-user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.ask-user-question-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-user-question-block + .ask-user-question-block {
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+}
+
+.ask-user-question-tag {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.ask-user-question-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-user-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--code-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.ask-user-option-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: #f59e0b;
+}
+
+.ask-user-option-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ask-user-option-btn.selected {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: #f59e0b;
+}
+
+.ask-user-option-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ask-user-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ask-user-option-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.ask-user-submit-btn {
+  align-self: flex-end;
+  padding: 6px 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.ask-user-submit-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.ask-user-submit-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ask-user-card-submitted .ask-user-option-btn:not(.selected) {
+  opacity: 0.4;
+}
+
+.ask-user-sent-summary {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 /* Structured output cards for MCP tools with outputSchema */
 .struct-header {
   font-size: 13px;
