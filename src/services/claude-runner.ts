@@ -265,10 +265,14 @@ export function runClaude(options: ClaudeRunnerOptions): void {
 
   let forkCopyPath: string | null = null;
   if (sessionId) {
+    console.log(`[resume:${appSessionId.slice(0,8)}] mode=resume claudeSessionId=${sessionId}`);
     args.push('--resume', sessionId);
   } else if (forkFromSessionId) {
+    console.log(`[resume:${appSessionId.slice(0,8)}] mode=fork forkFromSessionId=${forkFromSessionId}`);
     forkCopyPath = ensureForkSessionAvailable(forkFromSessionId, workingDir || config.workingDir);
     args.push('--resume', forkFromSessionId, '--fork-session');
+  } else {
+    console.log(`[resume:${appSessionId.slice(0,8)}] mode=fresh (no persisted claudeSessionId)`);
   }
 
   // When no images, pass message as CLI arg (simpler)

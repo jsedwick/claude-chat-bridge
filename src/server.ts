@@ -3,6 +3,7 @@ import https from 'https';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
 import { config } from './config';
 import chatRoutes from './routes/chat';
 import sessionRoutes from './routes/sessions';
@@ -70,6 +71,13 @@ app.get('/{*path}', (_req, res) => {
 resolveShellEnv().then(startServer);
 
 function startServer() {
+  // Diagnostic startup banner — correlates restart events with per-invocation
+  // --resume decisions in claude-runner. After a bridge restart, the next
+  // [resume:...] line tells us whether the persisted claudeSessionId survived
+  // (mode=resume) or was lost (mode=fresh).
+  const bridgeStartId = randomBytes(4).toString('hex');
+  console.log(`[bridge-start] pid=${process.pid} bridgeStartId=${bridgeStartId} time=${new Date().toISOString()}`);
+
   // Determine HTTP vs HTTPS mode
   const args = process.argv.slice(2);
   const useHttp = args.includes('--http');
