@@ -6158,7 +6158,8 @@ function linkifyVaultPathsInHtml(html) {
   // Match vault-internal relative paths (e.g. "sessions/2026-03/file.md", "topics/file.md")
   // These lack a vault name prefix — resolve using first configured vault
   html = html.replace(/(?<![/"'\w])((?:sessions|topics|projects|decisions)\/[^<"'\n]*?\.md)/g, (match) => {
-    const vaultPrefix = VAULT_NAMES.length ? `${VAULT_NAMES[0]}/` : '';
+    const primary = getActiveModePrimary();
+    const vaultPrefix = primary ? `${primary}/` : '';
     const resolved = resolveVaultPath(vaultPrefix + match);
     const short = match.split('/').slice(-2).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${short}</span>`;
@@ -7760,6 +7761,15 @@ let VAULT_NAMES = [];
 let VAULT_NAMES_ALT = '';
 let VAULT_PATH_RE = null;
 let VAULT_NAMES_RE = null;
+let PRIMARY_VAULTS_BY_MODE = {};
+
+// Vault-internal relative paths emitted by MCP tools (e.g. "sessions/2026-05/foo.md")
+// must be prefixed with the active mode's primary vault, not VAULT_NAMES[0] — that
+// constant is always the first configured primary (AI-Work), so Personal-mode links
+// would resolve to the Work vault and 404 silently in loadKbFile.
+function getActiveModePrimary() {
+  return PRIMARY_VAULTS_BY_MODE[currentMode] || VAULT_NAMES[0] || '';
+}
 
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -7770,8 +7780,13 @@ async function loadBridgePaths() {
     // Derive vault info from MCP config (Vault Setup)
     const res = await fetchWithRetry('/api/settings');
     const data = await res.json();
-    const allVaults = [...(data.primaryVaults || []), ...(data.secondaryVaults || [])];
+    const primaries = data.primaryVaults || [];
+    const allVaults = [...primaries, ...(data.secondaryVaults || [])];
     VAULT_NAMES = allVaults.map(v => v.name);
+    PRIMARY_VAULTS_BY_MODE = {};
+    for (const v of primaries) {
+      if (v.mode) PRIMARY_VAULTS_BY_MODE[v.mode] = v.name;
+    }
     OBSIDIAN_ROOT = allVaults.length ? allVaults[0].path.replace(/\/[^/]+$/, '') : '';
     if (VAULT_NAMES.length && OBSIDIAN_ROOT) {
       const namesPattern = VAULT_NAMES.map(escapeRegex).join('|');
@@ -7842,7 +7857,8 @@ function linkifyVaultPaths(escapedText) {
   // Match vault-internal relative paths (e.g. "sessions/2026-03/file.md", "topics/file.md")
   escapedText = escapedText.replace(/(?<![\/\w])((?:sessions|topics|projects|decisions)\/[^&lt;\n]*?\.md)/g, (match) => {
     const realPath = match.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-    const vaultPrefix = VAULT_NAMES.length ? `${VAULT_NAMES[0]}/` : '';
+    const primary = getActiveModePrimary();
+    const vaultPrefix = primary ? `${primary}/` : '';
     const resolved = resolveVaultPath(vaultPrefix + realPath);
     const short = realPath.split('/').slice(-2).join('/');
     return `<span class="tool-file-link" onclick="navigateToKbFile('${resolved.replace(/'/g, "\\'")}')" title="Open in Knowledge Base">${escapeHtml(short)}</span>`;
