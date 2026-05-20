@@ -12,6 +12,7 @@ import vaultRoutes from './routes/vault';
 import tasksRoutes from './routes/tasks';
 import settingsRoutes from './routes/settings';
 import ttsRoutes from './routes/tts';
+import triageRoutes from './routes/triage';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
 
@@ -55,6 +56,7 @@ app.use('/api/vault', vaultRoutes);
 app.use('/api/vault/tasks', tasksRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/tts', ttsRoutes);
+app.use('/api/triage', triageRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

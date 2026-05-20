@@ -2869,9 +2869,10 @@ pre.streaming {
   font-style: italic;
 }
 
-/* Decision 023 Phase 3 — Carryforward triage card. Rendered when an assistant
-   message contains a <!--triage-menu:v1 ...--> marker. Per item: 3 verb buttons
-   (Resolve, Dismiss, Elaborate) that submit "<n> <verb>" as the next user message. */
+/* Decision 023 Phase 3+5 — Carryforward triage card. Phase 5 swapped the
+   per-row verb buttons (Resolve / Dismiss / Elaborate) for a single checkbox
+   + Elaborate link, with a single Submit button in the footer that batches
+   all checked rows into one `triage:1=done,...` message. */
 .triage-card {
   margin-top: 6px;
   border: 1px solid var(--border);
@@ -2898,14 +2899,35 @@ pre.streaming {
 .triage-row {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .triage-row:last-child {
   border-bottom: none;
+}
+
+.triage-row-label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.triage-row:not(.triage-row-resolving) .triage-row-label:hover {
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.triage-checkbox {
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #6366f1;
 }
 
 .triage-row-text {
@@ -2927,6 +2949,7 @@ pre.streaming {
 }
 
 .triage-slug {
+  display: block;
   margin-top: 3px;
   font-size: 11px;
   color: var(--text-secondary);
@@ -2939,64 +2962,129 @@ pre.streaming {
   color: var(--text-secondary);
 }
 
-.triage-actions {
-  display: flex;
-  gap: 4px;
+.triage-elaborate-link {
   flex-shrink: 0;
-}
-
-.triage-btn {
-  padding: 4px 10px;
+  padding: 2px 8px;
   font: inherit;
   font-size: 12px;
   font-weight: 500;
   background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  color: #6366f1;
+  border: 1px solid transparent;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
-.triage-btn:hover:not(:disabled) {
+.triage-elaborate-link:hover:not(:disabled) {
   background: rgba(99, 102, 241, 0.08);
-  border-color: #6366f1;
+  border-color: rgba(99, 102, 241, 0.3);
 }
 
-.triage-btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.triage-btn.triage-btn-selected {
-  background: rgba(99, 102, 241, 0.18);
-  border-color: #6366f1;
-  color: var(--text);
-}
-
-.triage-btn:disabled {
+.triage-elaborate-link:disabled {
   cursor: default;
   opacity: 0.5;
 }
 
-.triage-card-submitted .triage-btn:not(.triage-btn-selected) {
-  opacity: 0.4;
+.triage-elaborate-link.triage-btn-selected {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: #6366f1;
+}
+
+.triage-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(99, 102, 241, 0.03);
+}
+
+.triage-submit {
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  background: #6366f1;
+  color: white;
+  border: 1px solid #6366f1;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 120ms ease, transform 80ms ease;
+  flex-shrink: 0;
+}
+
+.triage-submit:hover:not(:disabled) {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.triage-submit:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.triage-submit:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .triage-card-hint {
-  padding: 6px 12px;
   font-size: 11px;
   color: var(--text-secondary);
   font-style: italic;
-  border-top: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Phase 5+ — per-row "resolving" state while tag_handoff_item is in flight.
+   The row fades + locks its interactive elements; other rows stay clickable so
+   the user can elaborate or check more items in parallel. */
+.triage-row-resolving {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Phase 5+ — collapsed "complete" state once every item has been resolved.
+   applyTriageUpdate removes the rows + footer and sets the header to "Triage
+   complete"; this rule just trims the visual padding. */
+.triage-card-complete .triage-card-header {
+  border-bottom: none;
+}
+
+/* Phase 5 — placeholder shown while the marker is still streaming OR while
+   the Phase 5+ /api/triage/current fetch is in flight. */
+.triage-card-loading {
+  margin-top: 6px;
+  padding: 12px 16px;
+  border: 1px dashed var(--border);
+  border-left: 3px solid #6366f1;
+  border-radius: 8px;
+  background: var(--bg-secondary, rgba(99, 102, 241, 0.03));
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Phase 5+ — error state when /api/triage/current fails. */
+.triage-card-error {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 1px solid #f59e0b;
+  border-left: 3px solid #f59e0b;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.06);
+  font-size: 13px;
+  color: var(--text);
 }
 
 @media (max-width: 640px) {
-  .triage-row {
-    flex-direction: column;
+  .triage-card-footer {
+    flex-direction: column-reverse;
     align-items: stretch;
   }
-  .triage-actions {
-    margin-top: 6px;
+  .triage-submit {
+    width: 100%;
   }
 }
 

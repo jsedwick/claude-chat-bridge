@@ -5072,21 +5072,34 @@ function hideNewContentPill() {
   if (pill) pill.classList.remove('visible');
 }
 
-// Decision 023 Phase 3 — clickable carryforward-triage card.
+// Decision 023 Phase 3+5 — clickable carryforward-triage card.
 // The /vault:mb-family skills emit a `<!--triage-menu:v1 {json} -->` marker alongside
 // the human-readable list. renderMarkdown() detects the marker, strips the markdown
 // duplicate, and appends a clickable card built from the JSON. Click handlers are
 // delegated on messagesEl so they survive innerHTML rebuilds during streaming.
+//
+// Phase 5: per-row checkbox + Elaborate link + single Submit button (bulk done).
+// Bulk submit emits `triage:N=done,M=done,...` for the skill to dispatch in one turn.
+// Mid-stream rendering is deferred via hasOpenTriageMarker/stripPartialTriageBlock.
+//
+// Phase 5+ (persistent card): the skill emits a `<!--triage-update:v1 {removed:[...]} -->`
+// marker after tag_handoff_item calls. applyTriageUpdate() finds the most recent
+// triage card in the DOM and removes the listed rows in place — the card persists
+// across actions rather than being re-rendered. Elaborate emits no marker, so the
+// original card is untouched.
 const TRIAGE_MARKER_RE = /<!--triage-menu:v1\s*([\s\S]*?)\s*-->/;
 const TRIAGE_BLOCK_RE = /## Carryforward triage[\s\S]*?(?:_Verbs:[^_]*_)\s*/;
+const TRIAGE_OPEN_TOKEN = '<!--triage-menu:v1';
+const TRIAGE_UPDATE_RE = /<!--triage-update:v1\s*([\s\S]*?)\s*-->/;
 
-function extractTriagePayload(text) {
+// Returns the parsed JSON payload from a complete triage-menu marker, or null
+// if absent / malformed / empty. The payload may contain `items` (Phase 5 back-
+// compat — inline items array) or `ref` (Phase 5+ — fetch from /api/triage).
+function extractTriageMarker(text) {
   const m = text.match(TRIAGE_MARKER_RE);
   if (!m) return null;
   try {
-    const payload = JSON.parse(m[1]);
-    if (!Array.isArray(payload.items) || payload.items.length === 0) return null;
-    return payload.items;
+    return JSON.parse(m[1]);
   } catch (err) {
     return null;
   }
@@ -5094,6 +5107,122 @@ function extractTriagePayload(text) {
 
 function stripTriageBlock(text) {
   return text.replace(TRIAGE_MARKER_RE, '').replace(TRIAGE_BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Phase 5+ — server-fetched triage cache. Keyed by ref so a future stream can
+// invalidate by emitting a different ref value. For now `latest` is the only
+// ref we use; the cache effectively has one slot.
+let triageCache = null; // null | { ref, pending } | { ref, items } | { ref, error }
+
+function fetchTriageFromServer(ref) {
+  if (triageCache && triageCache.ref === ref && (triageCache.items || triageCache.error)) {
+    return; // already resolved
+  }
+  if (triageCache && triageCache.ref === ref && triageCache.pending) {
+    return; // already in flight
+  }
+  triageCache = { ref, pending: true };
+  const mode = typeof currentMode === 'string' ? currentMode : 'work';
+  fetch(`/api/triage/current?mode=${encodeURIComponent(mode)}`)
+    .then((r) => r.json())
+    .then((data) => {
+      const items = Array.isArray(data.items) ? data.items : [];
+      triageCache = { ref, items };
+      // Replace any in-DOM placeholders so the swap feels instant rather than
+      // waiting for the next stream chunk to trigger a re-render.
+      const html = items.length > 0 ? renderTriageCardHtml(items) : '';
+      messagesEl.querySelectorAll('.triage-card-loading').forEach((ph) => {
+        if (html) {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = html;
+          ph.replaceWith(tmp.firstChild);
+        } else {
+          ph.remove();
+        }
+      });
+    })
+    .catch((err) => {
+      console.error('[triage] fetch failed:', err);
+      triageCache = { ref, error: err && err.message ? err.message : 'fetch failed' };
+      messagesEl.querySelectorAll('.triage-card-loading').forEach((ph) => {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = renderTriageErrorHtml(triageCache.error);
+        ph.replaceWith(tmp.firstChild);
+      });
+    });
+}
+
+function renderTriageErrorHtml(message) {
+  return '<div class="triage-card-error">Triage menu unavailable: ' + escapeTriageHtml(String(message || 'unknown error')) + '</div>';
+}
+
+// True when the marker has opened but the closing `-->` has not yet arrived.
+// Used to suppress the in-flight JSON payload mid-stream.
+function hasOpenTriageMarker(text) {
+  const openIdx = text.lastIndexOf(TRIAGE_OPEN_TOKEN);
+  if (openIdx === -1) return false;
+  return !text.slice(openIdx).includes('-->');
+}
+
+// Strip the partial marker block (and everything after). The marker is the LAST
+// thing the skill emits, so truncating at the open token hides the streaming JSON.
+function stripPartialTriageBlock(text) {
+  const idx = text.lastIndexOf(TRIAGE_OPEN_TOKEN);
+  if (idx === -1) return text;
+  return text.slice(0, idx).trimEnd();
+}
+
+function extractTriageUpdate(text) {
+  const m = text.match(TRIAGE_UPDATE_RE);
+  if (!m) return null;
+  try {
+    const payload = JSON.parse(m[1]);
+    if (!Array.isArray(payload.removed)) return null;
+    return payload;
+  } catch (err) {
+    return null;
+  }
+}
+
+function stripTriageUpdate(text) {
+  return text.replace(TRIAGE_UPDATE_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Mutate the most recent triage card in place: remove resolved rows, re-enable
+// the submit button, update the header count. Idempotent — querySelector returns
+// null for already-removed rows, so calling this on every stream chunk is safe.
+function applyTriageUpdate(update) {
+  if (!update) return;
+  const removed = update.removed.map(Number).filter((n) => n > 0);
+  if (removed.length === 0) return;
+
+  const cards = messagesEl.querySelectorAll('.triage-card');
+  if (cards.length === 0) return;
+  const lastCard = cards[cards.length - 1];
+
+  removed.forEach((n) => {
+    const row = lastCard.querySelector('.triage-row[data-n="' + n + '"]');
+    if (row) row.remove();
+  });
+
+  const submitBtn = lastCard.querySelector('.triage-submit');
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit triage';
+  }
+
+  const remaining = lastCard.querySelectorAll('.triage-row').length;
+  const header = lastCard.querySelector('.triage-card-header');
+  if (remaining === 0) {
+    lastCard.classList.add('triage-card-complete');
+    if (header) header.textContent = 'Triage complete';
+    const rowsContainer = lastCard.querySelector('.triage-rows');
+    if (rowsContainer) rowsContainer.remove();
+    const footer = lastCard.querySelector('.triage-card-footer');
+    if (footer) footer.remove();
+  } else if (header) {
+    header.textContent = 'Carryforward triage (' + remaining + ' item' + (remaining === 1 ? '' : 's') + ')';
+  }
 }
 
 function escapeTriageHtml(s) {
@@ -5106,18 +5235,20 @@ function renderTriageCardHtml(items) {
     const n = Number(item.n) || 0;
     const body = escapeTriageHtml(item.body || '');
     const slug = escapeTriageHtml(item.slug || '');
+    // The label wraps only the checkbox + text so clicking either toggles the
+    // checkbox. Elaborate is a sibling of the label to keep its click separate.
+    // data-n on the row enables applyTriageUpdate to locate it for removal.
     return (
-      '<div class="triage-row">' +
-        '<div class="triage-row-text">' +
-          '<span class="triage-n">' + n + '.</span> ' +
-          '<span class="triage-body">' + body + '</span>' +
-          (slug ? '<div class="triage-slug">from <code>' + slug + '</code></div>' : '') +
-        '</div>' +
-        '<div class="triage-actions">' +
-          '<button type="button" class="triage-btn triage-resolve" data-action="resolve" data-n="' + n + '">Resolve</button>' +
-          '<button type="button" class="triage-btn triage-dismiss" data-action="dismiss" data-n="' + n + '">Dismiss</button>' +
-          '<button type="button" class="triage-btn triage-elaborate" data-action="elaborate" data-n="' + n + '">Elaborate</button>' +
-        '</div>' +
+      '<div class="triage-row" data-n="' + n + '">' +
+        '<label class="triage-row-label">' +
+          '<input type="checkbox" class="triage-checkbox" data-n="' + n + '">' +
+          '<span class="triage-row-text">' +
+            '<span class="triage-n">' + n + '.</span> ' +
+            '<span class="triage-body">' + body + '</span>' +
+            (slug ? '<span class="triage-slug">from <code>' + slug + '</code></span>' : '') +
+          '</span>' +
+        '</label>' +
+        '<button type="button" class="triage-elaborate-link" data-action="elaborate" data-n="' + n + '">Elaborate</button>' +
       '</div>'
     );
   }).join('');
@@ -5126,26 +5257,69 @@ function renderTriageCardHtml(items) {
     '<div class="triage-card">' +
       '<div class="triage-card-header">Carryforward triage (' + count + ' item' + (count === 1 ? '' : 's') + ')</div>' +
       '<div class="triage-rows">' + rows + '</div>' +
-      '<div class="triage-card-hint">Click a verb, or type free-text to escape triage.</div>' +
+      '<div class="triage-card-footer">' +
+        '<button type="button" class="triage-submit" data-action="submit">Submit triage</button>' +
+        '<span class="triage-card-hint">Tick rows to mark Done, or click Elaborate. Free-text escapes triage.</span>' +
+      '</div>' +
     '</div>'
   );
 }
 
+function renderTriageLoadingHtml() {
+  return '<div class="triage-card-loading">Generating triage menu&hellip;</div>';
+}
+
 messagesEl.addEventListener('click', (e) => {
-  const btn = e.target.closest('.triage-btn');
-  if (!btn) return;
-  const card = btn.closest('.triage-card');
-  if (card && card.classList.contains('triage-card-submitted')) return;
-  const action = btn.dataset.action;
-  const n = btn.dataset.n;
-  if (!action || !n) return;
-  if (card) {
-    card.classList.add('triage-card-submitted');
-    card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
-    btn.classList.add('triage-btn-selected');
+  const card = e.target.closest('.triage-card');
+  if (!card || card.classList.contains('triage-card-complete')) return;
+
+  // Submit button — bulk dispatch. Mark checked rows as "resolving" (per-row
+  // lock), disable submit; the card stays interactive for other rows. The skill
+  // emits `<!--triage-update:v1 {removed:[...]} -->` after dispatch, which
+  // applyTriageUpdate consumes to remove rows + re-enable submit.
+  const submitBtn = e.target.closest('.triage-submit');
+  if (submitBtn) {
+    if (submitBtn.disabled) return;
+    const checkedRows = Array.from(card.querySelectorAll('.triage-row'))
+      .filter((row) => {
+        const cb = row.querySelector('.triage-checkbox');
+        return cb && cb.checked && !cb.disabled;
+      });
+    if (checkedRows.length === 0) return;
+    const checked = checkedRows
+      .map((row) => Number(row.dataset.n))
+      .filter((n) => n > 0)
+      .sort((a, b) => a - b);
+
+    checkedRows.forEach((row) => {
+      row.classList.add('triage-row-resolving');
+      const cb = row.querySelector('.triage-checkbox');
+      const elab = row.querySelector('.triage-elaborate-link');
+      if (cb) cb.disabled = true;
+      if (elab) elab.disabled = true;
+    });
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Resolving…';
+
+    messageInput.value = 'triage:' + checked.map((n) => n + '=done').join(',');
+    sendMessage();
+    return;
   }
-  messageInput.value = n + ' ' + action;
-  sendMessage();
+
+  // Elaborate link — single-action, non-terminal. Don't lock the card; the skill
+  // emits only the explanation (no update marker, no menu), so the original card
+  // persists and the user can continue interacting with it.
+  const elaborateBtn = e.target.closest('.triage-elaborate-link');
+  if (elaborateBtn) {
+    if (elaborateBtn.disabled) return;
+    const n = elaborateBtn.dataset.n;
+    if (!n) return;
+    elaborateBtn.classList.add('triage-btn-selected');
+    setTimeout(() => elaborateBtn.classList.remove('triage-btn-selected'), 800);
+    messageInput.value = n + ' elaborate';
+    sendMessage();
+    return;
+  }
 });
 
 messagesEl.addEventListener('scroll', () => {
@@ -5598,6 +5772,11 @@ async function sendMessage(skipRender = false) {
   messageInput.placeholder = 'Queue a message...';
   messageInput.value = '';
   messageInput.style.height = 'auto';
+
+  // Decision 023 Phase 5+ — invalidate the triage cache so the next marker
+  // arrival re-fetches from the server. Without this, a fresh `/vault:mb` after
+  // intermediate resolutions would render stale items from the previous fetch.
+  triageCache = null;
 
   // Capture attachments before clearing UI
   const messageAttachments = pendingAttachments.length > 0 ? [...pendingAttachments] : undefined;
@@ -6169,12 +6348,48 @@ marked.use({
 });
 
 function renderMarkdown(text) {
-  // Decision 023 Phase 3 — if the assistant emitted a triage-menu marker, extract
-  // its JSON payload and strip the markdown duplicate before rendering. The card
-  // HTML is appended after the rendered markdown.
-  const triageItems = extractTriagePayload(text);
-  const sourceText = triageItems ? stripTriageBlock(text) : text;
-  const triageCardHtml = triageItems ? renderTriageCardHtml(triageItems) : '';
+  // Decision 023 Phase 5+ — if this message contains a triage-update marker,
+  // mutate the prior triage card in place (idempotent across stream chunks) and
+  // strip the marker from the visible text. The mutation runs in a microtask so
+  // it applies after the current render completes.
+  const triageUpdate = extractTriageUpdate(text);
+  if (triageUpdate) {
+    queueMicrotask(() => applyTriageUpdate(triageUpdate));
+    text = stripTriageUpdate(text);
+  }
+
+  // Decision 023 Phase 3+5 — if the assistant emitted a complete triage-menu marker,
+  // strip the markdown duplicate and render the card. The marker may carry items
+  // inline (Phase 5 back-compat) or a `ref` for a server-side fetch (Phase 5+).
+  // While the marker is mid-stream OR while the server fetch is in flight, show a
+  // "Generating triage menu…" placeholder; the fetch handler swaps it in place
+  // once items arrive.
+  const triageMarker = extractTriageMarker(text);
+  let sourceText, triageCardHtml;
+  if (triageMarker) {
+    sourceText = stripTriageBlock(text);
+    if (Array.isArray(triageMarker.items) && triageMarker.items.length > 0) {
+      triageCardHtml = renderTriageCardHtml(triageMarker.items);
+    } else if (triageMarker.ref) {
+      const ref = String(triageMarker.ref);
+      if (triageCache && triageCache.ref === ref && Array.isArray(triageCache.items)) {
+        triageCardHtml = triageCache.items.length > 0 ? renderTriageCardHtml(triageCache.items) : '';
+      } else if (triageCache && triageCache.ref === ref && triageCache.error) {
+        triageCardHtml = renderTriageErrorHtml(triageCache.error);
+      } else {
+        fetchTriageFromServer(ref);
+        triageCardHtml = renderTriageLoadingHtml();
+      }
+    } else {
+      triageCardHtml = '';
+    }
+  } else if (hasOpenTriageMarker(text)) {
+    sourceText = stripPartialTriageBlock(text);
+    triageCardHtml = renderTriageLoadingHtml();
+  } else {
+    sourceText = text;
+    triageCardHtml = '';
+  }
 
   // Handle unclosed code block (still streaming) — close it temporarily for parsing
   const unclosedMatch = sourceText.match(/```(\w*)\n([^`]*)$/);
