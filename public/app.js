@@ -5072,6 +5072,82 @@ function hideNewContentPill() {
   if (pill) pill.classList.remove('visible');
 }
 
+// Decision 023 Phase 3 — clickable carryforward-triage card.
+// The /vault:mb-family skills emit a `<!--triage-menu:v1 {json} -->` marker alongside
+// the human-readable list. renderMarkdown() detects the marker, strips the markdown
+// duplicate, and appends a clickable card built from the JSON. Click handlers are
+// delegated on messagesEl so they survive innerHTML rebuilds during streaming.
+const TRIAGE_MARKER_RE = /<!--triage-menu:v1\s*([\s\S]*?)\s*-->/;
+const TRIAGE_BLOCK_RE = /## Carryforward triage[\s\S]*?(?:_Verbs:[^_]*_)\s*/;
+
+function extractTriagePayload(text) {
+  const m = text.match(TRIAGE_MARKER_RE);
+  if (!m) return null;
+  try {
+    const payload = JSON.parse(m[1]);
+    if (!Array.isArray(payload.items) || payload.items.length === 0) return null;
+    return payload.items;
+  } catch (err) {
+    return null;
+  }
+}
+
+function stripTriageBlock(text) {
+  return text.replace(TRIAGE_MARKER_RE, '').replace(TRIAGE_BLOCK_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function escapeTriageHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderTriageCardHtml(items) {
+  const rows = items.map((item) => {
+    const n = Number(item.n) || 0;
+    const body = escapeTriageHtml(item.body || '');
+    const slug = escapeTriageHtml(item.slug || '');
+    return (
+      '<div class="triage-row">' +
+        '<div class="triage-row-text">' +
+          '<span class="triage-n">' + n + '.</span> ' +
+          '<span class="triage-body">' + body + '</span>' +
+          (slug ? '<div class="triage-slug">from <code>' + slug + '</code></div>' : '') +
+        '</div>' +
+        '<div class="triage-actions">' +
+          '<button type="button" class="triage-btn triage-resolve" data-action="resolve" data-n="' + n + '">Resolve</button>' +
+          '<button type="button" class="triage-btn triage-dismiss" data-action="dismiss" data-n="' + n + '">Dismiss</button>' +
+          '<button type="button" class="triage-btn triage-elaborate" data-action="elaborate" data-n="' + n + '">Elaborate</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }).join('');
+  const count = items.length;
+  return (
+    '<div class="triage-card">' +
+      '<div class="triage-card-header">Carryforward triage (' + count + ' item' + (count === 1 ? '' : 's') + ')</div>' +
+      '<div class="triage-rows">' + rows + '</div>' +
+      '<div class="triage-card-hint">Click a verb, or type free-text to escape triage.</div>' +
+    '</div>'
+  );
+}
+
+messagesEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.triage-btn');
+  if (!btn) return;
+  const card = btn.closest('.triage-card');
+  if (card && card.classList.contains('triage-card-submitted')) return;
+  const action = btn.dataset.action;
+  const n = btn.dataset.n;
+  if (!action || !n) return;
+  if (card) {
+    card.classList.add('triage-card-submitted');
+    card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    btn.classList.add('triage-btn-selected');
+  }
+  messageInput.value = n + ' ' + action;
+  sendMessage();
+});
+
 messagesEl.addEventListener('scroll', () => {
   const atBottom = isAtBottom();
   autoScrollEnabled = atBottom;
@@ -6093,11 +6169,18 @@ marked.use({
 });
 
 function renderMarkdown(text) {
+  // Decision 023 Phase 3 — if the assistant emitted a triage-menu marker, extract
+  // its JSON payload and strip the markdown duplicate before rendering. The card
+  // HTML is appended after the rendered markdown.
+  const triageItems = extractTriagePayload(text);
+  const sourceText = triageItems ? stripTriageBlock(text) : text;
+  const triageCardHtml = triageItems ? renderTriageCardHtml(triageItems) : '';
+
   // Handle unclosed code block (still streaming) — close it temporarily for parsing
-  const unclosedMatch = text.match(/```(\w*)\n([^`]*)$/);
+  const unclosedMatch = sourceText.match(/```(\w*)\n([^`]*)$/);
   if (unclosedMatch) {
     // Append a closing fence so marked can parse it, then mark it as streaming
-    const closed = text + '\n```';
+    const closed = sourceText + '\n```';
     let html = marked.parse(closed);
     // Replace last code-block-wrapper with streaming style (no copy button)
     html = html.replace(
@@ -6115,11 +6198,11 @@ function renderMarkdown(text) {
       after = after.replace(/<\/div>\s*$/, '');
       html = before + after;
     }
-    return linkifyVaultPathsInHtml(linkifyWikiLinksInHtml(html));
+    return linkifyVaultPathsInHtml(linkifyWikiLinksInHtml(html)) + triageCardHtml;
   }
 
-  let html = marked.parse(text);
-  return linkifyVaultPathsInHtml(linkifyWikiLinksInHtml(html));
+  let html = marked.parse(sourceText);
+  return linkifyVaultPathsInHtml(linkifyWikiLinksInHtml(html)) + triageCardHtml;
 }
 
 // Replace [[wiki-link]] tokens with clickable spans, post-render. Running this

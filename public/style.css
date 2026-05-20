@@ -2869,6 +2869,137 @@ pre.streaming {
   font-style: italic;
 }
 
+/* Decision 023 Phase 3 — Carryforward triage card. Rendered when an assistant
+   message contains a <!--triage-menu:v1 ...--> marker. Per item: 3 verb buttons
+   (Resolve, Dismiss, Elaborate) that submit "<n> <verb>" as the next user message. */
+.triage-card {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #6366f1;
+  border-radius: 8px;
+  background: var(--bg-secondary, rgba(99, 102, 241, 0.03));
+  overflow: hidden;
+}
+
+.triage-card-header {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(99, 102, 241, 0.06);
+  border-bottom: 1px solid var(--border);
+}
+
+.triage-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.triage-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.triage-row:last-child {
+  border-bottom: none;
+}
+
+.triage-row-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.triage-n {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+
+.triage-body {
+  color: var(--text);
+}
+
+.triage-slug {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.triage-slug code {
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.triage-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.triage-btn {
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+
+.triage-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: #6366f1;
+}
+
+.triage-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.triage-btn.triage-btn-selected {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: #6366f1;
+  color: var(--text);
+}
+
+.triage-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.triage-card-submitted .triage-btn:not(.triage-btn-selected) {
+  opacity: 0.4;
+}
+
+.triage-card-hint {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .triage-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .triage-actions {
+    margin-top: 6px;
+  }
+}
+
 /* Structured output cards for MCP tools with outputSchema */
 .struct-header {
   font-size: 13px;
