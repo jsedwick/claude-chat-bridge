@@ -1,38 +1,31 @@
 // Decision 023 Phase 5 — Carryforward triage server-side fetch.
+// Decision 024 — bridge-direct triage resolve (POST /api/triage/resolve).
+// Decision 025 — tagging primitives now live in src/lib/handoff-tagging.ts and
+// are shared with src/routes/sessions.ts (Open Items panel resolve).
 //
 // `GET /api/triage/current?mode=work|personal` returns the same items[] shape
 // the skill used to emit inline in the `<!--triage-menu:v1 {...}-->` marker.
-// With this endpoint the LLM no longer has to stream item bodies + hashes; the
-// frontend fetches the data directly the moment a minimal `{ "ref": "latest" }`
-// marker arrives.
-//
-// Hash + verifier-extraction regexes are ported verbatim from
-// `obsidian-mcp-server/src/tools/memory/verifyHandoffItems.ts` so the hashes
-// returned here match what `tag_handoff_item` expects.
 import { Router, Request, Response } from 'express';
-import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { parseMode, getVaultPath, getActiveModeVaults } from '../config';
+import {
+  BULLET_LINE_RE,
+  CHECKBOX_BULLET_RE,
+  VERIFY_TAG_RE,
+  RESOLVE_BY_CHAT_BRIDGE,
+  computeBulletIdHash,
+  hashForBulletLine,
+  applyResolveTag,
+  formatLocalDate,
+} from '../lib/handoff-tagging';
 
 const router = Router();
 
-const BULLET_HEAD_STRIP_RE = /^\s*-\s+\[(?:\s|x|X|historical)\]\s+/;
-const VERIFY_TAG_RE = /(?:^|[\s—-])(?:\*\*\s*)?verify(?:\s+[a-z]+)*\s*:\s*(?:\*\*\s*)?(.+)$/i;
 const HANDOFF_SECTION_RE = /## Handoff\n\n([\s\S]*?)(?=\n## |\n---|$)/;
-const BULLET_LINE_RE = /^- \[([^\]]+)\]\s+(.+)$/;
-
-// Decision 024 — POST /api/triage/resolve. The constants below MUST stay in
-// sync with the MCP-side `tag_handoff_item` implementation in
-// obsidian-mcp-server/src/tools/session/tagHandoffItem.ts (mirror block at top
-// of file). If the tagging format or section-header regex changes there, change
-// it here too — or extract to a shared package.
 const HANDOFF_HEADER_RE = /^##\s+(Handoff|Carryforward(?:\s+items)?)\s*$/i;
 const ANY_H2_RE = /^##\s+/;
-const CHECKBOX_BULLET_RE = /^(\s*-\s+)\[(?:\s|x|X)\]\s+(.*)$/;
-const TAGGED_BODY_RE = /^(resolved|dismissed):(\d{4}-\d{2}-\d{2})\s+by\s+(\S+)/;
 const FRONTMATTER_CATEGORY_RE = /^category:\s*["']?([^"'\n]+)["']?\s*$/m;
-const RESOLVE_BY = 'chat-bridge'; // Decision 024: non-session attribution token
 
 const RECENT_SESSION_LIMIT = 3;     // matches get_memory_base's handoff lookback
 const MONTHS_TO_SCAN = 3;
@@ -54,13 +47,6 @@ interface ParsedBullet {
   kind: BulletKind;
   resolved: boolean;
   hash: string;
-}
-
-function computeBulletIdHash(rawLine: string, verifierText: string | null): string {
-  const stripped = rawLine.replace(BULLET_HEAD_STRIP_RE, '').trim();
-  const verifier = verifierText?.trim();
-  const basis = verifier && verifier.length > 0 ? `${stripped}\x00${verifier}` : stripped;
-  return createHash('sha256').update(basis).digest('hex');
 }
 
 function parseHandoffBullets(handoff: string): ParsedBullet[] {
@@ -129,19 +115,6 @@ function scanRecentSessions(vaultPath: string, maxCount: number): Array<{ slug: 
 function truncateBody(s: string, max = BODY_MAX_CHARS): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1).trimEnd() + '…';
-}
-
-function formatLocalDate(d: Date): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function hashForBulletLine(line: string): string {
-  const m = line.match(VERIFY_TAG_RE);
-  const verifierText = m ? m[1].trim() : null;
-  return computeBulletIdHash(line, verifierText);
 }
 
 // Filter rule (Phase 5+): the bridge can't run verify-command verifiers, so it
@@ -316,31 +289,23 @@ router.post('/resolve', (req: Request, res: Response) => {
   }
 
   const matchedLine = lines[matchedLineIdx];
-  const m = matchedLine.match(CHECKBOX_BULLET_RE);
-  if (!m) {
+  const today = formatLocalDate();
+  const tagResult = applyResolveTag(matchedLine, action, RESOLVE_BY_CHAT_BRIDGE, today, notes);
+
+  if (tagResult.kind === 'not_checkbox') {
     res.status(500).json({ ok: false, error: 'internal', details: 'matched line lost checkbox shape' });
     return;
   }
-
-  const tagged = m[2].match(TAGGED_BODY_RE);
-  if (tagged) {
+  if (tagResult.kind === 'noop') {
     res.json({
       ok: true,
       action_applied: 'noop',
-      existing_tag: `${tagged[1]}:${tagged[2]} by ${tagged[3]}`,
+      existing_tag: tagResult.existing_tag,
     });
     return;
   }
 
-  const today = formatLocalDate(new Date());
-  const indent = m[1];
-  const bodyText = m[2];
-  const tagVerb = action === 'resolve' ? 'resolved' : 'dismissed';
-  let newLine = `${indent}[x] ${tagVerb}:${today} by ${RESOLVE_BY} ${bodyText}`;
-  if (notes && notes.trim()) {
-    newLine += ` — note: ${notes.trim()}`;
-  }
-  lines[matchedLineIdx] = newLine;
+  lines[matchedLineIdx] = tagResult.newLine;
 
   try {
     fs.writeFileSync(sessionFile, lines.join('\n'), 'utf-8');
@@ -349,13 +314,16 @@ router.post('/resolve', (req: Request, res: Response) => {
     return;
   }
 
+  // For the preview field, re-extract the original body from the matched line.
+  const cbMatch = matchedLine.match(CHECKBOX_BULLET_RE);
+  const bodyText = cbMatch ? cbMatch[2] : '';
   const preview = bodyText.length > 80 ? bodyText.slice(0, 77) + '...' : bodyText;
   res.json({
     ok: true,
     action_applied: action,
     session_file: sessionFile,
     tagged_at: today,
-    by: RESOLVE_BY,
+    by: RESOLVE_BY_CHAT_BRIDGE,
     bullet_preview: preview,
   });
 });

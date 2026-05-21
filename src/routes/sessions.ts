@@ -7,6 +7,7 @@ import { config, getAllowedPaths, getActiveModeVaults, parseMode } from '../conf
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
 import { isEffortLevel } from '../types';
+import { applyResolveTag, stripResolveTag, RESOLVE_BY_CHAT_BRIDGE } from '../lib/handoff-tagging';
 
 const router = Router();
 
@@ -452,8 +453,13 @@ function parseCarryforwardItems(handoff: string): CarryforwardItem[] {
     const m = rawLine.match(/^- \[([^\]]+)\]\s+(.+)$/);
     if (!m) continue;
     const tag = m[1].trim();
-    const text = m[2].trim();
+    const rawText = m[2].trim();
     const resolved = tag === 'historical' || tag === 'x';
+
+    // Strip Decision 023/024 `resolved:DATE by X` prefix for display so the
+    // Open Items panel shows the original body, not the mutation metadata.
+    const stripped = stripResolveTag(rawText);
+    const text = stripped.displayBody;
 
     const verifyIdx = text.indexOf('**verify:**');
     const body = verifyIdx >= 0 ? text.slice(0, verifyIdx).trim() : text;
@@ -505,8 +511,10 @@ router.get('/:id/carryforward', (req: Request, res: Response) => {
   res.json({ items: parseCarryforwardItems(found.handoff) });
 });
 
-// Mark a carryforward item as historical (resolved) by rewriting its bullet
-// in the handoff. Identifies the bullet by its exact text content.
+// Decision 025 — Open Items "Resolve" writes the same `[x] resolved:DATE by
+// chat-bridge` format as the Triage panel (Decision 024). Identifies the
+// bullet by its exact text content; the actual tag mutation goes through the
+// shared applyResolveTag helper.
 router.patch('/:id/carryforward/resolve', (req: Request, res: Response) => {
   const sessionId = req.params.id as string;
   const session = getSession(sessionId);
@@ -541,9 +549,13 @@ router.patch('/:id/carryforward/resolve', (req: Request, res: Response) => {
     return;
   }
 
-  const verifyIdx = text.indexOf('**verify:**');
-  const body = (verifyIdx >= 0 ? text.slice(0, verifyIdx) : text).trim();
-  lines[foundIdx] = `- [historical] ${body}`;
+  const tagResult = applyResolveTag(lines[foundIdx], 'resolve', RESOLVE_BY_CHAT_BRIDGE);
+  if (tagResult.kind === 'tagged') {
+    lines[foundIdx] = tagResult.newLine;
+  }
+  // kind === 'noop' (already tagged) or 'not_checkbox' (e.g. legacy `[historical]`
+  // line from the close writer) — leave it as-is and return current state.
+
   const newHandoff = lines.join('\n');
 
   updateSession(sessionId, { handoff: newHandoff });

@@ -3476,7 +3476,7 @@ function renderCarryforward(items) {
       const btn = document.createElement('button');
       btn.className = 'carryforward-resolve-btn';
       btn.textContent = 'Resolve';
-      btn.title = 'Mark as [historical] in the handoff';
+      btn.title = 'Mark as resolved in the handoff (Decision 025)';
       btn.onclick = () => resolveCarryforwardItem(item.text);
       row.appendChild(btn);
     }
@@ -3502,7 +3502,7 @@ function badgeLabel(kind) {
 
 function badgeTitle(kind) {
   switch (kind) {
-    case 'historical': return 'Resolved (historical)';
+    case 'historical': return 'Resolved';
     case 'verify-command': return 'Verifiable via shell command';
     case 'verify-prose': return 'Manual verification required';
     case 'untagged-forward-looking': return 'No verifier tagged (writer-contract violation)';
