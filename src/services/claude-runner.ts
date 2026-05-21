@@ -381,7 +381,21 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               const preview = typeof resultData.content === 'string' ? resultData.content.substring(0, 200) : JSON.stringify(resultData.content)?.substring(0, 200);
               console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_RESULT id=${resultData.tool_use_id?.slice(0,8)} preview=${preview}`);
             }
+            // Drop post-AskUserQuestion events so the UI appears to block on the
+            // question until the user clicks an option. AUQ's OWN tool_use must
+            // still emit (it's what renders the card), so the flag is set AFTER
+            // this event lands. See sessionPostAskUser declaration for rationale.
+            if (sessionPostAskUser.has(appSessionId)) continue;
             emitToStream(appSessionId, event);
+            if (event.type === 'tool_use') {
+              try {
+                const toolData = JSON.parse(event.data as string);
+                if (toolData.name === 'AskUserQuestion') {
+                  console.log(`[ask-user:${appSessionId.slice(0,8)}] AskUserQuestion emitted — suppressing subsequent events this turn`);
+                  sessionPostAskUser.add(appSessionId);
+                }
+              } catch {}
+            }
           }
         } else if (parsed.type === 'assistant' || parsed.type === 'stream_event') {
           // Log when assistant/stream events produce no output (potential text loss)
@@ -432,6 +446,9 @@ export function runClaude(options: ClaudeRunnerOptions): void {
         if (parsed.type === 'result' && parsed.session_id) {
           capturedSessionId = parsed.session_id;
           resultSucceeded = parsed.is_error !== true;
+          // Clear the post-AskUserQuestion suppression flag so the synthetic
+          // 'done' below emits, and a subsequent turn doesn't inherit it.
+          sessionPostAskUser.delete(appSessionId);
           const usage = parsed.usage;
           const cost = parsed.total_cost_usd;
           emitToStream(appSessionId, {
@@ -503,6 +520,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     activeSessions.delete(trackingId);
     appSessionMap.delete(appSessionId);
     resetStreamedText(appSessionId);
+    sessionPostAskUser.delete(appSessionId);
     if (capturedSessionId) {
       claudeToAppMap.delete(capturedSessionId);
       if (trackingId !== capturedSessionId) {
@@ -611,6 +629,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   proc.on('error', (err) => {
     activeSessions.delete(trackingId);
     sessionPendingAskUser.delete(appSessionId);
+    sessionPostAskUser.delete(appSessionId);
     emitToStream(appSessionId, { type: 'error', data: `Failed to spawn claude: ${err.message}` });
     stream.listeners.delete(onEvent);
     closeStream(appSessionId);
@@ -630,6 +649,21 @@ const sessionStreamedText = new Map<string, boolean>();
 // tool_use event so the client can render clickable option cards.
 interface PendingAskUser { id: string; name: string; partial: string; }
 const sessionPendingAskUser = new Map<string, Map<number, PendingAskUser>>();
+
+// Tracks app sessions that have emitted an AskUserQuestion this turn. While
+// set, the stdout handler drops further tool_use/text/tool_result events so the
+// turn appears to "block" on the question from the user's perspective. Claude
+// keeps running (its auto-declined AUQ + any follow-up work still lands in the
+// JSONL, which keeps --resume context clean for the next turn — important so
+// the user's click answer arrives with question context, not cold). Cleared on
+// the natural 'result' event and on proc 'close'/'error'.
+//
+// Why not SIGINT the proc instead: SIGINT mid-turn can leave the CLI's JSONL
+// without the AUQ assistant turn flushed, so the next --resume would see only
+// the previous turns and Claude would interpret the user's bare answer
+// ("Phase 3 implementation") with no question context. Letting the turn
+// complete is the JSONL-safe choice; the token cost is the price.
+const sessionPostAskUser = new Set<string>();
 
 function getEmittedToolIds(appSessionId: string): Set<string> {
   let ids = sessionToolUseIds.get(appSessionId);

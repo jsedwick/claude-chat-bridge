@@ -6129,6 +6129,21 @@ async function sendMessage(skipRender = false) {
 
         case 'tool_use':
           clearSlowApi();
+          // Defense-in-depth alongside the server-side sessionPostAskUser
+          // suppression in claude-runner.ts: if any post-AUQ tool_use ever
+          // reached the wire, drop it here so the UI doesn't render tool
+          // indicators for work the user can't act on. AUQ's OWN tool_use
+          // runs before suppressAskUserFallback is set inside
+          // renderAskUserQuestionInChat, so the card itself still renders.
+          if (suppressAskUserFallback) {
+            try {
+              const tool = JSON.parse(data);
+              // Allow late AUQ tool_use through so renderAskUserQuestionInChat's
+              // own dedup (renderedAskQuestions Set) can no-op the duplicate
+              // without us silently swallowing the only emission.
+              if (tool.name !== 'AskUserQuestion') break;
+            } catch { break; }
+          }
           ttsFaceSetActivity('tool-working');
           logSSE('tool_use:clear', { hadText: currentText.length, hadEl: !!assistantEl, data: typeof data === 'string' ? data.substring(0, 100) : '' });
           if (assistantEl && currentText) {
@@ -6159,6 +6174,14 @@ async function sendMessage(skipRender = false) {
           break;
 
         case 'tool_update':
+          // See suppressAskUserFallback note in case 'tool_use' above — same
+          // defense-in-depth applies to updates that re-emit a tool's full input.
+          if (suppressAskUserFallback) {
+            try {
+              const tool = JSON.parse(data);
+              if (tool.name !== 'AskUserQuestion') break;
+            } catch { break; }
+          }
           // Update existing tool indicator with full details (input arrived after initial stream event)
           try {
             const tool = JSON.parse(data);
