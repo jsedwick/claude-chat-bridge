@@ -5114,16 +5114,23 @@ function stripTriageBlock(text) {
 // ref we use; the cache effectively has one slot.
 let triageCache = null; // null | { ref, pending } | { ref, items } | { ref, error }
 
-function fetchTriageFromServer(ref) {
-  if (triageCache && triageCache.ref === ref && (triageCache.items || triageCache.error)) {
+// Decision 026 — `workingDir` (when provided by the skill marker) is passed
+// through so the bridge's session-selection matches MCP's mtime+CWD-priority
+// algorithm. Cache key includes workingDir so a marker emitted from a different
+// project's CWD doesn't reuse the previous fetch's items.
+function fetchTriageFromServer(ref, workingDir) {
+  const cacheKey = workingDir ? `${ref}::${workingDir}` : ref;
+  if (triageCache && triageCache.ref === cacheKey && (triageCache.items || triageCache.error)) {
     return; // already resolved
   }
-  if (triageCache && triageCache.ref === ref && triageCache.pending) {
+  if (triageCache && triageCache.ref === cacheKey && triageCache.pending) {
     return; // already in flight
   }
-  triageCache = { ref, pending: true };
+  triageCache = { ref: cacheKey, pending: true };
   const mode = typeof currentMode === 'string' ? currentMode : 'work';
-  fetch(`/api/triage/current?mode=${encodeURIComponent(mode)}`)
+  const params = new URLSearchParams({ mode });
+  if (workingDir) params.set('working_directory', workingDir);
+  fetch(`/api/triage/current?${params.toString()}`)
     .then((r) => r.json())
     .then((data) => {
       const items = Array.isArray(data.items) ? data.items : [];
@@ -6476,12 +6483,19 @@ function renderMarkdown(text) {
       triageCardHtml = renderTriageCardHtml(triageMarker.items);
     } else if (triageMarker.ref) {
       const ref = String(triageMarker.ref);
-      if (triageCache && triageCache.ref === ref && Array.isArray(triageCache.items)) {
+      // Decision 026 — propagate working_directory from the marker so the bridge
+      // mirrors MCP's session-selection. The cache key composes ref + workingDir
+      // (see fetchTriageFromServer) so the comparison must use the same key.
+      const workingDir = typeof triageMarker.working_directory === 'string' && triageMarker.working_directory
+        ? triageMarker.working_directory
+        : undefined;
+      const cacheKey = workingDir ? `${ref}::${workingDir}` : ref;
+      if (triageCache && triageCache.ref === cacheKey && Array.isArray(triageCache.items)) {
         triageCardHtml = triageCache.items.length > 0 ? renderTriageCardHtml(triageCache.items) : '';
-      } else if (triageCache && triageCache.ref === ref && triageCache.error) {
+      } else if (triageCache && triageCache.ref === cacheKey && triageCache.error) {
         triageCardHtml = renderTriageErrorHtml(triageCache.error);
       } else {
-        fetchTriageFromServer(ref);
+        fetchTriageFromServer(ref, workingDir);
         triageCardHtml = renderTriageLoadingHtml();
       }
     } else {

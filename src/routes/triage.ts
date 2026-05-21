@@ -2,9 +2,16 @@
 // Decision 024 — bridge-direct triage resolve (POST /api/triage/resolve).
 // Decision 025 — tagging primitives now live in src/lib/handoff-tagging.ts and
 // are shared with src/routes/sessions.ts (Open Items panel resolve).
+// Decision 026 — session selection mirrors the MCP-side algorithm so the
+// bridge's items[] matches what `get_memory_base.handoffs[].items[]` would
+// surface for the same `working_directory`. If the algorithm changes in
+// obsidian-mcp-server/src/tools/memory/getMemoryBase.ts (`extractRecentHandoffs`),
+// change it here too.
 //
-// `GET /api/triage/current?mode=work|personal` returns the same items[] shape
-// the skill used to emit inline in the `<!--triage-menu:v1 {...}-->` marker.
+// `GET /api/triage/current?mode=work|personal[&working_directory=<abs-path>]`
+// returns the same items[] shape the skill used to emit inline in the
+// `<!--triage-menu:v1 {...}-->` marker. When `working_directory` is omitted, we
+// fall back to filename-DESC selection (legacy behavior).
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -30,6 +37,11 @@ const FRONTMATTER_CATEGORY_RE = /^category:\s*["']?([^"'\n]+)["']?\s*$/m;
 const RECENT_SESSION_LIMIT = 3;     // matches get_memory_base's handoff lookback
 const MONTHS_TO_SCAN = 3;
 const BODY_MAX_CHARS = 80;
+// Decision 026 — mirrors MCP's `scanLimit = Math.min(allSessionFiles.length, 20)`
+// in extractRecentHandoffs. Cap on how deep to look for `working_directory`
+// matches before falling back to "fill with most-recent overall."
+const CWD_SCAN_LIMIT = 20;
+const FRONTMATTER_WD_RE = /working_directory:\s*"?([^"\n]+?)"?\s*$/m;
 
 interface TriageItem {
   n: number;
@@ -85,31 +97,101 @@ function readHandoffSection(sessionFilePath: string): string | null {
   }
 }
 
-function scanRecentSessions(vaultPath: string, maxCount: number): Array<{ slug: string; filePath: string }> {
+// Decision 026 — collect all session files across the scanned month directories
+// with their mtimes, sorted DESC. Mirrors MCP's flat-list-with-mtime approach in
+// `extractRecentHandoffs` so both sides see the same "most-recent" ordering even
+// when a recent retag-via-resolve updates an older session's mtime.
+function collectSessionFilesByMtime(vaultPath: string): Array<{ slug: string; filePath: string; mtimeMs: number }> {
   const sessionsDir = path.join(vaultPath, 'sessions');
-  const out: Array<{ slug: string; filePath: string }> = [];
+  const out: Array<{ slug: string; filePath: string; mtimeMs: number }> = [];
 
   try {
     const months = fs.readdirSync(sessionsDir, { withFileTypes: true })
       .filter((e) => e.isDirectory() && /^\d{4}-\d{2}$/.test(e.name))
       .map((e) => e.name)
-      .sort((a, b) => b.localeCompare(a));
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, MONTHS_TO_SCAN);
 
-    for (const month of months.slice(0, MONTHS_TO_SCAN)) {
+    for (const month of months) {
       const monthPath = path.join(sessionsDir, month);
-      const files = fs.readdirSync(monthPath)
-        .filter((f) => f.endsWith('.md'))
-        .sort((a, b) => b.localeCompare(a));
-
+      let files: string[];
+      try {
+        files = fs.readdirSync(monthPath).filter((f) => f.endsWith('.md'));
+      } catch {
+        continue;
+      }
       for (const file of files) {
-        const slug = file.replace(/\.md$/, '');
-        out.push({ slug, filePath: path.join(monthPath, file) });
-        if (out.length >= maxCount) return out;
+        const filePath = path.join(monthPath, file);
+        try {
+          const stat = fs.statSync(filePath);
+          out.push({
+            slug: file.replace(/\.md$/, ''),
+            filePath,
+            mtimeMs: stat.mtimeMs,
+          });
+        } catch {
+          continue;
+        }
       }
     }
   } catch {}
 
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return out;
+}
+
+// Decision 026 — read the `working_directory:` frontmatter field from a session
+// file. Returns null if missing/unreadable/malformed. Mirrors the regex used by
+// MCP's `extractRecentHandoffs` two-pass CWD partition.
+function readSessionWorkingDirectory(filePath: string): string | null {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
+    if (!fmMatch) return null;
+    const wdMatch = fmMatch[1].match(FRONTMATTER_WD_RE);
+    return wdMatch ? wdMatch[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Decision 026 — pick `maxCount` sessions using MCP-parity logic:
+//   - With workingDir: scan the top CWD_SCAN_LIMIT mtime-sorted sessions,
+//     partition into CWD-matches vs others, fill CWD-matches first then
+//     others. Mirrors `extractRecentHandoffs` exactly.
+//   - Without workingDir: just take the top `maxCount` by mtime. Legacy
+//     callers (skill markers without `working_directory` field) land here.
+function scanRecentSessions(
+  vaultPath: string,
+  maxCount: number,
+  workingDir?: string,
+): Array<{ slug: string; filePath: string }> {
+  const all = collectSessionFilesByMtime(vaultPath);
+
+  if (!workingDir) {
+    return all.slice(0, maxCount).map(({ slug, filePath }) => ({ slug, filePath }));
+  }
+
+  const scanLimit = Math.min(all.length, CWD_SCAN_LIMIT);
+  const cwdMatches: Array<{ slug: string; filePath: string }> = [];
+  const others: Array<{ slug: string; filePath: string }> = [];
+  for (let i = 0; i < scanLimit; i++) {
+    const entry = all[i];
+    const sessionWd = readSessionWorkingDirectory(entry.filePath);
+    const bucket = sessionWd === workingDir ? cwdMatches : others;
+    bucket.push({ slug: entry.slug, filePath: entry.filePath });
+  }
+
+  const selected: Array<{ slug: string; filePath: string }> = [];
+  for (const p of cwdMatches) {
+    if (selected.length >= maxCount) break;
+    selected.push(p);
+  }
+  for (const p of others) {
+    if (selected.length >= maxCount) break;
+    selected.push(p);
+  }
+  return selected;
 }
 
 function truncateBody(s: string, max = BODY_MAX_CHARS): string {
@@ -143,7 +225,15 @@ router.get('/current', (req: Request, res: Response) => {
     return;
   }
 
-  const sessions = scanRecentSessions(vaultPath, RECENT_SESSION_LIMIT);
+  // Decision 026 — optional `working_directory` triggers MCP-parity selection.
+  // Skill markers populated from the Claude Code session env carry this; older
+  // clients that omit it fall back to mtime-DESC across all recent sessions.
+  const workingDir =
+    typeof req.query.working_directory === 'string' && req.query.working_directory
+      ? req.query.working_directory
+      : undefined;
+
+  const sessions = scanRecentSessions(vaultPath, RECENT_SESSION_LIMIT, workingDir);
   const items: TriageItem[] = [];
   let n = 1;
 
