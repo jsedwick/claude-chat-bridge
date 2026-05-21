@@ -520,7 +520,9 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     activeSessions.delete(trackingId);
     appSessionMap.delete(appSessionId);
     resetStreamedText(appSessionId);
-    sessionPostAskUser.delete(appSessionId);
+    // Preserve sessionPostAskUser through the buffer flush below so any leaked
+    // post-AUQ events in the remnant buffer are also suppressed. Deletion
+    // happens after the flush.
     if (capturedSessionId) {
       claudeToAppMap.delete(capturedSessionId);
       if (trackingId !== capturedSessionId) {
@@ -555,7 +557,19 @@ export function runClaude(options: ClaudeRunnerOptions): void {
                 const preview = typeof resultData.content === 'string' ? resultData.content.substring(0, 200) : JSON.stringify(resultData.content)?.substring(0, 200);
                 console.log(`[debug:${appSessionId.slice(0,8)}] TOOL_RESULT id=${resultData.tool_use_id?.slice(0,8)} preview=${preview}`);
               }
+              // Mirror the stdout handler's post-AUQ suppression here so events
+              // left in the buffer when the proc died mid-chunk after an AUQ
+              // (rare, but possible on crash/SIGKILL) don't leak to the UI.
+              if (sessionPostAskUser.has(appSessionId)) continue;
               emitToStream(appSessionId, event);
+              if (event.type === 'tool_use') {
+                try {
+                  const toolData = JSON.parse(event.data as string);
+                  if (toolData.name === 'AskUserQuestion') {
+                    sessionPostAskUser.add(appSessionId);
+                  }
+                } catch {}
+              }
             }
           }
           if (parsed.type === 'assistant' && parsed.message?.usage) {
@@ -621,6 +635,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     // Remove the initial listener and close the stream
     sessionToolUseIds.delete(appSessionId);
     sessionPendingAskUser.delete(appSessionId);
+    sessionPostAskUser.delete(appSessionId);
     stream.listeners.delete(onEvent);
     closeStream(appSessionId);
     onClose(capturedSessionId);
