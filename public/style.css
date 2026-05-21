@@ -3045,6 +3045,15 @@ pre.streaming {
   pointer-events: none;
 }
 
+/* Decision 024 — per-row error state after a failed POST /api/triage/resolve.
+   The row stays interactive (user can retry by clicking Submit again) but a
+   left-border accent surfaces the failure. The hover-tooltip carries detail. */
+.triage-row-error {
+  border-left: 2px solid #ef4444;
+  padding-left: 8px;
+  background: rgba(239, 68, 68, 0.04);
+}
+
 /* Phase 5+ — collapsed "complete" state once every item has been resolved.
    applyTriageUpdate removes the rows + footer and sets the header to "Triage
    complete"; this rule just trims the visual padding. */

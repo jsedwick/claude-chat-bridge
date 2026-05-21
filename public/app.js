@@ -5235,11 +5235,13 @@ function renderTriageCardHtml(items) {
     const n = Number(item.n) || 0;
     const body = escapeTriageHtml(item.body || '');
     const slug = escapeTriageHtml(item.slug || '');
+    const hash = escapeTriageHtml(item.hash || '');
     // The label wraps only the checkbox + text so clicking either toggles the
     // checkbox. Elaborate is a sibling of the label to keep its click separate.
-    // data-n on the row enables applyTriageUpdate to locate it for removal.
+    // data-n locates the row for applyTriageUpdate; data-hash/data-slug feed
+    // the Decision 024 POST /api/triage/resolve dispatch (bypasses LLM).
     return (
-      '<div class="triage-row" data-n="' + n + '">' +
+      '<div class="triage-row" data-n="' + n + '" data-hash="' + hash + '" data-slug="' + slug + '">' +
         '<label class="triage-row-label">' +
           '<input type="checkbox" class="triage-checkbox" data-n="' + n + '">' +
           '<span class="triage-row-text">' +
@@ -5269,14 +5271,96 @@ function renderTriageLoadingHtml() {
   return '<div class="triage-card-loading">Generating triage menu&hellip;</div>';
 }
 
+// Decision 024 — bridge-direct triage resolve. POSTs each checked row to
+// /api/triage/resolve. Same-slug rows are serialized (the endpoint mutates a
+// single session file, and parallel writes would race). Cross-slug rows are
+// dispatched in parallel. Successful resolves are removed from the card via
+// applyTriageUpdate; failed rows get .triage-row-error + a tooltip with the
+// error reason, leaving them interactive for retry.
+async function resolveTriageRows(card, rows) {
+  const mode = currentMode;
+
+  async function postOneRow(row) {
+    const n = Number(row.dataset.n) || 0;
+    const hash = row.dataset.hash;
+    const slug = row.dataset.slug;
+    if (!hash || !slug) {
+      return { n, ok: false, error: 'row missing hash/slug — card needs refresh' };
+    }
+    try {
+      const res = await fetch('/api/triage/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, slug, hash, action: 'resolve' }),
+      });
+      const json = await res.json().catch(() => null);
+      if (json && json.ok) {
+        return { n, ok: true };
+      }
+      const detail = (json && (json.details || json.error)) || ('HTTP ' + res.status);
+      return { n, ok: false, error: String(detail) };
+    } catch (err) {
+      return { n, ok: false, error: (err && err.message) ? err.message : 'network error' };
+    }
+  }
+
+  // Bucket rows by source-session-slug. Within a bucket, POSTs must be
+  // sequential (single file, race risk). Across buckets, POSTs can race
+  // because they target different files.
+  const bySlug = new Map();
+  for (const row of rows) {
+    const slug = row.dataset.slug || '';
+    if (!bySlug.has(slug)) bySlug.set(slug, []);
+    bySlug.get(slug).push(row);
+  }
+  const grouped = await Promise.all(Array.from(bySlug.values()).map(async (group) => {
+    const out = [];
+    for (const row of group) {
+      out.push(await postOneRow(row));
+    }
+    return out;
+  }));
+  const results = grouped.flat();
+
+  const resolvedN = results.filter((r) => r.ok).map((r) => r.n);
+  const failedResults = results.filter((r) => !r.ok);
+
+  // Mark failed rows BEFORE applyTriageUpdate so the submit-re-enable below
+  // sees a coherent DOM state.
+  failedResults.forEach((f) => {
+    const row = card.querySelector('.triage-row[data-n="' + f.n + '"]');
+    if (!row) return;
+    row.classList.remove('triage-row-resolving');
+    row.classList.add('triage-row-error');
+    const cb = row.querySelector('.triage-checkbox');
+    const elab = row.querySelector('.triage-elaborate-link');
+    if (cb) cb.disabled = false;
+    if (elab) elab.disabled = false;
+    row.title = 'Resolve failed: ' + (f.error || 'unknown') + '. Click Submit to retry.';
+  });
+
+  if (resolvedN.length > 0) {
+    applyTriageUpdate({ removed: resolvedN });
+  }
+
+  // If nothing was resolved (all failed), applyTriageUpdate didn't run, so the
+  // submit button is still locked. Re-enable it so the user can retry.
+  if (resolvedN.length === 0) {
+    const submitBtn = card.querySelector('.triage-submit');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit triage';
+    }
+  }
+}
+
 messagesEl.addEventListener('click', (e) => {
   const card = e.target.closest('.triage-card');
   if (!card || card.classList.contains('triage-card-complete')) return;
 
-  // Submit button — bulk dispatch. Mark checked rows as "resolving" (per-row
-  // lock), disable submit; the card stays interactive for other rows. The skill
-  // emits `<!--triage-update:v1 {removed:[...]} -->` after dispatch, which
-  // applyTriageUpdate consumes to remove rows + re-enable submit.
+  // Decision 024 — Submit dispatches POSTs to /api/triage/resolve directly,
+  // bypassing the LLM. applyTriageUpdate is called with the successfully-resolved
+  // n's; failed rows get .triage-row-error and stay actionable for retry.
   const submitBtn = e.target.closest('.triage-submit');
   if (submitBtn) {
     if (submitBtn.disabled) return;
@@ -5286,12 +5370,10 @@ messagesEl.addEventListener('click', (e) => {
         return cb && cb.checked && !cb.disabled;
       });
     if (checkedRows.length === 0) return;
-    const checked = checkedRows
-      .map((row) => Number(row.dataset.n))
-      .filter((n) => n > 0)
-      .sort((a, b) => a - b);
 
     checkedRows.forEach((row) => {
+      row.classList.remove('triage-row-error');
+      row.removeAttribute('title');
       row.classList.add('triage-row-resolving');
       const cb = row.querySelector('.triage-checkbox');
       const elab = row.querySelector('.triage-elaborate-link');
@@ -5301,8 +5383,7 @@ messagesEl.addEventListener('click', (e) => {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Resolving…';
 
-    messageInput.value = 'triage:' + checked.map((n) => n + '=done').join(',');
-    sendMessage();
+    resolveTriageRows(card, checkedRows);
     return;
   }
 
