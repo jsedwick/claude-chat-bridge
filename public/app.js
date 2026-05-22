@@ -5240,20 +5240,34 @@ function escapeTriageHtml(s) {
 function renderTriageCardHtml(items) {
   const rows = items.map((item) => {
     const n = Number(item.n) || 0;
-    const body = escapeTriageHtml(item.body || '');
+    const truncated = String(item.body || '');
+    const full = String(item.full_body || item.body || '');
+    const isTruncated = full !== truncated && full.length > 0;
+    const bodyEsc = escapeTriageHtml(truncated);
+    const fullEsc = escapeTriageHtml(full);
     const slug = escapeTriageHtml(item.slug || '');
     const hash = escapeTriageHtml(item.hash || '');
     // The label wraps only the checkbox + text so clicking either toggles the
     // checkbox. Elaborate is a sibling of the label to keep its click separate.
     // data-n locates the row for applyTriageUpdate; data-hash/data-slug feed
     // the Decision 024 POST /api/triage/resolve dispatch (bypasses LLM).
+    //
+    // When the body was truncated server-side (full_body !== body), the body
+    // span gets a click-to-expand affordance: data-* attrs carry both forms,
+    // and the click handler swaps textContent + toggles `triage-body-expanded`.
+    // The handler also stops the click from reaching the parent label so the
+    // checkbox isn't toggled by the expand interaction.
+    const bodyAttrs = isTruncated
+      ? ' class="triage-body triage-body-truncated" data-truncated-body="' + bodyEsc +
+        '" data-full-body="' + fullEsc + '" title="Click to expand"'
+      : ' class="triage-body"';
     return (
       '<div class="triage-row" data-n="' + n + '" data-hash="' + hash + '" data-slug="' + slug + '">' +
         '<label class="triage-row-label">' +
           '<input type="checkbox" class="triage-checkbox" data-n="' + n + '">' +
           '<span class="triage-row-text">' +
             '<span class="triage-n">' + n + '.</span> ' +
-            '<span class="triage-body">' + body + '</span>' +
+            '<span' + bodyAttrs + '>' + bodyEsc + '</span>' +
             (slug ? '<span class="triage-slug">from <code>' + slug + '</code></span>' : '') +
           '</span>' +
         '</label>' +
@@ -5364,6 +5378,25 @@ async function resolveTriageRows(card, rows) {
 messagesEl.addEventListener('click', (e) => {
   const card = e.target.closest('.triage-card');
   if (!card || card.classList.contains('triage-card-complete')) return;
+
+  // Click-to-expand for truncated bodies. The span lives inside the row's
+  // <label>, so a default click would toggle the checkbox; preventDefault +
+  // stopPropagation keeps the checkbox state stable while we swap text.
+  const bodySpan = e.target.closest('.triage-body-truncated');
+  if (bodySpan && card.contains(bodySpan)) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (bodySpan.classList.contains('triage-body-expanded')) {
+      bodySpan.textContent = bodySpan.dataset.truncatedBody || '';
+      bodySpan.classList.remove('triage-body-expanded');
+      bodySpan.title = 'Click to expand';
+    } else {
+      bodySpan.textContent = bodySpan.dataset.fullBody || bodySpan.textContent;
+      bodySpan.classList.add('triage-body-expanded');
+      bodySpan.title = 'Click to collapse';
+    }
+    return;
+  }
 
   // Decision 024 — Submit dispatches POSTs to /api/triage/resolve directly,
   // bypassing the LLM. applyTriageUpdate is called with the successfully-resolved

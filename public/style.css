@@ -2948,6 +2948,21 @@ pre.streaming {
   color: var(--text);
 }
 
+.triage-body-truncated {
+  cursor: pointer;
+  border-bottom: 1px dotted var(--text-secondary);
+}
+
+.triage-body-truncated:hover {
+  color: var(--accent, #6366f1);
+  border-bottom-color: var(--accent, #6366f1);
+}
+
+.triage-body-expanded {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .triage-slug {
   display: block;
   margin-top: 3px;

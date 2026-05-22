@@ -45,7 +45,8 @@ const FRONTMATTER_WD_RE = /working_directory:\s*"?([^"\n]+?)"?\s*$/m;
 
 interface TriageItem {
   n: number;
-  body: string;
+  body: string;       // truncated for default display (BODY_MAX_CHARS)
+  full_body: string;  // untruncated; frontend swaps to this on click-to-expand
   slug: string;
   hash: string;
 }
@@ -200,10 +201,10 @@ function truncateBody(s: string, max = BODY_MAX_CHARS): string {
 }
 
 // Bias display order toward items whose text mentions the active working
-// directory. `n` values are preserved (Decision 026 parity), so the displayed
-// N column may be non-contiguous after sorting. CLI `<N> resolve` continues to
-// map through MCP-side handoff-order items[], which assigns the same N as the
-// parsing loop here.
+// directory. Decision 027 — items are renumbered 1..N in final display order
+// AFTER dedup + bucket sort; MCP-side `get_memory_base.triage_items[]` mirrors
+// the same algorithm and produces the same Ns so `<N> resolve` from CLI hits
+// the same row the user reads in the bridge card.
 type CwdRelevance = 'match' | 'ambient' | 'anti';
 
 function classifyCwdRelevance(rawLine: string, cwd: string): CwdRelevance {
@@ -258,18 +259,20 @@ router.get('/current', (req: Request, res: Response) => {
       : undefined;
 
   const sessions = scanRecentSessions(vaultPath, RECENT_SESSION_LIMIT, workingDir);
-  const matchBucket: TriageItem[] = [];
-  const ambientBucket: TriageItem[] = [];
-  const antiBucket: TriageItem[] = [];
+  // Decision 027 — buckets hold pre-numbered entries; N is assigned after the
+  // bucket-sort concatenation so the visible labels are 1..N contiguous in
+  // final display order. MCP-side `get_memory_base.triage_items[]` applies the
+  // identical dedup + bucket-sort + renumber and surfaces the same Ns to the
+  // LLM for CLI `<N> resolve` parity.
+  type Entry = { body: string; fullBody: string; slug: string; hash: string };
+  const matchBucket: Entry[] = [];
+  const ambientBucket: Entry[] = [];
+  const antiBucket: Entry[] = [];
   // Dedupe across the scanned sessions: handoffs commonly re-carry the same
   // open item across multiple session closes, sometimes with slight verifier
   // wording drift (different hash, identical body). Dedupe by untruncated body
   // so both faithful re-carries and rephrase-drift cases collapse to one row.
-  // n is incremented for every eligible bullet (including skipped duplicates)
-  // so each surviving item's n matches MCP-side `get_memory_base.handoffs[].items[]`
-  // ordering — keeps the CLI `<N> resolve` fallback in sync.
   const seenBodies = new Set<string>();
-  let n = 1;
 
   for (const { slug, filePath } of sessions) {
     const handoff = readHandoffSection(filePath);
@@ -278,29 +281,36 @@ router.get('/current', (req: Request, res: Response) => {
     const bullets = parseHandoffBullets(handoff);
     for (const b of bullets) {
       if (!isTriageEligible(b)) continue;
-      const currentN = n++;
       if (seenBodies.has(b.body)) continue;
       seenBodies.add(b.body);
-      const item: TriageItem = {
-        n: currentN,
+      const entry: Entry = {
         body: truncateBody(b.body),
+        fullBody: b.body,
         slug,
         hash: b.hash,
       };
       if (workingDir) {
         const rel = classifyCwdRelevance(b.rawLine, workingDir);
-        if (rel === 'match') matchBucket.push(item);
-        else if (rel === 'anti') antiBucket.push(item);
-        else ambientBucket.push(item);
+        if (rel === 'match') matchBucket.push(entry);
+        else if (rel === 'anti') antiBucket.push(entry);
+        else ambientBucket.push(entry);
       } else {
-        ambientBucket.push(item);
+        ambientBucket.push(entry);
       }
     }
   }
 
-  const items: TriageItem[] = workingDir
+  const ordered: Entry[] = workingDir
     ? [...matchBucket, ...ambientBucket, ...antiBucket]
     : ambientBucket;
+
+  const items: TriageItem[] = ordered.map((e, i) => ({
+    n: i + 1,
+    body: e.body,
+    full_body: e.fullBody,
+    slug: e.slug,
+    hash: e.hash,
+  }));
 
   res.json({ items });
 });
