@@ -3,11 +3,11 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, trashSession, restoreSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
-import { config, getAllowedPaths, getActiveModeVaults, parseMode } from '../config';
+import { config, getAllowedPaths, getActiveModeVaults, getVaultPath, parseMode } from '../config';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
 import { isEffortLevel } from '../types';
-import { applyResolveTag, stripResolveTag, RESOLVE_BY_CHAT_BRIDGE } from '../lib/handoff-tagging';
+import { readOpenCarryforward, resolveInCanonical, type OpenCarryforwardItem } from '../lib/open-carryforward';
 
 const router = Router();
 
@@ -435,87 +435,63 @@ router.get('/:id/handoff', (req: Request, res: Response) => {
   res.json({ handoff: null, message: 'No handoff notes found' });
 });
 
-// Parse Decision 068 verifier-tagged carryforward bullets out of handoff prose.
-// Returns one entry per `- [ ]`, `- [x]`, or `- [historical]` bullet, classified
-// by its `**verify:**` suffix (if any).
+// Decision 028 Phase 3 — Open Items panel reads from the canonical
+// `open-carryforward.md` file (per active mode) filtered by `origin:` meta
+// matching this session's slug. Returns the same item shape the frontend has
+// always consumed (`{ text, body, verifier, kind, resolved }`) so the renderer
+// in app.js needs no changes. The per-session legacy parsing/writing of
+// `## Handoff` bullets is gone — the session file is a historical artifact.
 type CarryforwardKind = 'historical' | 'verify-command' | 'verify-prose' | 'untagged-forward-looking';
 interface CarryforwardItem {
-  text: string;            // full bullet text after the checkbox
+  text: string;            // body + (verifier ? ' **verify:** ' + verifier : '')
   body: string;            // bullet text minus the `**verify:** ...` suffix
-  verifier: string | null; // text after `**verify:**`, or null
+  verifier: string | null; // text after `verify:`, or null
   kind: CarryforwardKind;
-  resolved: boolean;       // true for `[historical]` or `[x]`
+  resolved: boolean;       // always false for canonical-sourced rows (file omits resolved)
 }
 
-function parseCarryforwardItems(handoff: string): CarryforwardItem[] {
-  const items: CarryforwardItem[] = [];
-  for (const rawLine of handoff.split('\n')) {
-    const m = rawLine.match(/^- \[([^\]]+)\]\s+(.+)$/);
-    if (!m) continue;
-    const tag = m[1].trim();
-    const rawText = m[2].trim();
-    const resolved = tag === 'historical' || tag === 'x';
-
-    // Strip Decision 023/024 `resolved:DATE by X` prefix for display so the
-    // Open Items panel shows the original body, not the mutation metadata.
-    const stripped = stripResolveTag(rawText);
-    const text = stripped.displayBody;
-
-    const verifyIdx = text.indexOf('**verify:**');
-    const body = verifyIdx >= 0 ? text.slice(0, verifyIdx).trim() : text;
-    const verifier = verifyIdx >= 0 ? text.slice(verifyIdx + '**verify:**'.length).trim() : null;
-
-    let kind: CarryforwardKind;
-    if (resolved) {
-      kind = 'historical';
-    } else if (verifier) {
-      kind = /^`/.test(verifier) ? 'verify-command' : 'verify-prose';
-    } else {
-      kind = 'untagged-forward-looking';
-    }
-    items.push({ text, body, verifier, kind, resolved });
-  }
-  return items;
+function shapeCanonicalItem(item: OpenCarryforwardItem): CarryforwardItem {
+  const text = item.verifier ? `${item.body} **verify:** ${item.verifier}` : item.body;
+  return {
+    text,
+    body: item.body,
+    verifier: item.verifier,
+    kind: item.kind,
+    resolved: false,
+  };
 }
 
-// Resolve handoff text from the same sources as GET /:id/handoff, returning
-// null if we cannot locate it. Used by carryforward endpoints to share lookup.
-function readHandoffForSession(sessionId: string): { handoff: string; filePath: string | null } | null {
-  const session = getSession(sessionId);
-  if (!session || !session.closedAt) return null;
-  if (session.handoff) {
-    return { handoff: session.handoff, filePath: session.sessionFilePath || null };
+function carryforwardItemsForSession(sessionId: string, mode: string): CarryforwardItem[] {
+  let vaultPath: string;
+  try {
+    vaultPath = getVaultPath(mode as any);
+  } catch {
+    return [];
   }
-  if (session.sessionFilePath) {
-    try {
-      const content = fs.readFileSync(session.sessionFilePath, 'utf-8');
-      const match = content.match(/## Handoff\n\n([\s\S]*?)(?=\n## |\n---|$)/);
-      if (match && match[1].trim() && match[1].trim() !== '_No handoff notes_') {
-        const handoff = match[1].trim();
-        updateSession(sessionId, { handoff });
-        return { handoff, filePath: session.sessionFilePath };
-      }
-    } catch {}
-  }
-  return null;
+  const all = readOpenCarryforward(vaultPath);
+  return all
+    .filter((item) => item.origin === sessionId)
+    .map(shapeCanonicalItem);
 }
 
-// Get parsed carryforward items for a closed session
+// GET /api/sessions/:id/carryforward — Open Items panel for a closed session.
 router.get('/:id/carryforward', (req: Request, res: Response) => {
   const sessionId = req.params.id as string;
-  const found = readHandoffForSession(sessionId);
-  if (!found) {
+  const session = getSession(sessionId);
+  if (!session) {
     res.json({ items: [] });
     return;
   }
-  res.json({ items: parseCarryforwardItems(found.handoff) });
+  res.json({ items: carryforwardItemsForSession(sessionId, session.mode) });
 });
 
-// Decision 025 — Open Items "Resolve" writes the same `[x] resolved:DATE by
-// chat-bridge` format as the Triage panel (Decision 024). Identifies the
-// bullet by its exact text content; the actual tag mutation goes through the
-// shared applyResolveTag helper.
-router.patch('/:id/carryforward/resolve', (req: Request, res: Response) => {
+// PATCH /api/sessions/:id/carryforward/resolve — locate the bullet in the
+// canonical file (filtered by `origin == sessionId`) by body match, then resolve
+// via the shared canonical-file mutator. Body match within a single origin is
+// effectively collision-free; multiple-body-same-origin would only occur if a
+// close erroneously emitted duplicates, which the migration script and
+// add_carryforward_item explicitly guard against.
+router.patch('/:id/carryforward/resolve', async (req: Request, res: Response) => {
   const sessionId = req.params.id as string;
   const session = getSession(sessionId);
   if (!session) {
@@ -528,49 +504,33 @@ router.patch('/:id/carryforward/resolve', (req: Request, res: Response) => {
     return;
   }
 
-  const found = readHandoffForSession(sessionId);
-  if (!found) {
-    res.status(404).json({ error: 'Handoff not found' });
+  let vaultPath: string;
+  try {
+    vaultPath = getVaultPath(session.mode as any);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
     return;
   }
 
-  const lines = found.handoff.split('\n');
-  let foundIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^- \[([^\]]+)\]\s+(.+)$/);
-    if (!m) continue;
-    if (m[2].trim() === text.trim()) {
-      foundIdx = i;
-      break;
-    }
-  }
-  if (foundIdx === -1) {
-    res.status(404).json({ error: 'Item not found in handoff' });
+  // Strip a trailing `**verify:** ...` suffix from the frontend's `text` so the
+  // match works whether the renderer sent body alone or body+verifier.
+  const verifyIdx = text.indexOf('**verify:**');
+  const bodyOnly = (verifyIdx >= 0 ? text.slice(0, verifyIdx).trim() : text.trim());
+
+  const all = readOpenCarryforward(vaultPath);
+  const target = all.find((item) => item.origin === sessionId && item.body === bodyOnly);
+  if (!target) {
+    res.status(404).json({ error: 'Item not found in canonical carryforward for this session' });
     return;
   }
 
-  const tagResult = applyResolveTag(lines[foundIdx], 'resolve', RESOLVE_BY_CHAT_BRIDGE);
-  if (tagResult.kind === 'tagged') {
-    lines[foundIdx] = tagResult.newLine;
-  }
-  // kind === 'noop' (already tagged) or 'not_checkbox' (e.g. legacy `[historical]`
-  // line from the close writer) — leave it as-is and return current state.
-
-  const newHandoff = lines.join('\n');
-
-  updateSession(sessionId, { handoff: newHandoff });
-  if (found.filePath && fs.existsSync(found.filePath)) {
-    try {
-      let content = fs.readFileSync(found.filePath, 'utf-8');
-      const handoffRegex = /(## Handoff\n\n)([\s\S]*?)(\n## )/;
-      if (handoffRegex.test(content)) {
-        content = content.replace(handoffRegex, (_m, g1, _g2, g3) => `${g1}${newHandoff}\n${g3}`);
-        fs.writeFileSync(found.filePath, content, 'utf-8');
-      }
-    } catch {}
+  const result = resolveInCanonical(vaultPath, target.hash, 'resolve');
+  if (result.kind === 'file_not_found' || result.kind === 'bullet_not_found') {
+    res.status(404).json({ error: result.kind });
+    return;
   }
 
-  res.json({ items: parseCarryforwardItems(newHandoff) });
+  res.json({ items: carryforwardItemsForSession(sessionId, session.mode) });
 });
 
 // Update handoff notes for a closed session
