@@ -5309,10 +5309,22 @@ async function resolveTriageRows(card, rows) {
       return { n, ok: false, error: 'row missing hash/slug — card needs refresh' };
     }
     try {
+      // Decision 024 follow-up — pass app_session_id + n so the server can
+      // queue a <!--triage-update:v1 {"removed":[...]}-->  marker for the
+      // next user message in this chat. Without these fields the resolve
+      // still works (legacy behavior) but the LLM's triage_items[] view
+      // stays stale until the next /vault:mb refresh.
       const res = await fetch('/api/triage/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode, slug, hash, action: 'resolve' }),
+        body: JSON.stringify({
+          mode,
+          slug,
+          hash,
+          action: 'resolve',
+          app_session_id: currentSessionId || undefined,
+          n,
+        }),
       });
       const json = await res.json().catch(() => null);
       if (json && json.ok) {

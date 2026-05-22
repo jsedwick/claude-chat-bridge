@@ -43,6 +43,28 @@ const BODY_MAX_CHARS = 80;
 const CWD_SCAN_LIMIT = 20;
 const FRONTMATTER_WD_RE = /working_directory:\s*"?([^"\n]+?)"?\s*$/m;
 
+// Decision 024 follow-up — passive LLM notification of bridge-direct resolves.
+// When the user checks rows + clicks Submit, the frontend POSTs to /resolve
+// (Decision 024) which bypasses the LLM. The LLM's in-memory `triage_items[]`
+// view (loaded at /vault:mb time) goes stale until the next memory-base load.
+// To keep the LLM's view fresh within the same session, this queue collects
+// the Ns that were resolved between LLM turns; chat.ts drains it before
+// forwarding the next user message and prepends a
+// `<!--triage-update:v1 {"removed":[N,...]}-->` HTML comment to the message.
+// The marker is invisible in the rendered UI (HTML comment) but Claude sees
+// it via the CLI input and applies the documented rule: subtract those Ns
+// from triage_items[]. Keyed by appSessionId so resolves from one chat tab
+// don't leak into another tab's next turn.
+const pendingTriageMarkers = new Map<string, Set<number>>();
+
+export function drainPendingTriageMarkers(appSessionId: string): number[] {
+  const set = pendingTriageMarkers.get(appSessionId);
+  if (!set || set.size === 0) return [];
+  const out = Array.from(set).sort((a, b) => a - b);
+  pendingTriageMarkers.delete(appSessionId);
+  return out;
+}
+
 interface TriageItem {
   n: number;
   body: string;       // truncated for default display (BODY_MAX_CHARS)
@@ -461,6 +483,27 @@ router.post('/resolve', (req: Request, res: Response) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: 'write_failed', details: (err as Error).message });
     return;
+  }
+
+  // Decision 024 follow-up — queue this N for the marker that chat.ts will
+  // prepend to the next user message. Only emit when the frontend supplied
+  // both an app_session_id and a valid n; legacy clients that omit these
+  // fields keep the original "stale-until-next-mb" semantics. We only push on
+  // a real transition (the noop early-return above bypasses this block) so
+  // the LLM doesn't receive markers for items it already knows are gone.
+  const appSessionId = typeof body.app_session_id === 'string' && body.app_session_id
+    ? body.app_session_id
+    : null;
+  const nValue = typeof body.n === 'number' && Number.isFinite(body.n) && body.n > 0
+    ? Math.trunc(body.n)
+    : null;
+  if (appSessionId && nValue !== null) {
+    let set = pendingTriageMarkers.get(appSessionId);
+    if (!set) {
+      set = new Set<number>();
+      pendingTriageMarkers.set(appSessionId, set);
+    }
+    set.add(nValue);
   }
 
   // For the preview field, re-extract the original body from the matched line.

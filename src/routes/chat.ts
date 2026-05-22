@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStreamBuffer, subscribeWithBuffer } from '../services/claude-runner';
 import { getSession, updateSession, addMessage, updateToolMessage } from '../services/session-store';
+import { drainPendingTriageMarkers } from './triage';
 import { isEffortLevel } from '../types';
 
 const router = Router();
@@ -44,8 +45,22 @@ router.post('/:sessionId', (req: Request, res: Response) => {
     session.messages.length > 0;
   const priorContext = isFreshForkDown ? [...session.messages] : undefined;
 
-  // Save user message server-side
+  // Save user message server-side. The transcript stores the clean user text;
+  // the triage-update marker (if any) is prepended only to the copy sent to
+  // Claude below, so the rendered chat log isn't polluted with backchannel
+  // protocol artifacts.
   addMessage(sessionId, 'user', message);
+
+  // Decision 024 follow-up — drain any triage Ns the user resolved via the
+  // bridge card since the last LLM turn, and prepend a `<!--triage-update:v1
+  // {"removed":[...]}-->` HTML comment so Claude can subtract those Ns from
+  // its in-memory triage_items[] view. The marker is invisible in rendered
+  // markdown; Claude sees it through CLI stdin/argv. Empty queue → message
+  // passes through unchanged.
+  const pendingTriageNs = drainPendingTriageMarkers(sessionId);
+  const messageForClaude = pendingTriageNs.length > 0
+    ? `<!--triage-update:v1 ${JSON.stringify({ removed: pendingTriageNs })} -->\n\n${message}`
+    : message;
 
   // Persist model selection to session (covers legacy sessions without a stored model)
   if (model && !session.model) {
@@ -112,7 +127,7 @@ router.post('/:sessionId', (req: Request, res: Response) => {
       session.forkedFrom && session.forkedFrom.direction !== 'down'
         ? session.forkedFrom.sessionId
         : undefined,
-    message: message,
+    message: messageForClaude,
     model: model || undefined,
     effort: resolvedEffort,
     mode: session.mode || undefined,
