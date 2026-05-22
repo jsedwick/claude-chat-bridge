@@ -525,7 +525,11 @@ router.patch('/:id/carryforward/resolve', async (req: Request, res: Response) =>
   }
 
   const result = resolveInCanonical(vaultPath, target.hash, 'resolve');
-  if (result.kind === 'file_not_found' || result.kind === 'bullet_not_found') {
+  // Decision 029 — delete-on-resolve. file_not_found is still a real error
+  // (the canonical file should exist post-migration). bullet_not_found is
+  // treated as idempotent success — second-click resolves and the
+  // refreshed item list reflects reality either way.
+  if (result.kind === 'file_not_found') {
     res.status(404).json({ error: result.kind });
     return;
   }

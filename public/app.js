@@ -5218,17 +5218,19 @@ function applyTriageUpdate(update) {
     submitBtn.textContent = 'Submit triage';
   }
 
-  const remaining = lastCard.querySelectorAll('.triage-row').length;
+  const totalRemaining = lastCard.querySelectorAll('.triage-row').length;
   const header = lastCard.querySelector('.triage-card-header');
-  if (remaining === 0) {
+  if (totalRemaining === 0) {
     lastCard.classList.add('triage-card-complete');
     if (header) header.textContent = 'Triage complete';
     const rowsContainer = lastCard.querySelector('.triage-rows');
     if (rowsContainer) rowsContainer.remove();
     const footer = lastCard.querySelector('.triage-card-footer');
     if (footer) footer.remove();
-  } else if (header) {
-    header.textContent = 'Carryforward triage (' + remaining + ' item' + (remaining === 1 ? '' : 's') + ')';
+    const filterRow = lastCard.querySelector('.triage-filter-row');
+    if (filterRow) filterRow.remove();
+  } else {
+    updateTriageHeaderCount(lastCard);
   }
 }
 
@@ -5247,10 +5249,12 @@ function renderTriageCardHtml(items) {
     const fullEsc = escapeTriageHtml(full);
     const slug = escapeTriageHtml(item.slug || '');
     const hash = escapeTriageHtml(item.hash || '');
+    const cwdMatch = item.cwd_match === true ? 'true' : 'false';
     // The label wraps only the checkbox + text so clicking either toggles the
     // checkbox. Elaborate is a sibling of the label to keep its click separate.
     // data-n locates the row for applyTriageUpdate; data-hash/data-slug feed
     // the Decision 024 POST /api/triage/resolve dispatch (bypasses LLM).
+    // data-cwd-match drives the CWD filter checkbox at the top of the card.
     //
     // When the body was truncated server-side (full_body !== body), the body
     // span gets a click-to-expand affordance: data-* attrs carry both forms,
@@ -5262,7 +5266,7 @@ function renderTriageCardHtml(items) {
         '" data-full-body="' + fullEsc + '" title="Click to expand"'
       : ' class="triage-body"';
     return (
-      '<div class="triage-row" data-n="' + n + '" data-hash="' + hash + '" data-slug="' + slug + '">' +
+      '<div class="triage-row" data-n="' + n + '" data-hash="' + hash + '" data-slug="' + slug + '" data-cwd-match="' + cwdMatch + '">' +
         '<label class="triage-row-label">' +
           '<input type="checkbox" class="triage-checkbox" data-n="' + n + '">' +
           '<span class="triage-row-text">' +
@@ -5275,10 +5279,29 @@ function renderTriageCardHtml(items) {
       '</div>'
     );
   }).join('');
-  const count = items.length;
+  const total = items.length;
+  const matchCount = items.filter((it) => it.cwd_match === true).length;
+  // Filter UI is only meaningful when there's some signal — at least one
+  // matching item AND at least one non-matching item. Otherwise the checkbox
+  // is a no-op control and the row just adds clutter.
+  const showFilter = matchCount > 0 && matchCount < total;
+  // Default behavior: filter active so the user sees their project's items
+  // first. The header shows the visible count, which starts as matchCount.
+  const filterActive = showFilter;
+  const cardClass = filterActive ? 'triage-card cwd-filter-active' : 'triage-card';
+  const visibleCount = filterActive ? matchCount : total;
+  const filterRow = showFilter
+    ? '<div class="triage-filter-row">' +
+        '<label class="triage-filter-label">' +
+          '<input type="checkbox" class="triage-cwd-filter-checkbox" checked>' +
+          '<span>Current working directory only</span>' +
+        '</label>' +
+      '</div>'
+    : '';
   return (
-    '<div class="triage-card">' +
-      '<div class="triage-card-header">Carryforward triage (' + count + ' item' + (count === 1 ? '' : 's') + ')</div>' +
+    '<div class="' + cardClass + '">' +
+      '<div class="triage-card-header">Carryforward triage (' + visibleCount + ' item' + (visibleCount === 1 ? '' : 's') + ')</div>' +
+      filterRow +
       '<div class="triage-rows">' + rows + '</div>' +
       '<div class="triage-card-footer">' +
         '<button type="button" class="triage-submit" data-action="submit">Submit triage</button>' +
@@ -5290,6 +5313,26 @@ function renderTriageCardHtml(items) {
 
 function renderTriageLoadingHtml() {
   return '<div class="triage-card-loading">Generating triage menu&hellip;</div>';
+}
+
+// Count rows the user can actually see, respecting the CWD-filter state.
+// Used by applyTriageUpdate and the filter-checkbox change handler so the
+// header count stays accurate when rows are resolved or the filter is toggled.
+function countVisibleTriageRows(card) {
+  const rows = card.querySelectorAll('.triage-row');
+  if (!card.classList.contains('cwd-filter-active')) return rows.length;
+  let count = 0;
+  rows.forEach((row) => {
+    if (row.dataset.cwdMatch === 'true') count++;
+  });
+  return count;
+}
+
+function updateTriageHeaderCount(card) {
+  const header = card.querySelector('.triage-card-header');
+  if (!header) return;
+  const count = countVisibleTriageRows(card);
+  header.textContent = 'Carryforward triage (' + count + ' item' + (count === 1 ? '' : 's') + ')';
 }
 
 // Decision 024 — bridge-direct triage resolve. POSTs each checked row to
@@ -5453,6 +5496,19 @@ messagesEl.addEventListener('click', (e) => {
     sendMessage();
     return;
   }
+});
+
+// Decision 029 follow-up — CWD filter checkbox at the top of the triage card.
+// Default checked (set by renderTriageCardHtml). Toggling re-applies the
+// .cwd-filter-active class on the card, which drives a CSS display:none on
+// rows with data-cwd-match="false". Header count tracks visible rows.
+messagesEl.addEventListener('change', (e) => {
+  const filterCheckbox = e.target.closest('.triage-cwd-filter-checkbox');
+  if (!filterCheckbox) return;
+  const card = filterCheckbox.closest('.triage-card');
+  if (!card) return;
+  card.classList.toggle('cwd-filter-active', filterCheckbox.checked);
+  updateTriageHeaderCount(card);
 });
 
 messagesEl.addEventListener('scroll', () => {

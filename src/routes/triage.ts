@@ -54,6 +54,11 @@ interface TriageItem {
   full_body: string;  // untruncated; frontend swaps to this on click-to-expand
   slug: string;       // bullet's `origin:` meta — the session that first surfaced it
   hash: string;
+  // Decision 029 follow-up — true if the item's cwd is bidirectionally
+  // path-related to the active session's working_directory. Powers the
+  // frontend's "current working directory only" filter checkbox. When the
+  // request was made without `working_directory`, all items have cwd_match=false.
+  cwd_match: boolean;
 }
 
 function truncateBody(s: string, max = BODY_MAX_CHARS): string {
@@ -66,11 +71,29 @@ function truncateBody(s: string, max = BODY_MAX_CHARS): string {
 // path fall to "ambient"; items whose `cwd:` points at a different
 // /Users/.../Projects/ path (or whose body literally mentions one) fall to
 // "anti" so the most relevant items surface first.
+//
+// Decision 029 follow-up — the "match" rule is bidirectional path containment:
+// the session's working directory is at-or-below the item's cwd, OR the item's
+// cwd is at-or-below the session's. This is broader than strict equality and
+// catches the common case where the session is in a subdirectory of a project
+// the item was created in (or vice versa). The frontend's CWD-filter checkbox
+// uses the same definition via the `cwd_match` field in the response.
 type CwdRelevance = 'match' | 'ambient' | 'anti';
 
+function pathContains(parent: string, child: string): boolean {
+  if (!parent || !child) return false;
+  if (parent === child) return true;
+  const normalized = parent.endsWith('/') ? parent : parent + '/';
+  return child.startsWith(normalized);
+}
+
+function isCwdRelated(itemCwd: string, sessionCwd: string): boolean {
+  return pathContains(itemCwd, sessionCwd) || pathContains(sessionCwd, itemCwd);
+}
+
 function classifyCwdRelevance(item: OpenCarryforwardItem, cwd: string): CwdRelevance {
-  if (item.cwd === cwd) return 'match';
-  if (item.cwd && item.cwd !== cwd) {
+  if (item.cwd) {
+    if (isCwdRelated(item.cwd, cwd)) return 'match';
     if (/^\/Users\/[^/]+\/Projects\/[^/]+/.test(item.cwd)) return 'anti';
   }
   // Body-text fallback for items whose meta lacks `cwd:` but mentions a path.
@@ -161,6 +184,7 @@ router.get('/current', (req: Request, res: Response) => {
     full_body: e.fullBody,
     slug: e.slug,
     hash: e.hash,
+    cwd_match: e.rel === 'match',
   }));
 
   res.json({ items });
@@ -233,16 +257,27 @@ router.post('/resolve', async (req: Request, res: Response) => {
       });
       return;
     }
+    // Decision 029 — delete-on-resolve. `bullet_not_found` covers both
+    // "hash was never present" and "already deleted by a prior resolve."
+    // Treat as success at the HTTP layer so double-submits and stale UI
+    // state don't surface as errors. Still queue the marker so the LLM
+    // syncs its in-memory view either way.
     if (result.kind === 'bullet_not_found') {
-      res.status(404).json({
-        ok: false,
-        error: 'bullet_not_found',
-        details: `no bullet in canonical file hashes to ${hash.slice(0, 12)}...`,
-      });
-      return;
-    }
-    if (result.kind === 'noop') {
-      res.json({ ok: true, action_applied: 'noop', existing_tag: result.existingTag });
+      const appSessionId = typeof body.app_session_id === 'string' && body.app_session_id
+        ? body.app_session_id
+        : null;
+      const nValue = typeof body.n === 'number' && Number.isFinite(body.n) && body.n > 0
+        ? Math.trunc(body.n)
+        : null;
+      if (appSessionId && nValue !== null) {
+        let set = pendingTriageMarkers.get(appSessionId);
+        if (!set) {
+          set = new Set<number>();
+          pendingTriageMarkers.set(appSessionId, set);
+        }
+        set.add(nValue);
+      }
+      res.json({ ok: true, action_applied: 'already_gone' });
       return;
     }
 
@@ -266,7 +301,7 @@ router.post('/resolve', async (req: Request, res: Response) => {
       ok: true,
       action_applied: action,
       session_file: result.filePath,  // legacy field name; now the canonical file path
-      tagged_at: result.taggedAt,
+      tagged_at: result.deletedAt,    // legacy field name; semantically "actioned_at"
       by: result.by,
       bullet_preview: result.bulletPreview,
     });

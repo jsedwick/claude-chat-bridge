@@ -18,7 +18,6 @@ import path from 'path';
 import {
   CHECKBOX_BULLET_RE,
   VERIFY_TAG_RE,
-  applyResolveTag,
   formatLocalDate,
   RESOLVE_BY_CHAT_BRIDGE,
   type TagAction,
@@ -163,35 +162,34 @@ export function readOpenCarryforward(vaultPath: string): OpenCarryforwardItem[] 
   return items;
 }
 
-export interface TaggedResolveResult {
-  kind: 'tagged';
+export interface DeletedResolveResult {
+  kind: 'deleted';
   filePath: string;
-  taggedAt: string;
+  deletedAt: string;
   by: string;
   bulletPreview: string;
 }
 
-export interface NoopResolveResult {
-  kind: 'noop';
-  existingTag: string;
-}
-
 export type ResolveCanonicalResult =
-  | TaggedResolveResult
-  | NoopResolveResult
+  | DeletedResolveResult
   | { kind: 'bullet_not_found' }
   | { kind: 'file_not_found' };
 
-// Locate the bullet by exact hash match in the line's meta block, then apply
-// the resolve/dismiss tag via the shared `applyResolveTag`. Writes the file
-// back via temp-file rename for atomicity. Idempotent — already-resolved
-// bullets return `{ kind: 'noop' }`.
+// Decision 029 — delete the matched bullet line entirely instead of tagging
+// it `[x] resolved:DATE`. Audit trail lives in the originating session file's
+// `## Handoff` block. `action` and `notes` are accepted for API back-compat
+// but are no longer load-bearing (resolve and dismiss both delete; there's no
+// body left to annotate with notes).
+//
+// Idempotent at the file level: a second call against the same hash returns
+// `bullet_not_found`. Callers wanting HTTP-level idempotency should treat
+// `bullet_not_found` as success.
 export function resolveInCanonical(
   vaultPath: string,
   hash: string,
-  action: TagAction,
+  _action: TagAction,
   attribution: string = RESOLVE_BY_CHAT_BRIDGE,
-  notes?: string,
+  _notes?: string,
   today: string = formatLocalDate(),
 ): ResolveCanonicalResult {
   const filePath = openCarryforwardPath(vaultPath);
@@ -218,21 +216,22 @@ export function resolveInCanonical(
   }
   if (matchedIdx === -1) return { kind: 'bullet_not_found' };
 
-  const tagResult = applyResolveTag(lines[matchedIdx], action, attribution, today, notes);
-  if (tagResult.kind === 'not_checkbox') return { kind: 'bullet_not_found' };
-  if (tagResult.kind === 'noop') return { kind: 'noop', existingTag: tagResult.existing_tag };
+  // Capture a preview of the body before splicing the line out.
+  const cb = lines[matchedIdx].match(CHECKBOX_BULLET_RE);
+  const rawBody = cb ? cb[2] : '';
+  const cleanedBody = rawBody
+    .replace(META_BLOCK_RE, '')
+    .replace(VERIFY_TAG_RE, '')
+    .trim();
+  const bulletPreview = cleanedBody.length > 80 ? cleanedBody.slice(0, 77) + '...' : cleanedBody;
 
-  lines[matchedIdx] = tagResult.newLine;
+  lines.splice(matchedIdx, 1);
   atomicWrite(filePath, lines.join('\n'));
 
-  const cb = lines[matchedIdx].match(CHECKBOX_BULLET_RE);
-  const bodyText = cb ? cb[2] : '';
-  const bulletPreview = bodyText.length > 80 ? bodyText.slice(0, 77) + '...' : bodyText;
-
   return {
-    kind: 'tagged',
+    kind: 'deleted',
     filePath,
-    taggedAt: today,
+    deletedAt: today,
     by: attribution,
     bulletPreview,
   };
