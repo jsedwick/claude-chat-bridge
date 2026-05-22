@@ -199,6 +199,30 @@ function truncateBody(s: string, max = BODY_MAX_CHARS): string {
   return s.slice(0, max - 1).trimEnd() + '…';
 }
 
+// Bias display order toward items whose text mentions the active working
+// directory. `n` values are preserved (Decision 026 parity), so the displayed
+// N column may be non-contiguous after sorting. CLI `<N> resolve` continues to
+// map through MCP-side handoff-order items[], which assigns the same N as the
+// parsing loop here.
+type CwdRelevance = 'match' | 'ambient' | 'anti';
+
+function classifyCwdRelevance(rawLine: string, cwd: string): CwdRelevance {
+  if (
+    rawLine.includes(cwd + '/') ||
+    rawLine.includes(cwd + '`') ||
+    rawLine.includes(cwd + ' ') ||
+    rawLine.endsWith(cwd)
+  ) {
+    return 'match';
+  }
+  // Cross-repo path mention: any other /Users/.../Projects/<name> path.
+  // Items mentioning only the CWD path are handled above and never reach here.
+  if (/\/Users\/[^/\s]+\/Projects\/[^/`\s)]+/.test(rawLine)) {
+    return 'anti';
+  }
+  return 'ambient';
+}
+
 // Filter rule (Phase 5+): the bridge can't run verify-command verifiers, so it
 // can't tell ambiguous-result items apart from absence-grep-resolved ones the
 // MCP server would suppress. To keep this endpoint's numbering consistent with
@@ -234,7 +258,17 @@ router.get('/current', (req: Request, res: Response) => {
       : undefined;
 
   const sessions = scanRecentSessions(vaultPath, RECENT_SESSION_LIMIT, workingDir);
-  const items: TriageItem[] = [];
+  const matchBucket: TriageItem[] = [];
+  const ambientBucket: TriageItem[] = [];
+  const antiBucket: TriageItem[] = [];
+  // Dedupe across the scanned sessions: handoffs commonly re-carry the same
+  // open item across multiple session closes, sometimes with slight verifier
+  // wording drift (different hash, identical body). Dedupe by untruncated body
+  // so both faithful re-carries and rephrase-drift cases collapse to one row.
+  // n is incremented for every eligible bullet (including skipped duplicates)
+  // so each surviving item's n matches MCP-side `get_memory_base.handoffs[].items[]`
+  // ordering — keeps the CLI `<N> resolve` fallback in sync.
+  const seenBodies = new Set<string>();
   let n = 1;
 
   for (const { slug, filePath } of sessions) {
@@ -244,14 +278,29 @@ router.get('/current', (req: Request, res: Response) => {
     const bullets = parseHandoffBullets(handoff);
     for (const b of bullets) {
       if (!isTriageEligible(b)) continue;
-      items.push({
-        n: n++,
+      const currentN = n++;
+      if (seenBodies.has(b.body)) continue;
+      seenBodies.add(b.body);
+      const item: TriageItem = {
+        n: currentN,
         body: truncateBody(b.body),
         slug,
         hash: b.hash,
-      });
+      };
+      if (workingDir) {
+        const rel = classifyCwdRelevance(b.rawLine, workingDir);
+        if (rel === 'match') matchBucket.push(item);
+        else if (rel === 'anti') antiBucket.push(item);
+        else ambientBucket.push(item);
+      } else {
+        ambientBucket.push(item);
+      }
     }
   }
+
+  const items: TriageItem[] = workingDir
+    ? [...matchBucket, ...ambientBucket, ...antiBucket]
+    : ambientBucket;
 
   res.json({ items });
 });
