@@ -55,10 +55,11 @@ interface TriageItem {
   full_body: string;  // untruncated; frontend swaps to this on click-to-expand
   slug: string;       // bullet's `origin:` meta — the session that first surfaced it
   hash: string;
-  // Decision 029 follow-up — true if the item's cwd is bidirectionally
-  // path-related to the active session's working_directory. Powers the
-  // frontend's "current working directory only" filter checkbox. When the
-  // request was made without `working_directory`, all items have cwd_match=false.
+  // Decision 029 follow-up — true if the item's `cwd:` meta is strictly equal
+  // to the active session's working_directory, OR the item's body literally
+  // mentions a path under the active working_directory. Powers the frontend's
+  // "current working directory only" filter checkbox. When the request was
+  // made without `working_directory`, all items have cwd_match=false.
   cwd_match: boolean;
 }
 
@@ -73,23 +74,17 @@ function truncateBody(s: string, max = BODY_MAX_CHARS): string {
 // /Users/.../Projects/ path (or whose body literally mentions one) fall to
 // "anti" so the most relevant items surface first.
 //
-// Decision 029 follow-up — the "match" rule is bidirectional path containment:
-// the session's working directory is at-or-below the item's cwd, OR the item's
-// cwd is at-or-below the session's. This is broader than strict equality and
-// catches the common case where the session is in a subdirectory of a project
-// the item was created in (or vice versa). The frontend's CWD-filter checkbox
-// uses the same definition via the `cwd_match` field in the response.
+// The "match" rule on `cwd:` meta is strict equality. Bidirectional path
+// containment was tried (Decision 029 follow-up) but it surfaced parent-project
+// items in deeply-nested sessions (e.g. a session in ~/Projects/Personal/Cars
+// matching items with cwd: ~/Projects/Personal) — opposite of the affordance's
+// intent. The body-text scan in classifyCwdRelevance still catches cross-
+// project mentions where item.cwd disagrees with the body, so subpath-of-cwd
+// references in item bodies remain a "match" signal.
 type CwdRelevance = 'match' | 'ambient' | 'anti';
 
-function pathContains(parent: string, child: string): boolean {
-  if (!parent || !child) return false;
-  if (parent === child) return true;
-  const normalized = parent.endsWith('/') ? parent : parent + '/';
-  return child.startsWith(normalized);
-}
-
 function isCwdRelated(itemCwd: string, sessionCwd: string): boolean {
-  return pathContains(itemCwd, sessionCwd) || pathContains(sessionCwd, itemCwd);
+  return itemCwd === sessionCwd;
 }
 
 function classifyCwdRelevance(item: OpenCarryforwardItem, cwd: string): CwdRelevance {
