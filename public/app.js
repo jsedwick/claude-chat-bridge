@@ -5491,9 +5491,16 @@ messagesEl.addEventListener('click', (e) => {
     if (elaborateBtn.disabled) return;
     const n = elaborateBtn.dataset.n;
     if (!n) return;
+    // UI Ns are per-render (endpoint computes `n = i + 1` per call), so they
+    // shift after a browser refresh that follows a resolve cycle. Include the
+    // bullet's stable hash in the message so the LLM can look up by hash and
+    // avoid the renumber-misalignment bug. CLI users without the hash continue
+    // to work via the N-only fallback in the skill parser.
+    const row = elaborateBtn.closest('.triage-row');
+    const hash = row && row.dataset.hash ? row.dataset.hash : '';
     elaborateBtn.classList.add('triage-btn-selected');
     setTimeout(() => elaborateBtn.classList.remove('triage-btn-selected'), 800);
-    messageInput.value = n + ' elaborate';
+    messageInput.value = hash ? (n + ' elaborate hash:' + hash) : (n + ' elaborate');
     sendMessage();
     return;
   }
