@@ -92,15 +92,18 @@ function isCwdRelated(itemCwd: string, sessionCwd: string): boolean {
 }
 
 function classifyCwdRelevance(item: OpenCarryforwardItem, cwd: string): CwdRelevance {
-  if (item.cwd) {
-    if (isCwdRelated(item.cwd, cwd)) return 'match';
-    if (/^\/Users\/[^/]+\/Projects\/[^/]+/.test(item.cwd)) return 'anti';
-  }
-  // Body-text fallback for items whose meta lacks `cwd:` but mentions a path.
-  if (item.rawLine.includes(cwd + '/') || item.rawLine.includes(cwd + '`') ||
-      item.rawLine.includes(cwd + ' ') || item.rawLine.endsWith(cwd)) {
-    return 'match';
-  }
+  // Check item.cwd AND body-text together — either matching is a strong
+  // relevance signal. Previously body-text was a fallback only when item.cwd
+  // was missing, which missed cross-cutting items: an MCP fix written from a
+  // chat-bridge cwd would have cwd:chat-bridge in meta but mention the
+  // obsidian-mcp-server path in its body, and the body signal was discarded.
+  const cwdMatchesByMeta = item.cwd ? isCwdRelated(item.cwd, cwd) : false;
+  const cwdMatchesByBody =
+    item.rawLine.includes(cwd + '/') || item.rawLine.includes(cwd + '`') ||
+    item.rawLine.includes(cwd + ' ') || item.rawLine.endsWith(cwd);
+  if (cwdMatchesByMeta || cwdMatchesByBody) return 'match';
+
+  if (item.cwd && /^\/Users\/[^/]+\/Projects\/[^/]+/.test(item.cwd)) return 'anti';
   if (/\/Users\/[^/\s]+\/Projects\/[^/`\s)]+/.test(item.rawLine)) return 'anti';
   return 'ambient';
 }

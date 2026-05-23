@@ -5281,10 +5281,11 @@ function renderTriageCardHtml(items) {
   }).join('');
   const total = items.length;
   const matchCount = items.filter((it) => it.cwd_match === true).length;
-  // Filter UI is only meaningful when there's some signal — at least one
-  // matching item AND at least one non-matching item. Otherwise the checkbox
-  // is a no-op control and the row just adds clutter.
-  const showFilter = matchCount > 0 && matchCount < total;
+  // Filter UI renders whenever toggling would change visibility — either
+  // hiding non-matches (matchCount < total) or revealing the full set from an
+  // empty filtered state (matchCount === 0, default-checked). Suppressed only
+  // when every item already matches (matchCount === total) — a true no-op.
+  const showFilter = matchCount < total;
   // Default behavior: filter active so the user sees their project's items
   // first. The header shows the visible count, which starts as matchCount.
   const filterActive = showFilter;
