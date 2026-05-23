@@ -406,8 +406,15 @@ router.get('/:id/handoff', (req: Request, res: Response) => {
   if (session.sessionFilePath) {
     try {
       const content = fs.readFileSync(session.sessionFilePath, 'utf-8');
-      const match = content.match(/## Handoff\n\n([\s\S]*?)(?=\n## |\n---|$)/);
-      if (match && match[1].trim() && match[1].trim() !== '_No handoff notes_') {
+      // Decision 028 Phase 4: new sessions emit `## Closing notes`; legacy sessions
+      // still have `## Handoff`. Accept either.
+      const match = content.match(/## (?:Closing notes|Handoff)\n\n([\s\S]*?)(?=\n## |\n---|$)/);
+      if (
+        match &&
+        match[1].trim() &&
+        match[1].trim() !== '_No handoff notes_' &&
+        match[1].trim() !== '_No closing notes_'
+      ) {
         const handoff = match[1].trim();
         // Cache it on the session for next time
         updateSession(req.params.id as string, { handoff });
@@ -563,8 +570,11 @@ router.put('/:id/handoff', (req: Request, res: Response) => {
   if (filePath && fs.existsSync(filePath)) {
     try {
       let content = fs.readFileSync(filePath, 'utf-8');
-      // Replace the ## Handoff section content
-      const handoffRegex = /(## Handoff\n\n)([\s\S]*?)(\n## )/;
+      // Replace the closing-notes section content. Decision 028 Phase 4: new
+      // sessions use `## Closing notes`; legacy session files have `## Handoff`.
+      // Preserve whichever header the file already has — Phase 5 vault custodian
+      // will rewrite legacy headers in a sweep.
+      const handoffRegex = /(## (?:Closing notes|Handoff)\n\n)([\s\S]*?)(\n## )/;
       const match = content.match(handoffRegex);
       if (match) {
         content = content.replace(handoffRegex, (_m, g1, _g2, g3) => `${g1}${handoff}\n${g3}`);

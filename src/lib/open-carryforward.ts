@@ -177,7 +177,8 @@ export type ResolveCanonicalResult =
 
 // Decision 029 — delete the matched bullet line entirely instead of tagging
 // it `[x] resolved:DATE`. Audit trail lives in the originating session file's
-// `## Handoff` block. `action` and `notes` are accepted for API back-compat
+// `## Closing notes` (or legacy `## Handoff`) block. `action` and `notes` are
+// accepted for API back-compat
 // but are no longer load-bearing (resolve and dismiss both delete; there's no
 // body left to annotate with notes).
 //

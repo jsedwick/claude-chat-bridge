@@ -6,7 +6,8 @@
 // bridge's items[] matches what `get_memory_base.handoffs[].items[]` would
 // surface for the same `working_directory`.
 // Decision 028 Phase 3 — source/target switched from per-session `## Handoff`
-// blocks to the canonical `open-carryforward.md` file per active mode. The
+// (renamed to `## Closing notes` in Phase 4) blocks to the canonical
+// `open-carryforward.md` file per active mode. The
 // `slug` returned in each TriageItem is the bullet's `origin:` meta (the
 // session that first surfaced the item); cross-mode/back-compat fields in the
 // resolve POST body are accepted but no longer load-bearing.
