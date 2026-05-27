@@ -375,6 +375,14 @@ async function setMode(mode) {
     // If tasks tab is currently active, reload immediately
     const activeTasksTab = document.querySelector('.welcome-tab.active[data-tab="tasks"], .welcome-tab.active[data-tab="kb-tasks"]');
     if (activeTasksTab) loadWelcomeTasks();
+    // Reset projects loaded flags so they re-fetch for the new mode
+    ['welcome-projects', 'kb-welcome-projects'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) delete el.dataset.loaded;
+    });
+    // If projects tab is currently active, reload immediately
+    const activeProjectsTab = document.querySelector('.welcome-tab.active[data-tab="projects"], .welcome-tab.active[data-tab="kb-projects"]');
+    if (activeProjectsTab) loadWelcomeProjects();
   } catch (err) {
     console.error('Failed to switch mode:', err);
   } finally {
@@ -464,6 +472,9 @@ async function renderDirBrowser(container, startPath, onSelect, opts = {}) {
   try {
     let url = `/api/sessions/dirs/browse?path=${encodeURIComponent(startPath)}`;
     if (unrestricted) url += '&unrestricted=1';
+    // Pass the active mode so the server can flag cross-mode project roots in the
+    // response. Skipped in unrestricted (Settings) mode — that picker has no mode context.
+    if (!unrestricted && typeof currentMode === 'string') url += `&mode=${currentMode}`;
     const res = await fetch(url);
     if (res.status === 403) {
       // Path is outside allowed directories — show roots instead
@@ -502,21 +513,135 @@ async function renderDirBrowser(container, startPath, onSelect, opts = {}) {
 
     container.appendChild(header);
 
-    // Select current directory button
+    // Select current directory button. Disabled when the current directory is a
+    // project root claimed exclusively by the other mode — user must switch modes
+    // to use it as a CWD.
     const selectBtn = document.createElement('button');
     selectBtn.className = 'dir-browser-select';
-    selectBtn.textContent = 'Select this directory';
-    selectBtn.onclick = (e) => { e.stopPropagation(); onSelect(data.path); };
+    if (data.crossMode) {
+      const otherLabel = data.crossMode === 'work' ? 'Work' : 'Personal';
+      selectBtn.textContent = `Switch to ${otherLabel} mode to select`;
+      selectBtn.disabled = true;
+      selectBtn.title = `This directory is a ${otherLabel}-mode project root.`;
+      selectBtn.classList.add('dir-browser-select-cross-mode');
+    } else {
+      selectBtn.textContent = 'Select this directory';
+      selectBtn.onclick = (e) => { e.stopPropagation(); onSelect(data.path); };
+    }
     container.appendChild(selectBtn);
 
-    // Child directories
+    // "+ Create folder" affordance (mkdir + optional git init at current level)
+    const createBtn = document.createElement('button');
+    createBtn.className = 'dir-browser-create';
+    createBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Create folder</span>';
+    createBtn.title = 'Create a new folder here';
+
+    const createForm = document.createElement('div');
+    createForm.className = 'dir-browser-create-form';
+    createForm.style.display = 'none';
+    createForm.innerHTML = `
+      <input type="text" class="dir-browser-create-name" placeholder="Folder name" maxlength="128">
+      <label class="dir-browser-create-git">
+        <input type="checkbox" class="dir-browser-create-git-cb" checked>
+        <span>git init</span>
+      </label>
+      <div class="dir-browser-create-actions">
+        <button class="dir-browser-create-cancel" type="button">Cancel</button>
+        <button class="dir-browser-create-submit" type="button">Create</button>
+      </div>
+      <div class="dir-browser-create-error" style="display:none"></div>
+    `;
+
+    createBtn.onclick = (e) => {
+      e.stopPropagation();
+      createForm.style.display = 'block';
+      createBtn.style.display = 'none';
+      const nameInput = createForm.querySelector('.dir-browser-create-name');
+      nameInput.value = '';
+      nameInput.focus();
+    };
+
+    createForm.querySelector('.dir-browser-create-cancel').onclick = (e) => {
+      e.stopPropagation();
+      createForm.style.display = 'none';
+      createBtn.style.display = '';
+    };
+
+    const submitCreate = async () => {
+      const nameInput = createForm.querySelector('.dir-browser-create-name');
+      const gitCb = createForm.querySelector('.dir-browser-create-git-cb');
+      const errEl = createForm.querySelector('.dir-browser-create-error');
+      const name = nameInput.value.trim();
+      if (!name) {
+        errEl.textContent = 'Folder name required';
+        errEl.style.display = 'block';
+        return;
+      }
+      errEl.style.display = 'none';
+      try {
+        const res = await fetch('/api/sessions/dirs/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parentPath: data.path, folderName: name, initGit: gitCb.checked }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          errEl.textContent = body.error || `Failed (${res.status})`;
+          errEl.style.display = 'block';
+          return;
+        }
+        const result = await res.json();
+        if (result.gitError) {
+          // Directory created but git init failed — surface but still navigate
+          alert('Folder created, but git init failed: ' + result.gitError);
+        }
+        // Navigate into the new directory so the user can select it directly.
+        renderDirBrowser(container, result.path, onSelect, opts);
+      } catch (err) {
+        errEl.textContent = 'Network error';
+        errEl.style.display = 'block';
+      }
+    };
+
+    createForm.querySelector('.dir-browser-create-submit').onclick = (e) => {
+      e.stopPropagation();
+      submitCreate();
+    };
+    createForm.querySelector('.dir-browser-create-name').onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submitCreate(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        createForm.style.display = 'none';
+        createBtn.style.display = '';
+      }
+    };
+
+    // Hide the create-folder affordance in unrestricted (Settings) mode:
+    // the POST endpoint always enforces allowed paths, so the button would 403.
+    if (!unrestricted) {
+      container.appendChild(createBtn);
+      container.appendChild(createForm);
+    }
+
+    // Child directories. Children whose path is a project root claimed exclusively
+    // by the other mode are visually greyed but remain clickable so the user can
+    // still drill into them; the "Select this directory" button at the destination
+    // is disabled. Per-project-root match only — ancestors and siblings are unaffected.
     if (data.children.length > 0) {
       const list = document.createElement('div');
       list.className = 'dir-browser-list';
       for (const child of data.children) {
         const item = document.createElement('button');
         item.className = 'dir-picker-item';
-        item.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + child.name + '</span>';
+        const otherLabel = child.crossMode === 'work' ? 'Work' : (child.crossMode === 'personal' ? 'Personal' : '');
+        if (child.crossMode) {
+          item.classList.add('dir-picker-item-cross-mode');
+          item.title = `${otherLabel}-mode project root — switch modes to select this as a CWD`;
+        }
+        const tag = child.crossMode
+          ? ` <span class="dir-picker-item-mode-tag">${otherLabel}</span>`
+          : '';
+        item.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + child.name + '</span>' + tag;
         item.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, child.path, onSelect, opts); };
         list.appendChild(item);
       }
@@ -2176,11 +2301,16 @@ function switchWelcomeTab(tab) {
   document.getElementById('welcome-topics').classList.toggle('active', tab === 'topics');
   document.getElementById('welcome-tasks').style.display = tab === 'tasks' ? '' : 'none';
   document.getElementById('welcome-tasks').classList.toggle('active', tab === 'tasks');
+  document.getElementById('welcome-projects').style.display = tab === 'projects' ? '' : 'none';
+  document.getElementById('welcome-projects').classList.toggle('active', tab === 'projects');
   if (tab === 'topics' && !document.getElementById('welcome-topics').dataset.loaded) {
     loadWelcomeTopics();
   }
   if (tab === 'tasks' && !document.getElementById('welcome-tasks').dataset.loaded) {
     loadWelcomeTasks();
+  }
+  if (tab === 'projects' && !document.getElementById('welcome-projects').dataset.loaded) {
+    loadWelcomeProjects();
   }
 }
 
@@ -2193,11 +2323,16 @@ function switchKbWelcomeTab(tab) {
   document.getElementById('kb-welcome-topics').classList.toggle('active', tab === 'topics');
   document.getElementById('kb-welcome-tasks').style.display = tab === 'tasks' ? '' : 'none';
   document.getElementById('kb-welcome-tasks').classList.toggle('active', tab === 'tasks');
+  document.getElementById('kb-welcome-projects').style.display = tab === 'projects' ? '' : 'none';
+  document.getElementById('kb-welcome-projects').classList.toggle('active', tab === 'projects');
   if (tab === 'topics' && !document.getElementById('kb-welcome-topics').dataset.loaded) {
     loadWelcomeTopics();
   }
   if (tab === 'tasks' && !document.getElementById('kb-welcome-tasks').dataset.loaded) {
     loadWelcomeTasks();
+  }
+  if (tab === 'projects' && !document.getElementById('kb-welcome-projects').dataset.loaded) {
+    loadWelcomeProjects();
   }
 }
 
@@ -2272,6 +2407,82 @@ function openSessionInKb(vaultPath) {
   kbHistory = [];
   switchView('kb');
   loadKbFile(vaultPath, { skipHistory: true });
+}
+
+// --- Welcome Projects tab ---
+
+async function loadWelcomeProjects() {
+  const containers = [
+    document.getElementById('welcome-projects'),
+    document.getElementById('kb-welcome-projects'),
+  ].filter(Boolean);
+  if (containers.length === 0) return;
+  containers.forEach(c => {
+    if (!c.children.length || !c.dataset.loaded) c.innerHTML = '<div class="welcome-loading">Loading projects…</div>';
+  });
+  try {
+    const res = await fetchWithRetry(`/api/vault/projects?mode=${currentMode}`, {}, { retries: 1 });
+    const data = await res.json();
+    const projects = data && data.projects;
+    if (!projects || projects.length === 0) {
+      containers.forEach(c => { c.innerHTML = '<p class="welcome-hint">No projects found.</p>'; });
+      return;
+    }
+    const header = `
+      <div class="welcome-projects-header">
+        <button class="welcome-projects-refresh-btn" type="button" onclick="refreshWelcomeProjects()" title="Refresh from disk">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
+    `;
+    const rows = projects.map(p => {
+      const repoPathEsc = p.repoPath.replace(/'/g, "\\'");
+      const vaultPathEsc = p.vaultPath.replace(/'/g, "\\'");
+      const missing = !p.exists;
+      const subline = p.lastSessionDate ? `session ${p.lastSessionDate}` : (p.lastUpdated ? `updated ${p.lastUpdated}` : '');
+      return `
+        <div class="welcome-project-row${missing ? ' welcome-project-missing' : ''}">
+          <button class="welcome-project-info" onclick="openSessionInKb('${vaultPathEsc}')" title="${escapeHtml(p.repoPath)}">
+            <span class="welcome-project-name">${escapeHtml(p.name)}</span>
+            <span class="welcome-project-sub">${escapeHtml(subline)}${missing ? ' · path missing' : ''}</span>
+          </button>
+          <button class="welcome-project-start" ${missing ? 'disabled' : ''} onclick="startChatInProject('${repoPathEsc}')" title="Start chat in ${escapeHtml(p.repoPath)}">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span>Start Chat</span>
+          </button>
+        </div>
+      `;
+    }).join('');
+    const html = header + `<div class="welcome-projects-list">${rows}</div>`;
+    containers.forEach(c => { c.innerHTML = html; c.dataset.loaded = '1'; });
+  } catch (err) {
+    console.error('Failed to load projects:', err);
+    containers.forEach(c => { c.innerHTML = '<p class="welcome-hint">Failed to load projects.</p>'; });
+  }
+}
+
+function refreshWelcomeProjects() {
+  ['welcome-projects', 'kb-welcome-projects'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) delete el.dataset.loaded;
+  });
+  loadWelcomeProjects();
+}
+
+let startChatInProjectBusy = false;
+async function startChatInProject(repoPath) {
+  if (!repoPath || startChatInProjectBusy) return;
+  startChatInProjectBusy = true;
+  try {
+    // If user clicked Start Chat from the KB-welcome Projects tab, they're in 'kb' view;
+    // switch to the chat view ('sessions') first so the new session is visible.
+    if (currentView !== 'sessions') switchView('sessions');
+    selectedNewChatDir = repoPath;
+    await createNewSession();
+  } finally {
+    startChatInProjectBusy = false;
+  }
 }
 
 // --- Welcome Tasks tab ---
@@ -8545,12 +8756,32 @@ async function createKbDir(dirPath) {
   }
 }
 
-// Delete an empty directory
+// Delete a directory. Empty: simple confirm. Non-empty: stronger confirm + recursive delete.
 async function deleteKbDir(dirPath) {
   const dirName = dirPath.split('/').pop();
-  if (!confirm(`Delete folder "${dirName}"? (must be empty)`)) return;
+
+  let isEmpty = false;
   try {
-    const res = await fetchWithRetry(`/api/vault/kb/dir?path=${encodeURIComponent(dirPath)}`, { method: 'DELETE' });
+    const probe = await fetchWithRetry(`/api/vault/kb/tree?path=${encodeURIComponent(dirPath)}`);
+    const probeData = await probe.json();
+    if (!probeData.error && Array.isArray(probeData.entries)) {
+      isEmpty = probeData.entries.length === 0;
+    }
+  } catch {
+    // Probe failed — fall through; the server's non-recursive check still guards an unintended wipe.
+  }
+
+  let recursive = false;
+  if (isEmpty) {
+    if (!confirm(`Delete folder "${dirName}"?`)) return;
+  } else {
+    if (!confirm(`Folder "${dirName}" is not empty. Delete the folder AND ALL its contents? This cannot be undone.`)) return;
+    recursive = true;
+  }
+
+  try {
+    const url = `/api/vault/kb/dir?path=${encodeURIComponent(dirPath)}${recursive ? '&recursive=true' : ''}`;
+    const res = await fetchWithRetry(url, { method: 'DELETE' });
     const data = await res.json();
     if (data.error) {
       alert('Delete folder failed: ' + data.error);
@@ -8558,7 +8789,16 @@ async function deleteKbDir(dirPath) {
     }
     const parentPath = dirPath.substring(0, dirPath.lastIndexOf('/'));
     kbTreeCache.delete(parentPath);
-    kbExpandedDirs.delete(dirPath);
+    for (const cachedPath of Array.from(kbTreeCache.keys())) {
+      if (cachedPath === dirPath || cachedPath.startsWith(dirPath + '/')) {
+        kbTreeCache.delete(cachedPath);
+      }
+    }
+    for (const expanded of Array.from(kbExpandedDirs)) {
+      if (expanded === dirPath || expanded.startsWith(dirPath + '/')) {
+        kbExpandedDirs.delete(expanded);
+      }
+    }
     await reloadKbSubtree(parentPath);
   } catch (err) {
     console.error('Failed to delete directory:', err);

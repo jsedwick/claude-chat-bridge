@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { listSessions, listSessionsByMode, listTrashedSessionsByMode, createSession, deleteSession, getSession, getMessages, updateSession, archiveSession, unarchiveSession, trashSession, restoreSession, forkSession, getForkPoints, getForkDepth } from '../services/session-store';
 import { config, getAllowedPaths, getActiveModeVaults, getVaultPath, parseMode } from '../config';
+import { getCrossModeProjectRoots } from '../services/vault-projects';
 import { cleanupSessionResources } from '../services/session-reaper';
 import { getActiveAppSessionIds } from '../services/claude-runner';
 import { isEffortLevel } from '../types';
@@ -87,6 +88,7 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
   const dirPath = (req.query.path as string) || config.workingDir;
   const resolved = path.resolve(dirPath);
   const unrestricted = req.query.unrestricted === '1';
+  const activeMode = parseMode(req.query.mode);
 
   // Enforce allowed paths restriction (unless unrestricted mode for settings)
   const allowedPaths = getAllowedPaths();
@@ -108,17 +110,28 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
     return;
   }
 
-  const children: Array<{ name: string; path: string }> = [];
+  // Cross-mode project roots: directories that are project roots in the other mode
+  // and NOT also in the active mode. Used to grey out directories claimed exclusively
+  // by the inactive context. Per-project-root match only — ancestors and siblings are
+  // unaffected. Skipped when mode is absent or unrestricted is set (Settings picker).
+  const crossModeRoots = activeMode && !unrestricted
+    ? getCrossModeProjectRoots(activeMode)
+    : new Map<string, string>();
+
+  const children: Array<{ name: string; path: string; crossMode?: string }> = [];
   try {
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory() && !entry.name.startsWith('.')) {
         const childPath = path.join(resolved, entry.name);
         if (!enforce || isWithinAllowedPaths(childPath, allowedPaths)) {
-          children.push({
+          const child: { name: string; path: string; crossMode?: string } = {
             name: entry.name,
             path: childPath,
-          });
+          };
+          const claimedBy = crossModeRoots.get(childPath);
+          if (claimedBy) child.crossMode = claimedBy;
+          children.push(child);
         }
       }
     }
@@ -133,11 +146,83 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
   const hasParent = parentDir !== resolved &&
     (!enforce || isWithinAllowedPaths(parentDir, allowedPaths));
 
+  const currentCrossMode = crossModeRoots.get(resolved) || null;
+
   res.json({
     path: resolved,
     parent: hasParent ? parentDir : null,
     children,
+    crossMode: currentCrossMode,
   });
+});
+
+// Create a new directory under an allowed-path parent, optionally with `git init`.
+router.post('/dirs/create', (req: Request, res: Response) => {
+  const { parentPath, folderName, initGit } = req.body || {};
+  if (!parentPath || typeof parentPath !== 'string') {
+    res.status(400).json({ error: 'parentPath required' });
+    return;
+  }
+  if (!folderName || typeof folderName !== 'string') {
+    res.status(400).json({ error: 'folderName required' });
+    return;
+  }
+  const trimmed = folderName.trim();
+  if (!trimmed || trimmed.includes('/') || trimmed.includes('\\') || trimmed === '.' || trimmed === '..') {
+    res.status(400).json({ error: 'folderName must be a single path segment' });
+    return;
+  }
+
+  const resolvedParent = path.resolve(parentPath);
+  const allowedPaths = getAllowedPaths();
+  if (allowedPaths.length > 0 && !isWithinAllowedPaths(resolvedParent, allowedPaths)) {
+    res.status(403).json({ error: 'Parent directory is outside allowed paths' });
+    return;
+  }
+
+  try {
+    const stat = fs.statSync(resolvedParent);
+    if (!stat.isDirectory()) {
+      res.status(400).json({ error: 'Parent is not a directory' });
+      return;
+    }
+  } catch {
+    res.status(404).json({ error: 'Parent directory not found' });
+    return;
+  }
+
+  const target = path.join(resolvedParent, trimmed);
+  if (fs.existsSync(target)) {
+    res.status(409).json({ error: 'Directory already exists' });
+    return;
+  }
+
+  try {
+    fs.mkdirSync(target);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to create directory' });
+    return;
+  }
+
+  let gitInitialized = false;
+  if (initGit) {
+    try {
+      execFileSync('git', ['init'], { cwd: target, stdio: 'pipe' });
+      gitInitialized = true;
+    } catch (err: any) {
+      // mkdir already succeeded — report the git failure but don't roll back the directory
+      res.status(201).json({
+        success: true,
+        path: target,
+        name: trimmed,
+        gitInitialized: false,
+        gitError: err.message || 'git init failed',
+      });
+      return;
+    }
+  }
+
+  res.status(201).json({ success: true, path: target, name: trimmed, gitInitialized });
 });
 
 // In-memory file index for @-mention autocomplete. Keyed by the joined source paths

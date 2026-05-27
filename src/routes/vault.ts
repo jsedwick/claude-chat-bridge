@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults, getVaultModeForPath, parseMode } from '../config';
+import { scanVaultProjects } from '../services/vault-projects';
 
 const router = Router();
 
@@ -262,6 +263,53 @@ router.get('/topics', (req: Request, res: Response) => {
       vaultPath: t.filePath,
       category: t.category,
       modified: new Date(t.modified).toISOString().split('T')[0],
+    })),
+  });
+});
+
+// List vault projects with most-recent-session-in-CWD sort.
+// VaultProject + scanVaultProjects live in services/vault-projects.ts so the
+// dirs/browse endpoint can compute cross-mode roots without a circular import.
+router.get('/projects', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  if (!mode) {
+    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
+    return;
+  }
+  const vaultPath = getVaultPath(mode);
+  const projects = scanVaultProjects(vaultPath, mode);
+
+  // Join recent vault sessions to find the most recent session in each project's CWD.
+  // Path containment: session.workingDir === project.repoPath or starts with project.repoPath + sep.
+  const sessions = scanVaultSessions(vaultPath);
+  for (const p of projects) {
+    const prefix = p.repoPath.endsWith(path.sep) ? p.repoPath : p.repoPath + path.sep;
+    let latest = '';
+    for (const s of sessions) {
+      if (!s.workingDir) continue;
+      const matches = s.workingDir === p.repoPath || s.workingDir.startsWith(prefix);
+      if (matches && s.date > latest) latest = s.date;
+    }
+    if (latest) p.lastSessionDate = latest;
+  }
+
+  // Sort: projects with session activity first (most recent), then by frontmatter last_updated DESC.
+  projects.sort((a, b) => {
+    if (a.lastSessionDate && b.lastSessionDate) return b.lastSessionDate.localeCompare(a.lastSessionDate);
+    if (a.lastSessionDate) return -1;
+    if (b.lastSessionDate) return 1;
+    return b.lastUpdated.localeCompare(a.lastUpdated);
+  });
+
+  res.json({
+    projects: projects.map(p => ({
+      name: p.name,
+      slug: p.slug,
+      vaultPath: p.filePath,
+      repoPath: p.repoPath,
+      exists: p.exists,
+      lastSessionDate: p.lastSessionDate,
+      lastUpdated: p.lastUpdated,
     })),
   });
 });
@@ -722,9 +770,10 @@ router.post('/kb/dir', (req: Request, res: Response) => {
   }
 });
 
-// Delete an empty directory
+// Delete a directory. Empty by default; pass ?recursive=true to delete contents too.
 router.delete('/kb/dir', (req: Request, res: Response) => {
   const dirPath = req.query.path as string;
+  const recursive = req.query.recursive === 'true';
   if (!dirPath) {
     res.status(400).json({ error: 'Path required' });
     return;
@@ -747,14 +796,29 @@ router.delete('/kb/dir', (req: Request, res: Response) => {
     return;
   }
 
-  const contents = fs.readdirSync(resolved);
-  if (contents.length > 0) {
-    res.status(400).json({ error: 'Directory is not empty' });
-    return;
+  if (recursive) {
+    // Refuse recursive deletion of the Obsidian root or any configured vault top-level —
+    // a single misclick on a vault folder would otherwise wipe the whole vault.
+    const root = getObsidianRoot();
+    const vaultNames = getObsidianVaults();
+    if (resolved === root || vaultNames.some(v => resolved === path.join(root, v))) {
+      res.status(400).json({ error: 'Refusing to delete a vault root' });
+      return;
+    }
+  } else {
+    const contents = fs.readdirSync(resolved);
+    if (contents.length > 0) {
+      res.status(400).json({ error: 'Directory is not empty' });
+      return;
+    }
   }
 
   try {
-    fs.rmdirSync(resolved);
+    if (recursive) {
+      fs.rmSync(resolved, { recursive: true, force: false });
+    } else {
+      fs.rmdirSync(resolved);
+    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

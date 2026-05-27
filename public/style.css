@@ -725,6 +725,121 @@ html, body {
   background: var(--accent-hover);
 }
 
+.dir-browser-select-cross-mode,
+.dir-browser-select-cross-mode:hover {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+.dir-picker-item-cross-mode {
+  opacity: 0.55;
+}
+
+.dir-picker-item-mode-tag {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dir-browser-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 8px);
+  margin: 0 4px 4px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.dir-browser-create:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.dir-browser-create-form {
+  margin: 0 4px 6px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dir-browser-create-name {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  box-sizing: border-box;
+}
+
+.dir-browser-create-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dir-browser-create-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.dir-browser-create-cancel,
+.dir-browser-create-submit {
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.dir-browser-create-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.dir-browser-create-submit {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.dir-browser-create-submit:hover {
+  background: var(--accent-hover);
+}
+
+.dir-browser-create-error {
+  font-size: 11px;
+  color: var(--danger, #c84545);
+}
+
 .dir-browser-list {
   max-height: 280px;
   overflow-y: auto;
@@ -1925,6 +2040,124 @@ html, body {
 .welcome-task-completed-chip {
   background: rgba(100, 180, 100, 0.15);
   color: #4a8a4a;
+}
+
+/* --- Welcome Projects tab --- */
+
+.welcome-projects-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.welcome-projects-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+
+.welcome-projects-refresh-btn:hover {
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+.welcome-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.welcome-project-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.welcome-project-row:hover {
+  border-color: var(--border);
+}
+
+.welcome-project-missing {
+  opacity: 0.55;
+}
+
+.welcome-project-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-sans);
+  min-width: 0;
+}
+
+.welcome-project-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.welcome-project-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.welcome-project-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin: 6px 6px 6px 0;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  white-space: nowrap;
+  align-self: center;
+}
+
+.welcome-project-start:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.welcome-project-start:disabled {
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-muted);
+  cursor: not-allowed;
+  filter: none;
 }
 
 .session-item-dir {
