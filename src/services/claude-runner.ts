@@ -798,8 +798,13 @@ function parseClaudeEvent(
       return { type: 'text', data: evt.delta.text };
     }
 
-    // Thinking delta
+    // Thinking delta. Opus 4.x via CLI 2.1.x redacts extended thinking: the model
+    // streams a signature_delta plus a thinking_delta whose `thinking` is an empty
+    // string (the readable reasoning is suppressed). Emitting that empty delta makes
+    // the client create a "Thinking..." bubble that's blank when expanded. Skip
+    // empty thinking so no bubble appears unless real reasoning text is present.
     if (evt.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta') {
+      if (!evt.delta.thinking) return null;
       return { type: 'thinking', data: evt.delta.thinking };
     }
 
