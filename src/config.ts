@@ -54,7 +54,8 @@ export const config = {
   sessionTimeoutMs: 30 * 60 * 1000, // 30 minutes
   autoArchiveAfterMs: 7 * 24 * 60 * 60 * 1000, // 7 days
   autoDeleteAfterMs: 30 * 24 * 60 * 60 * 1000, // 30 days
-  maxTrashedSessions: 10, // FIFO cap on trash
+  maxTrashedSessions: 10, // FIFO cap on session trash
+  maxTrashedKbItems: 20, // FIFO cap on KB trash per vault
   // Path to .obsidian-mcp.json — resolved from: env var > bridge-config.json > default
   mcpConfigPath: expandTilde(resolve('CHAT_BRIDGE_MCP_CONFIG', 'mcpConfigPath',
     path.join(home, 'Projects', 'obsidian-mcp-server', '.obsidian-mcp.json'))),

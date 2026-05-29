@@ -109,6 +109,24 @@
       <div id="kb-search-results" class="kb-search-results" style="display:none"></div>
       <div id="kb-bookmarks-list" class="kb-bookmarks-list" style="display:none"></div>
       <div id="kb-recent-list" class="kb-recent-list" style="display:none"></div>
+      <div class="kb-trash-section">
+        <div class="kb-trash-header">
+          <button class="kb-trash-toggle" onclick="toggleKbTrashSection()">
+            <svg class="kb-trash-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+            <span>Trash</span>
+            <span id="kb-trash-count" class="kb-trash-count">0</span>
+          </button>
+          <button class="kb-trash-empty-btn" id="kb-trash-empty-btn" onclick="emptyKbTrash()" style="display:none" title="Empty trash">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            </svg>
+          </button>
+        </div>
+        <div id="kb-trash-list" class="kb-trash-list" style="display: none;"></div>
+      </div>
     </div>
     <!-- Settings view (sidebar nav) -->
     <div id="settings-view" class="settings-nav" style="display:none">
@@ -594,6 +612,26 @@
       </div>
       <div class="kb-export-actions">
         <button class="kb-export-cancel" onclick="dismissKbExportModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KB Trash Restore-Conflict Dialog -->
+  <div id="kb-trash-conflict-overlay" class="kb-export-overlay" style="display:none" onclick="if(event.target===this)dismissKbTrashConflictModal()">
+    <div class="kb-export-dialog">
+      <div class="kb-export-header">Restore conflict</div>
+      <div class="kb-export-body">
+        <div class="kb-export-filename">Already exists at:</div>
+        <div class="kb-export-filename" id="kb-trash-conflict-destination" style="color:var(--text-primary); white-space:normal; word-break:break-all;"></div>
+        <button class="kb-export-option" onclick="resolveKbTrashConflict('suffix')">
+          <span class="kb-export-option-icon">&#9998;</span> Restore with "(restored)" suffix
+        </button>
+        <button class="kb-export-option" onclick="resolveKbTrashConflict('overwrite')">
+          <span class="kb-export-option-icon">&#8631;</span> Overwrite (existing item moves to Trash)
+        </button>
+      </div>
+      <div class="kb-export-actions">
+        <button class="kb-export-cancel" onclick="dismissKbTrashConflictModal()">Cancel</button>
       </div>
     </div>
   </div>

@@ -528,6 +528,155 @@ html, body {
   opacity: 0.5;
 }
 
+/* KB Trash (sidebar) */
+.kb-trash-section {
+  border-top: 1px solid var(--border);
+  padding: 4px 8px 8px;
+  flex-shrink: 0;
+}
+
+.kb-trash-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kb-trash-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kb-trash-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.kb-trash-chevron {
+  transition: transform 0.2s;
+}
+
+.kb-trash-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.kb-trash-count {
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.kb-trash-empty-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.kb-trash-empty-btn:hover {
+  color: var(--danger, #dc2626);
+  background: var(--hover, rgba(255,255,255,0.05));
+}
+
+.kb-trash-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.kb-trash-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.kb-trash-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: default;
+}
+
+.kb-trash-item:hover {
+  background: var(--hover, rgba(255,255,255,0.04));
+}
+
+.kb-trash-item-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.kb-trash-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-trash-item-vault {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.kb-trash-item-actions {
+  display: none;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.kb-trash-item:hover .kb-trash-item-actions {
+  display: flex;
+}
+
+.kb-trash-item-action {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+}
+
+.kb-trash-item-action:hover {
+  color: var(--text-primary);
+  background: var(--hover, rgba(255,255,255,0.08));
+}
+
+.kb-trash-item-action.danger:hover {
+  color: var(--danger, #dc2626);
+}
+
 /* Main Chat */
 .chat-main {
   display: flex;
@@ -5380,6 +5529,14 @@ pre.streaming {
 }
 [data-theme="light"] [data-vault-mode="personal"] {
   background: rgba(5, 150, 105, 0.05);
+}
+
+/* Cross-mode greying — items whose vault doesn't match the active mode render
+   dimmed. CSS reads html[data-mode] so mode switches react without re-rendering
+   the tree; the wrapper-level data-vault-mode tint above is untouched. */
+html[data-mode="work"] .kb-tree-item[data-entry-mode="personal"],
+html[data-mode="personal"] .kb-tree-item[data-entry-mode="work"] {
+  opacity: 0.55;
 }
 
 /* Drag and drop */

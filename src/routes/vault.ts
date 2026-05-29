@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults, getVaultModeForPath, parseMode } from '../config';
 import { scanVaultProjects } from '../services/vault-projects';
+import { moveToTrash, restoreFromTrash, listTrash, emptyTrash, permanentDelete, isInTrash } from '../services/kb-trash';
 
 const router = Router();
 
@@ -503,6 +504,7 @@ router.get('/kb/file', (req: Request, res: Response) => {
       path: resolved,
       name: path.basename(resolved, '.md'),
       content,
+      vaultMode: getVaultModeForPath(resolved),
     });
   } catch {
     res.status(404).json({ error: 'File not found' });
@@ -709,6 +711,8 @@ router.post('/kb/file', (req: Request, res: Response) => {
 });
 
 // Delete a markdown file
+// Soft-delete a file (move to vault's archive/.trash/). Permanent deletion of
+// trash entries goes through DELETE /kb/trash/entry to avoid orphaning wrappers.
 router.delete('/kb/file', (req: Request, res: Response) => {
   const filePath = req.query.path as string;
   if (!filePath) {
@@ -727,11 +731,16 @@ router.delete('/kb/file', (req: Request, res: Response) => {
     return;
   }
 
+  if (isInTrash(resolved)) {
+    res.status(400).json({ error: 'Use DELETE /kb/trash/entry to permanently delete trash items' });
+    return;
+  }
+
   try {
-    fs.unlinkSync(resolved);
+    const { wrapperPath, evicted } = moveToTrash(resolved);
     wikiLinkCache = null;
     linkCandidateCache.clear();
-    res.json({ success: true });
+    res.json({ success: true, wrapperPath, evicted });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -770,7 +779,10 @@ router.post('/kb/dir', (req: Request, res: Response) => {
   }
 });
 
-// Delete a directory. Empty by default; pass ?recursive=true to delete contents too.
+// Soft-delete a directory (move to vault's archive/.trash/). The existing
+// ?recursive=true flag is retained as a confirmation gate for non-empty
+// directories, matching the pre-trash UX. Permanent deletion of trash entries
+// goes through DELETE /kb/trash/entry.
 router.delete('/kb/dir', (req: Request, res: Response) => {
   const dirPath = req.query.path as string;
   const recursive = req.query.recursive === 'true';
@@ -796,16 +808,20 @@ router.delete('/kb/dir', (req: Request, res: Response) => {
     return;
   }
 
-  if (recursive) {
-    // Refuse recursive deletion of the Obsidian root or any configured vault top-level —
-    // a single misclick on a vault folder would otherwise wipe the whole vault.
-    const root = getObsidianRoot();
-    const vaultNames = getObsidianVaults();
-    if (resolved === root || vaultNames.some(v => resolved === path.join(root, v))) {
-      res.status(400).json({ error: 'Refusing to delete a vault root' });
-      return;
-    }
-  } else {
+  if (isInTrash(resolved)) {
+    res.status(400).json({ error: 'Use DELETE /kb/trash/entry to permanently delete trash items' });
+    return;
+  }
+
+  // A single misclick on a vault folder must never wipe the vault — even via soft-delete.
+  const root = getObsidianRoot();
+  const vaultNames = getObsidianVaults();
+  if (resolved === root || vaultNames.some(v => resolved === path.join(root, v))) {
+    res.status(400).json({ error: 'Refusing to delete a vault root' });
+    return;
+  }
+
+  if (!recursive) {
     const contents = fs.readdirSync(resolved);
     if (contents.length > 0) {
       res.status(400).json({ error: 'Directory is not empty' });
@@ -814,12 +830,124 @@ router.delete('/kb/dir', (req: Request, res: Response) => {
   }
 
   try {
-    if (recursive) {
-      fs.rmSync(resolved, { recursive: true, force: false });
-    } else {
-      fs.rmdirSync(resolved);
+    const { wrapperPath, evicted } = moveToTrash(resolved);
+    wikiLinkCache = null;
+    linkCandidateCache.clear();
+    res.json({ success: true, wrapperPath, evicted });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List trashed items. Pass ?mode=work|personal to span all vaults in a mode,
+// or ?vault=<name> for a single vault.
+router.get('/kb/trash', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  const vault = req.query.vault as string | undefined;
+
+  let vaults: string[];
+  if (mode) {
+    vaults = getActiveModeVaults(mode).map(v => path.basename(v.path));
+  } else if (vault) {
+    if (!getObsidianVaults().includes(vault)) {
+      res.status(400).json({ error: 'Unknown vault' });
+      return;
     }
+    vaults = [vault];
+  } else {
+    res.status(400).json({ error: 'mode or vault query param required' });
+    return;
+  }
+
+  try {
+    const entries = vaults.flatMap(v => listTrash(v));
+    entries.sort((a, b) => b.meta.trashedAt.localeCompare(a.meta.trashedAt));
+    res.json({ entries });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restore a trashed item to its original path. Returns 409 with { conflict: true,
+// destination } if a file/folder already occupies the original path. Pass
+// conflictStrategy='suffix' to write as "<name> (restored).<ext>", or 'overwrite'
+// to move the displaced item to trash before restoring.
+router.post('/kb/trash/restore', (req: Request, res: Response) => {
+  const { wrapperPath, conflictStrategy } = (req.body || {}) as {
+    wrapperPath?: string;
+    conflictStrategy?: 'suffix' | 'overwrite';
+  };
+  if (!wrapperPath) {
+    res.status(400).json({ error: 'wrapperPath required' });
+    return;
+  }
+  if (conflictStrategy && conflictStrategy !== 'suffix' && conflictStrategy !== 'overwrite') {
+    res.status(400).json({ error: 'Invalid conflictStrategy' });
+    return;
+  }
+  const resolved = validateKbPath(wrapperPath);
+  if (!resolved || !isInTrash(resolved)) {
+    res.status(400).json({ error: 'Invalid trash path' });
+    return;
+  }
+  try {
+    const result = restoreFromTrash(resolved, { conflictStrategy });
+    if ('conflict' in result) {
+      res.status(409).json({ conflict: true, destination: result.destination });
+      return;
+    }
+    wikiLinkCache = null;
+    linkCandidateCache.clear();
+    res.json({ success: true, restoredPath: result.restoredPath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Permanently delete a single trash entry (the whole wrapper directory)
+router.delete('/kb/trash/entry', (req: Request, res: Response) => {
+  const wrapperPath = req.query.wrapperPath as string;
+  if (!wrapperPath) {
+    res.status(400).json({ error: 'wrapperPath required' });
+    return;
+  }
+  const resolved = validateKbPath(wrapperPath);
+  if (!resolved || !isInTrash(resolved)) {
+    res.status(400).json({ error: 'Invalid trash path' });
+    return;
+  }
+  try {
+    permanentDelete(resolved);
     res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Permanently delete every trashed item. Pass ?mode=work|personal to empty
+// every vault in a mode, or ?vault=<name> for a single vault.
+router.post('/kb/trash/empty', (req: Request, res: Response) => {
+  const mode = parseMode(req.query.mode);
+  const vault = req.query.vault as string | undefined;
+
+  let vaults: string[];
+  if (mode) {
+    vaults = getActiveModeVaults(mode).map(v => path.basename(v.path));
+  } else if (vault) {
+    if (!getObsidianVaults().includes(vault)) {
+      res.status(400).json({ error: 'Unknown vault' });
+      return;
+    }
+    vaults = [vault];
+  } else {
+    res.status(400).json({ error: 'mode or vault query param required' });
+    return;
+  }
+
+  try {
+    let deleted = 0;
+    for (const v of vaults) deleted += emptyTrash(v).deleted;
+    res.json({ success: true, deleted });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

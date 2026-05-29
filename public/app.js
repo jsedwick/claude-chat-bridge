@@ -359,6 +359,8 @@ async function setMode(mode) {
 
     // Reload sidebar and welcome screen with filtered sessions/topics
     await Promise.all([loadSessions(), loadWelcomeSessions()]);
+    // Refresh KB trash listing if KB view is currently up
+    if (document.getElementById('kb-view').style.display !== 'none') loadKbTrash();
     // Reset topics loaded flags so they re-fetch for the new mode
     ['welcome-topics', 'kb-welcome-topics'].forEach(id => {
       const el = document.getElementById(id);
@@ -7172,6 +7174,7 @@ function switchView(view) {
       loadKbTree();
       if (!kbPrefsLoaded) loadKbPreferences();
     }
+    loadKbTrash();
   } else {
     sessionsView.style.display = '';
     sessionsToolbar.style.display = '';
@@ -8712,6 +8715,7 @@ async function deleteKbFile(filePath, dirPath) {
   } catch (err) {
     console.error('Failed to delete KB file:', err);
   }
+  loadKbTrash();
 }
 
 // Create a new directory, then enter rename mode
@@ -8804,6 +8808,182 @@ async function deleteKbDir(dirPath) {
     console.error('Failed to delete directory:', err);
     alert('Delete folder failed: ' + err.message);
   }
+  loadKbTrash();
+}
+
+// ─── KB Trash ────────────────────────────────────────────────────────────────
+let kbTrashEntries = [];
+
+async function loadKbTrash() {
+  try {
+    const res = await fetchWithRetry(`/api/vault/kb/trash?mode=${currentMode}`);
+    const data = await res.json();
+    kbTrashEntries = Array.isArray(data.entries) ? data.entries : [];
+  } catch (err) {
+    console.error('Failed to load KB trash:', err);
+    kbTrashEntries = [];
+  }
+  renderKbTrashList();
+}
+
+function escapeHtmlAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderKbTrashList() {
+  const countEl = document.getElementById('kb-trash-count');
+  const listEl = document.getElementById('kb-trash-list');
+  const emptyBtn = document.getElementById('kb-trash-empty-btn');
+  if (!countEl || !listEl) return;
+
+  countEl.textContent = kbTrashEntries.length;
+  emptyBtn.style.display = kbTrashEntries.length > 0 ? '' : 'none';
+
+  if (kbTrashEntries.length === 0) {
+    listEl.innerHTML = '<div class="kb-trash-empty">No trashed items</div>';
+    return;
+  }
+
+  const fileIcon = '<svg class="kb-trash-item-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  const folderIcon = '<svg class="kb-trash-item-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+  const restoreIcon = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+  const deleteIcon = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>';
+
+  const html = kbTrashEntries.map((entry, idx) => {
+    const icon = entry.meta.type === 'folder' ? folderIcon : fileIcon;
+    const displayName = escapeHtmlAttr(entry.meta.displayName || '');
+    const vault = escapeHtmlAttr(entry.meta.vault || '');
+    const originalPath = escapeHtmlAttr(entry.meta.originalPath || '');
+    return `
+      <div class="kb-trash-item" title="${originalPath}" data-trash-idx="${idx}">
+        ${icon}
+        <span class="kb-trash-item-name">${displayName}</span>
+        <span class="kb-trash-item-vault">${vault}</span>
+        <span class="kb-trash-item-actions">
+          <button class="kb-trash-item-action" title="Restore" data-trash-action="restore">${restoreIcon}</button>
+          <button class="kb-trash-item-action danger" title="Permanently delete" data-trash-action="delete">${deleteIcon}</button>
+        </span>
+      </div>
+    `;
+  }).join('');
+
+  listEl.innerHTML = html;
+
+  // Event delegation — avoids string-interpolating wrapper paths into onclick
+  // (paths may contain apostrophes, backslashes, etc.)
+  if (!listEl.dataset.delegated) {
+    listEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-trash-action]');
+      if (!btn) return;
+      const item = btn.closest('[data-trash-idx]');
+      if (!item) return;
+      const entry = kbTrashEntries[parseInt(item.dataset.trashIdx, 10)];
+      if (!entry) return;
+      const action = btn.dataset.trashAction;
+      if (action === 'restore') {
+        restoreKbTrashItem(entry.wrapperPath);
+      } else if (action === 'delete') {
+        permanentDeleteKbTrashItem(entry.wrapperPath, entry.meta.displayName);
+      }
+    });
+    listEl.dataset.delegated = '1';
+  }
+}
+
+function toggleKbTrashSection() {
+  const listEl = document.getElementById('kb-trash-list');
+  const chevron = document.querySelector('.kb-trash-chevron');
+  const isOpen = listEl.style.display !== 'none';
+  listEl.style.display = isOpen ? 'none' : 'block';
+  chevron.classList.toggle('expanded', !isOpen);
+}
+
+let kbTrashConflictPending = null; // { wrapperPath } awaiting a strategy choice
+
+async function restoreKbTrashItem(wrapperPath, conflictStrategy) {
+  try {
+    const body = conflictStrategy ? { wrapperPath, conflictStrategy } : { wrapperPath };
+    const res = await fetchWithRetry('/api/vault/kb/trash/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 409) {
+      const data = await res.json();
+      showKbTrashConflictModal(wrapperPath, data.destination);
+      return;
+    }
+    const data = await res.json();
+    if (data.error) {
+      alert('Restore failed: ' + data.error);
+      return;
+    }
+    // Refresh tree (the restored item may have re-created intermediate dirs)
+    kbTreeCache.clear();
+    const treeEl = document.getElementById('kb-tree');
+    if (treeEl && treeEl.style.display !== 'none') {
+      const parent = data.restoredPath.substring(0, data.restoredPath.lastIndexOf('/'));
+      try { await reloadKbSubtree(parent); } catch {}
+    }
+  } catch (err) {
+    console.error('Failed to restore KB item:', err);
+    alert('Restore failed: ' + err.message);
+  }
+  loadKbTrash();
+}
+
+function showKbTrashConflictModal(wrapperPath, destination) {
+  kbTrashConflictPending = { wrapperPath };
+  document.getElementById('kb-trash-conflict-destination').textContent = destination;
+  document.getElementById('kb-trash-conflict-overlay').style.display = '';
+}
+
+function dismissKbTrashConflictModal() {
+  kbTrashConflictPending = null;
+  document.getElementById('kb-trash-conflict-overlay').style.display = 'none';
+}
+
+function resolveKbTrashConflict(strategy) {
+  const pending = kbTrashConflictPending;
+  dismissKbTrashConflictModal();
+  if (!pending) return;
+  if (strategy === 'overwrite' && !confirm('Overwrite the existing item? It will be moved to Trash and can still be recovered from there.')) {
+    return;
+  }
+  restoreKbTrashItem(pending.wrapperPath, strategy);
+}
+
+async function permanentDeleteKbTrashItem(wrapperPath, displayName) {
+  if (!confirm(`Permanently delete "${displayName}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetchWithRetry(`/api/vault/kb/trash/entry?wrapperPath=${encodeURIComponent(wrapperPath)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) {
+      alert('Permanent delete failed: ' + data.error);
+      return;
+    }
+  } catch (err) {
+    console.error('Failed to permanently delete KB trash item:', err);
+    alert('Permanent delete failed: ' + err.message);
+  }
+  loadKbTrash();
+}
+
+async function emptyKbTrash() {
+  if (!kbTrashEntries.length) return;
+  if (!confirm(`Permanently delete all ${kbTrashEntries.length} trashed item${kbTrashEntries.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+  try {
+    const res = await fetchWithRetry(`/api/vault/kb/trash/empty?mode=${currentMode}`, { method: 'POST' });
+    const data = await res.json();
+    if (data.error) {
+      alert('Empty trash failed: ' + data.error);
+      return;
+    }
+  } catch (err) {
+    console.error('Failed to empty KB trash:', err);
+    alert('Empty trash failed: ' + err.message);
+  }
+  loadKbTrash();
 }
 
 // Rename a directory inline (similar to startKbRename for files)
@@ -8885,10 +9065,12 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
   const isDir = entry.type === 'directory';
   const isRootVault = depth === 0 && isDir;
   const skipRename = !!opts.skipRename;
+  // Cross-mode entries belong to the inactive vault — only read actions exposed.
+  const isCrossMode = !!(entry.vaultMode && entry.vaultMode !== currentMode);
 
   const items = [];
 
-  if (isDir) {
+  if (isDir && !isCrossMode) {
     items.push({ label: 'New File', action: () => {
       // Find the tree item's children container and chevron for createKbFile
       const dirItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
@@ -8904,7 +9086,7 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
     items.push({ label: 'New Folder', action: () => createKbDir(entry.path) });
   }
 
-  if (!isRootVault && !skipRename) {
+  if (!isRootVault && !skipRename && !isCrossMode) {
     items.push({ label: 'Rename', action: () => {
       const treeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
       if (!treeItem) return;
@@ -8918,7 +9100,9 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
   }
 
   if (!isDir) {
-    items.push({ label: 'Duplicate', action: () => duplicateKbFile(entry.path) });
+    if (!isCrossMode) {
+      items.push({ label: 'Duplicate', action: () => duplicateKbFile(entry.path) });
+    }
     items.push({ label: 'Export', action: () => showKbExportModal(entry.path, entry.name) });
   }
 
@@ -8929,7 +9113,7 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
     navigator.clipboard.writeText(relativePath).catch(() => {});
   }});
 
-  if (!isRootVault) {
+  if (!isRootVault && !isCrossMode) {
     if (isDir) {
       items.push({ label: 'Delete Folder', className: 'danger', action: () => deleteKbDir(entry.path) });
     } else {
@@ -9220,6 +9404,7 @@ function startKbRename(entryPath, nameEl) {
 
 function renameCurrentKbFile() {
   if (!kbCurrentFile) return;
+  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) return;
   startKbRename(kbCurrentFile.path, document.getElementById('kb-title'));
 }
 
@@ -9257,12 +9442,17 @@ function createKbTreeNode(entry, depth) {
   item.className = 'kb-tree-item' + (entry.type === 'file' ? ' kb-tree-file' : '');
   item.dataset.path = entry.path;
   item.dataset.type = entry.type;
+  // Track each item's vault mode so CSS can grey out cross-mode entries when
+  // the active mode mismatches html[data-mode]. JS handlers also re-check at
+  // fire time, so mode switches react without re-rendering the tree.
+  if (entry.vaultMode) item.dataset.entryMode = entry.vaultMode;
 
   // Drag-and-drop: make non-root items draggable (root vaults are drop-only)
   const isRootVault = depth === 0 && entry.type === 'directory';
   item.draggable = !isRootVault;
   item.addEventListener('dragstart', (e) => {
     if (isRootVault) { e.preventDefault(); return; }
+    if (entry.vaultMode && entry.vaultMode !== currentMode) { e.preventDefault(); return; }
     e.dataTransfer.setData('text/plain', entry.path);
     e.dataTransfer.effectAllowed = 'move';
     item.classList.add('kb-dragging');
@@ -9291,6 +9481,8 @@ function createKbTreeNode(entry, depth) {
       e.preventDefault();
       e.stopPropagation();
       item.classList.remove('kb-drop-target');
+      // Refuse drops into a directory belonging to the inactive mode.
+      if (entry.vaultMode && entry.vaultMode !== currentMode) return;
       const sourcePath = e.dataTransfer.getData('text/plain');
       if (!sourcePath || sourcePath === entry.path) return;
       // Don't drop a folder into itself
@@ -9447,6 +9639,7 @@ function createKbTreeNode(entry, depth) {
 
     nameSpan.addEventListener('dblclick', (e) => {
       e.stopPropagation();
+      if (entry.vaultMode && entry.vaultMode !== currentMode) return;
       startKbRename(entry.path, nameSpan);
     });
 
@@ -9687,14 +9880,16 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     }
 
     document.getElementById('kb-title').textContent = data.name;
-    document.getElementById('kb-title').style.cursor = 'pointer';
+    // Cross-mode files: read-only — hide title-click rename + Edit button.
+    const crossModeFile = !!(data.vaultMode && data.vaultMode !== currentMode);
+    document.getElementById('kb-title').style.cursor = crossModeFile ? 'default' : 'pointer';
     document.getElementById('kb-welcome').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
     document.getElementById('kb-diff').style.display = 'none';
     document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
     document.getElementById('kb-revert-wrapper').style.display = 'none';
     document.getElementById('kb-diff-btn').style.display = '';
-    document.getElementById('kb-edit-btn').style.display = '';
+    document.getElementById('kb-edit-btn').style.display = crossModeFile ? 'none' : '';
     document.getElementById('kb-editor').style.display = 'none';
     document.getElementById('kb-save-btn').style.display = 'none';
     document.getElementById('kb-cancel-btn').style.display = 'none';
@@ -10205,6 +10400,11 @@ async function toggleKbDiff() {
 
 async function revertKbFile() {
   if (!kbCurrentFile) return;
+  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
+    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
+    alert(`Switch to ${other} mode to revert this file.`);
+    return;
+  }
   const revertBtn = document.getElementById('kb-revert-btn');
   const commitHash = revertBtn.dataset.commitHash;
   if (!commitHash) {
@@ -10556,6 +10756,11 @@ function attachWikiLinkListeners(editorRootEl) {
 
 async function toggleKbEdit() {
   if (!kbCurrentFile) return;
+  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
+    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
+    showKbSaveStatus(`Switch to ${other} mode to edit this file`, 'error');
+    return;
+  }
   kbIsEditing = true;
   kbShowingDiff = false;
 
@@ -10838,6 +11043,13 @@ function showKbSaveStatus(text, type = 'info') {
 
 async function kbAutosave() {
   if (!kbCurrentFile || !kbIsEditing) return;
+  // Mode switched mid-edit — refuse the autosave write rather than push a
+  // cross-mode mutation through the API.
+  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
+    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
+    showKbSaveStatus(`Save disabled — switch to ${other} mode`, 'error');
+    return;
+  }
   let editorContent;
   if (kbUsingPlainTextarea) {
     if (!kbPlainTextarea) return;
@@ -10885,6 +11097,11 @@ function scheduleKbAutosave() {
 
 async function saveKbFile() {
   clearTimeout(kbAutosaveTimer);
+  if (kbCurrentFile && kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
+    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
+    showKbSaveStatus(`Save disabled — switch to ${other} mode`, 'error');
+    return;
+  }
   let editorContent;
   if (kbUsingPlainTextarea) {
     editorContent = kbPlainTextarea ? kbPlainTextarea.value : '';
