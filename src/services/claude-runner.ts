@@ -442,10 +442,41 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           });
         }
 
+        // Surface rate-limit frames, but ONLY when the limit is actually
+        // constraining us. Routine telemetry arrives as status:"allowed" on
+        // normal turns and would be misleading noise rendered as an error.
+        if (parsed.type === 'rate_limit_event') {
+          const info = parsed.rate_limit_info;
+          if (info && info.status && info.status !== 'allowed') {
+            const parts: string[] = [`status: ${info.status}`];
+            if (info.rateLimitType) parts.push(String(info.rateLimitType));
+            if (typeof info.resetsAt === 'number') {
+              parts.push(`resets ${new Date(info.resetsAt * 1000).toLocaleString()}`);
+            }
+            emitToStream(appSessionId, {
+              type: 'error',
+              data: `⚠️ Rate limit — ${parts.join(', ')}`,
+            });
+          }
+        }
+
         // Capture session ID from result event
         if (parsed.type === 'result' && parsed.session_id) {
           capturedSessionId = parsed.session_id;
           resultSucceeded = parsed.is_error !== true;
+          // Surface a failed result so the user sees the error instead of an
+          // empty, silently-finished turn. error_during_execution (e.g. a
+          // failed --resume/fork) and other non-success results set is_error.
+          if (parsed.is_error === true) {
+            const detail =
+              typeof parsed.result === 'string' && parsed.result.trim()
+                ? `: ${parsed.result.trim()}`
+                : '';
+            emitToStream(appSessionId, {
+              type: 'error',
+              data: `Run ended with an error (${parsed.subtype || 'error_during_execution'})${detail}`,
+            });
+          }
           // Clear the post-AskUserQuestion suppression flag so the synthetic
           // 'done' below emits, and a subsequent turn doesn't inherit it.
           sessionPostAskUser.delete(appSessionId);
