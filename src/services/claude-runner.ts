@@ -291,6 +291,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     env: {
       ...process.env,
       CHAT_BRIDGE_SESSION: appSessionId,
+      // Decision 072: expose the bridge session-store path so the spawned MCP
+      // server's cleanupStaleFiles can reap recovery files by conversation
+      // liveness instead of a blunt 24h age cutoff — preventing loss of
+      // unclosed sessions that linger across a restart.
+      CHAT_BRIDGE_SESSION_STORE: config.sessionStorePath,
       TRACEPARENT: traceparent,
       ...(forkedFromAppSessionId ? { CHAT_BRIDGE_FORKED_FROM: forkedFromAppSessionId } : {}),
       ...(mode ? { VAULT_MODE: mode } : {}),
