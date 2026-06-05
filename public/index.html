@@ -132,6 +132,7 @@
     <div id="settings-view" class="settings-nav" style="display:none">
       <button class="settings-nav-item active" data-section="appearance" onclick="showSettingsSection('appearance')">Appearance</button>
       <button class="settings-nav-item" data-section="voice" onclick="showSettingsSection('voice')">Voice</button>
+      <button class="settings-nav-item" data-section="notifications" onclick="showSettingsSection('notifications')">Notifications</button>
       <button class="settings-nav-item" data-section="paths" onclick="showSettingsSection('paths')">Paths</button>
       <button class="settings-nav-item" data-section="vault-setup" onclick="showSettingsSection('vault-setup')">Vault Setup</button>
       <button class="settings-nav-item" data-section="allowed-paths" onclick="showSettingsSection('allowed-paths')">Allowed Paths</button>
@@ -653,5 +654,16 @@
   </div>
 
   <script src="/app.js"></script>
+  <script>
+    // Register the push service worker (no-op if unsupported). Once ready, re-sync
+    // any existing subscription so the server's store stays in step with the browser.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+          .then(() => { if (typeof syncPushSubscription === 'function') syncPushSubscription(); })
+          .catch((err) => console.warn('[push] SW registration failed', err));
+      });
+    }
+  </script>
 </body>
 </html>

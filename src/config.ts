@@ -65,6 +65,13 @@ export const config = {
   // Default derives from the running user so two installs on the same Mac don't collide.
   serviceLabel: resolve('CHAT_BRIDGE_SERVICE_LABEL', 'serviceLabel',
     `com.${os.userInfo().username}.claude-chat-bridge`),
+  // Web Push (VAPID). Keys live in bridge-config.json (gitignored) or env vars;
+  // empty when unset — the push endpoints and notifier then no-op.
+  vapidPublicKey: resolve('CHAT_BRIDGE_VAPID_PUBLIC', 'vapidPublicKey', ''),
+  vapidPrivateKey: resolve('CHAT_BRIDGE_VAPID_PRIVATE', 'vapidPrivateKey', ''),
+  vapidSubject: resolve('CHAT_BRIDGE_VAPID_SUBJECT', 'vapidSubject', 'mailto:admin@localhost'),
+  // Where browser push subscriptions are persisted (mirrors sessionStorePath).
+  pushStorePath: path.join(__dirname, '..', 'push-subscriptions.json'),
 };
 
 // Fail loud at startup if mcpConfigPath does not resolve to a readable file.

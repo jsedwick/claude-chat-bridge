@@ -12,14 +12,16 @@
   "author": "Jesse Sedwick",
   "license": "MIT",
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^5.2.1",
-    "cors": "^2.8.5"
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^20.10.0",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/cors": "^2.8.19"
+    "@types/node": "^20.10.0",
+    "@types/web-push": "^3.6.4",
+    "typescript": "^5.7.0"
   },
   "engines": {
     "node": ">=20.0.0"

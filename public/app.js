@@ -7259,6 +7259,12 @@ function renderSettingsContent() {
     return;
   }
 
+  // Notifications section is independent of MCP config
+  if (activeSettingsSection === 'notifications') {
+    renderNotificationsSettings(container);
+    return;
+  }
+
   // Updates section is independent of MCP config
   if (activeSettingsSection === 'updates') {
     renderUpdatesSettings(container);
@@ -7328,6 +7334,177 @@ function renderAppearanceSettings(container) {
       </div>
     </div>
   `;
+}
+
+// ===== Web Push notifications =====
+
+// VAPID public keys are base64url; PushManager.subscribe() wants a Uint8Array.
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+async function fetchVapidConfig() {
+  try {
+    const res = await fetch('/api/push/vapid-key');
+    if (!res.ok) return null;
+    return await res.json(); // { configured, publicKey }
+  } catch {
+    return null;
+  }
+}
+
+// If permission is already granted, make sure the server holds our current
+// subscription (covers a browser that re-subscribed, or a server store reset).
+async function syncPushSubscription() {
+  if (!pushSupported() || Notification.permission !== 'granted') return;
+  try {
+    const cfg = await fetchVapidConfig();
+    if (!cfg || !cfg.configured || !cfg.publicKey) return;
+    const reg = await navigator.serviceWorker.register('/service-worker.js');
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.publicKey),
+      });
+    }
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub),
+    });
+  } catch (err) {
+    console.warn('[push] sync failed', err);
+  }
+}
+
+async function enableNotifications() {
+  if (!pushSupported()) {
+    alert('This browser does not support push notifications.');
+    return;
+  }
+  const cfg = await fetchVapidConfig();
+  if (!cfg || !cfg.configured || !cfg.publicKey) {
+    alert('Push is not configured on the server yet — a bridge restart may be required after setup.');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') {
+    try {
+      const reg = await navigator.serviceWorker.register('/service-worker.js');
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.publicKey),
+      });
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub),
+      });
+    } catch (err) {
+      console.error('[push] subscribe failed', err);
+      alert('Failed to enable notifications: ' + (err && err.message ? err.message : err));
+    }
+  }
+  const container = document.getElementById('settings-content');
+  if (container) renderNotificationsSettings(container);
+}
+
+async function disableNotifications() {
+  try {
+    const reg = await navigator.serviceWorker.register('/service-worker.js');
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await fetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+      await sub.unsubscribe();
+    }
+  } catch (err) {
+    console.warn('[push] unsubscribe failed', err);
+  }
+  const container = document.getElementById('settings-content');
+  if (container) renderNotificationsSettings(container);
+}
+
+async function renderNotificationsSettings(container) {
+  const supported = pushSupported();
+  let enabled = false;
+  let serverConfigured = false;
+  if (supported) {
+    try {
+      const cfg = await fetchVapidConfig();
+      serverConfigured = !!(cfg && cfg.configured);
+      const reg = await navigator.serviceWorker.register('/service-worker.js');
+      const sub = await reg.pushManager.getSubscription();
+      enabled = Notification.permission === 'granted' && !!sub;
+    } catch {}
+  }
+
+  let statusNote = '';
+  if (!supported) {
+    statusNote = 'This browser does not support push notifications.';
+  } else if (!serverConfigured) {
+    statusNote = 'Push is not configured on the server yet — a bridge restart may be required after setup.';
+  } else if (Notification.permission === 'denied') {
+    statusNote = 'Notifications are blocked for this site in your browser settings. Re-allow them there to enable.';
+  }
+
+  const onActive = enabled ? 'active' : '';
+  const offActive = !enabled ? 'active' : '';
+  const onDisabled = (!supported || !serverConfigured || Notification.permission === 'denied') ? 'disabled' : '';
+
+  container.innerHTML = `
+    <h2 class="settings-title">Notifications</h2>
+    <div class="settings-section">
+      <div class="settings-section-title">Turn-Complete Alerts</div>
+      <div class="settings-section-desc">
+        Get a desktop or phone notification when Claude finishes a response and the bridge is waiting for you.
+        Alerts are suppressed while you have a bridge window focused.
+      </div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${onActive}" ${onDisabled} onclick="enableNotifications()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          On
+        </button>
+        <button class="settings-theme-btn ${offActive}" onclick="disableNotifications()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            <path d="M18.63 13A17.89 17.89 0 0 1 18 8"/>
+            <path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/>
+            <path d="M18 8a6 6 0 0 0-9.33-5"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+          Off
+        </button>
+      </div>
+      ${statusNote ? `<div class="settings-section-desc" style="margin-top:10px;opacity:0.8">${statusNote}</div>` : ''}
+    </div>
+  `;
+}
+
+// Service worker -> page: a tapped notification asks us to open its session.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const data = event.data || {};
+    if (data.type === 'open-session' && data.sessionId && typeof switchSession === 'function') {
+      try { switchSession(data.sessionId); } catch (err) { console.warn('[push] open-session failed', err); }
+    }
+  });
 }
 
 function setTTSFace(enabled) {

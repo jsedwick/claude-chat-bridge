@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStreamBuffer, subscribeWithBuffer } from '../services/claude-runner';
 import { getSession, updateSession, addMessage, updateToolMessage } from '../services/session-store';
 import { drainPendingTriageMarkers } from './triage';
+import { notifyTurnComplete } from '../services/push-notifier';
 import { isEffortLevel } from '../types';
 
 const router = Router();
@@ -199,8 +200,10 @@ router.post('/:sessionId', (req: Request, res: Response) => {
         }
         // Safety net: if no text was accumulated but result contains it, save it
         let usageData = event.data;
+        let turnIsError = false;
         try {
           const doneData = JSON.parse(event.data);
+          turnIsError = !!doneData.is_error;
           if (!hadText && doneData.result_text) {
             addMessage(sessionId, 'assistant', doneData.result_text);
           }
@@ -236,6 +239,12 @@ router.post('/:sessionId', (req: Request, res: Response) => {
           } catch {}
         }
         clientDisconnected = true;
+
+        // Web Push: the turn is done, so the bridge is now waiting for the
+        // user. Notify all registered browsers — the service worker suppresses
+        // it when a bridge window is focused. Fire-and-forget; push failures
+        // must never affect the response path.
+        notifyTurnComplete(session.name, sessionId, turnIsError).catch(() => {});
       }
     },
     onClose: (claudeSessionId) => {

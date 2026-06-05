@@ -3,4 +3,5 @@ dist/
 certs/
 chat-sessions.json
 bridge-config.json
+push-subscriptions.json
 *.log
