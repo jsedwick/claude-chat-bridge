@@ -3934,6 +3934,9 @@ async function switchSession(id) {
     sessionInputDrafts.set(currentSessionId, messageInput.value);
   }
   currentSessionId = id;
+  // Tell the SW the active session changed, so push suppression tracks the
+  // session you're now viewing rather than the one you switched away from.
+  reportSessionFocusToSW();
   // Restore target session's draft
   messageInput.value = sessionInputDrafts.get(id) || '';
   messageInput.style.height = 'auto';
@@ -7507,6 +7510,26 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Page -> service worker: tell it which session this tab is actively viewing, so
+// it can suppress the turn-complete push ONLY for the session you're looking at.
+// Reports null whenever the tab is hidden or blurred, so switching to another
+// tab/app (or another session) re-enables notifications immediately. Defined at
+// top level so switchSession() can call it on in-tab session changes.
+function reportSessionFocusToSW() {
+  if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+  const active = !document.hidden && document.hasFocus();
+  navigator.serviceWorker.controller.postMessage({
+    type: 'session-focus',
+    sessionId: active ? currentSessionId : null,
+  });
+}
+if ('serviceWorker' in navigator) {
+  document.addEventListener('visibilitychange', reportSessionFocusToSW);
+  window.addEventListener('focus', reportSessionFocusToSW);
+  window.addEventListener('blur', reportSessionFocusToSW);
+  navigator.serviceWorker.ready.then(reportSessionFocusToSW).catch(() => {});
+}
+
 function setTTSFace(enabled) {
   ttsFaceEnabled = enabled;
   localStorage.setItem('chat-bridge-tts-face', enabled ? 'true' : 'false');
@@ -8652,14 +8675,14 @@ async function kbSearchDocs(query) {
       item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        showKbContextMenu(e.clientX, e.clientY, r, 1);
+        showKbContextMenu(e.clientX, e.clientY, r, 1, { skipRename: true });
       });
       let _touchTimer;
       item.addEventListener('touchstart', (e) => {
         _touchTimer = setTimeout(() => {
           e.preventDefault();
           const touch = e.touches[0];
-          showKbContextMenu(touch.clientX, touch.clientY, r, 1);
+          showKbContextMenu(touch.clientX, touch.clientY, r, 1, { skipRename: true });
         }, 500);
       }, { passive: false });
       item.addEventListener('touchend', () => clearTimeout(_touchTimer));
@@ -8669,6 +8692,17 @@ async function kbSearchDocs(query) {
   } catch (err) {
     console.error('KB search failed:', err);
   }
+}
+
+// Re-run the active KB search (if any) so a mutation (delete / duplicate /
+// rename) is reflected in the results. The tree-refresh path doesn't touch the
+// search-results list, which is what left deleted rows visible after a delete.
+function refreshKbSearchIfActive() {
+  const input = document.getElementById('kb-search');
+  const results = document.getElementById('kb-search-results');
+  if (!input || !results) return;
+  const q = input.value.trim();
+  if (q && results.style.display !== 'none') kbSearchDocs(q);
 }
 
 // Vault path detection and linking (fetched from server config)
@@ -8886,6 +8920,10 @@ async function deleteKbFile(filePath, dirPath) {
     }
     // Refresh recent files list if active (file may be in it)
     if (kbShowingRecent) loadKbRecentFiles();
+    // Refresh search results if a search is active — otherwise the deleted
+    // file's row lingers until the next keystroke (the tree refresh below
+    // doesn't touch the search-results list).
+    refreshKbSearchIfActive();
     // Refresh tree
     kbTreeCache.delete(dirPath);
     await reloadKbSubtree(dirPath);
@@ -9443,13 +9481,22 @@ async function duplicateKbFile(filePath) {
       });
     }
 
-    // Refresh tree and enter rename mode
+    // Refresh tree, then enter inline-rename ONLY when the tree is the active
+    // view. Inline rename targets a live .kb-tree-item, which doesn't exist
+    // when Duplicate is invoked from search results / bookmarks / recent (the
+    // tree is hidden) — doing it there focuses an invisible node. In those
+    // views, refresh the search list so the copy appears, and skip the rename.
     kbTreeCache.delete(dirPath);
     await reloadKbSubtree(dirPath);
-    const newItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(createData.path)}"]`);
-    if (newItem) {
-      const nameSpan = newItem.querySelector('.kb-tree-name');
-      if (nameSpan) startKbRename(createData.path, nameSpan);
+    const kbTreeVisible = document.getElementById('kb-tree').style.display !== 'none';
+    if (kbTreeVisible) {
+      const newItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(createData.path)}"]`);
+      if (newItem) {
+        const nameSpan = newItem.querySelector('.kb-tree-name');
+        if (nameSpan) startKbRename(createData.path, nameSpan);
+      }
+    } else {
+      refreshKbSearchIfActive();
     }
   } catch (err) {
     console.error('Failed to duplicate file:', err);
