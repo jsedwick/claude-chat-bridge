@@ -172,6 +172,7 @@ document.title = getAppTitle();
 // built-in default" — backend omits --effort entirely so upstream changes to
 // the default propagate without a client release.
 const MODEL_OPTIONS = [
+  { value: 'claude-fable-5[1m]', label: 'Fable 1M' },
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },
 ];
