@@ -14,6 +14,7 @@ import settingsRoutes from './routes/settings';
 import ttsRoutes from './routes/tts';
 import triageRoutes from './routes/triage';
 import pushRoutes from './routes/push';
+import usageRoutes from './routes/usage';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
 
@@ -59,6 +60,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/tts', ttsRoutes);
 app.use('/api/triage', triageRoutes);
 app.use('/api/push', pushRoutes);
+app.use('/api/usage', usageRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

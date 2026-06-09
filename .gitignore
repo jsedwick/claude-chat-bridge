@@ -5,3 +5,4 @@ chat-sessions.json
 bridge-config.json
 push-subscriptions.json
 *.log
+usage-ledger.jsonl

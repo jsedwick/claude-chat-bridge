@@ -3,6 +3,7 @@ import { runClaude, isSessionBusy, cancelByAppSession, isStreamActive, getStream
 import { getSession, updateSession, addMessage, updateToolMessage } from '../services/session-store';
 import { drainPendingTriageMarkers } from './triage';
 import { notifyTurnComplete } from '../services/push-notifier';
+import { recordTurn } from '../services/usage-ledger';
 import { isEffortLevel } from '../types';
 
 const router = Router();
@@ -226,6 +227,19 @@ router.post('/:sessionId', (req: Request, res: Response) => {
               messageCount: session.messageCount + 1,
             });
           }
+          // Persistent cost ledger — recorded even on error turns (partial
+          // usage still bills) and kept when the session is later deleted.
+          recordTurn({
+            ts: new Date().toISOString(),
+            session_id: sessionId,
+            model: doneData.last_turn_usage?.model,
+            cost_usd: doneData.cost_usd,
+            input_tokens: doneData.input_tokens,
+            output_tokens: doneData.output_tokens,
+            cache_creation_input_tokens: doneData.cache_creation_input_tokens,
+            cache_read_input_tokens: doneData.cache_read_input_tokens,
+            duration_ms: doneData.duration_ms,
+          });
         } catch {}
         addMessage(sessionId, 'usage', usageData);
 

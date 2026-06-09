@@ -175,6 +175,7 @@ const MODEL_OPTIONS = [
   { value: 'claude-fable-5[1m]', label: 'Fable 1M' },
   { value: 'opus', label: 'Opus' },
   { value: 'sonnet', label: 'Sonnet' },
+  { value: 'haiku', label: 'Haiku' },
 ];
 const EFFORT_OPTIONS = [
   { value: '', label: 'Default' },
@@ -188,10 +189,15 @@ const VALID_EFFORTS = new Set(EFFORT_OPTIONS.map(o => o.value).filter(Boolean));
 
 let selectedModel = (() => {
   const saved = localStorage.getItem('chat-bridge-model');
-  return MODEL_OPTIONS.some(m => m.value === saved) ? saved : 'opus';
+  // Sonnet default since the June 2026 metered-billing change — Opus and
+  // Fable remain one tap away in the picker.
+  return MODEL_OPTIONS.some(m => m.value === saved) ? saved : 'sonnet';
 })();
 let selectedEffort = (() => {
   const saved = localStorage.getItem('chat-bridge-effort');
+  // null = never chosen → medium (cuts thinking-token spend for chat turns).
+  // '' = the user explicitly picked "Default" — respect it.
+  if (saved === null) return 'medium';
   return VALID_EFFORTS.has(saved) ? saved : '';
 })();
 
@@ -298,11 +304,9 @@ function commitModelEffort(model, effort) {
   selectedModel = model;
   selectedEffort = normalizedEffort;
   localStorage.setItem('chat-bridge-model', selectedModel);
-  if (selectedEffort) {
-    localStorage.setItem('chat-bridge-effort', selectedEffort);
-  } else {
-    localStorage.removeItem('chat-bridge-effort');
-  }
+  // Store '' explicitly for "Default" — a missing key means "never chosen",
+  // which the init path maps to the medium cost-saving default.
+  localStorage.setItem('chat-bridge-effort', selectedEffort);
   renderModelEffortButton();
   if (currentSessionId) {
     fetchWithRetry(`/api/sessions/${currentSessionId}`, {
@@ -5235,7 +5239,12 @@ function refreshContextMeter() {
     return;
   }
   const pct = state.used / state.contextWindow;
-  if (pct < 0.75) {
+  // Cost trigger is absolute, not window-relative: every resumed turn replays
+  // the whole transcript, and after the 5-minute prompt cache expires that
+  // replay bills at full input price. On a 1M-window model the 75% threshold
+  // would never fire at cost-relevant sizes.
+  const costNudge = state.used >= 60000;
+  if (pct < 0.75 && !costNudge) {
     meter.style.display = 'none';
     return;
   }
@@ -5245,7 +5254,9 @@ function refreshContextMeter() {
   const usedK = (state.used / 1000).toFixed(0);
   const limitK = Math.round(state.contextWindow / 1000);
   meter.textContent = `Context: ${pctNum}% (${usedK}k / ${limitK}k)`;
-  meter.title = `Approaching context-window limit for ${state.model}. Consider /compact or starting a new session.`;
+  meter.title = pct >= 0.75
+    ? `Approaching context-window limit for ${state.model}. Consider /compact or starting a new session.`
+    : `Each reply re-reads all ${usedK}k tokens — full price once the 5-minute cache expires. Fork down or start a new session to cut cost.`;
 }
 
 function addUsageInfo(data, sessionId = currentSessionId) {
@@ -7269,6 +7280,12 @@ function renderSettingsContent() {
     return;
   }
 
+  // Usage section is independent of MCP config
+  if (activeSettingsSection === 'usage') {
+    renderUsageSettings(container);
+    return;
+  }
+
   // Updates section is independent of MCP config
   if (activeSettingsSection === 'updates') {
     renderUpdatesSettings(container);
@@ -7285,6 +7302,45 @@ function renderSettingsContent() {
     renderVaultSettings(container);
   } else if (activeSettingsSection === 'allowed-paths') {
     renderAllowedPaths(container);
+  }
+}
+
+const USAGE_MONTHLY_BUDGET_USD = 100;
+
+function renderUsageSettings(container) {
+  container.innerHTML = `
+    <h2 class="settings-title">Usage</h2>
+    <div class="settings-section">
+      <div class="settings-section-title">API spend this month</div>
+      <div class="settings-section-desc">Metered <code>claude -p</code> usage recorded per turn by the bridge, measured against the ${USAGE_MONTHLY_BUDGET_USD}/month API credit.</div>
+      <div id="usage-summary" class="settings-loading">Loading…</div>
+    </div>`;
+  loadUsageSummary();
+}
+
+async function loadUsageSummary() {
+  const el = document.getElementById('usage-summary');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/usage/summary');
+    if (!res.ok) throw new Error(String(res.status));
+    const s = await res.json();
+    const pct = Math.min(100, (s.total_cost_usd / USAGE_MONTHLY_BUDGET_USD) * 100);
+    const coldPct = s.turns ? Math.round((s.cold_turns / s.turns) * 100) : 0;
+    const models = Object.entries(s.by_model || {})
+      .sort((a, b) => (b[1].cost_usd || 0) - (a[1].cost_usd || 0))
+      .map(([m, v]) =>
+        `<div class="usage-model-row"><span>${escapeHtml(m)}</span><span>${(v.cost_usd || 0).toFixed(2)} · ${v.turns} turn${v.turns === 1 ? '' : 's'}</span></div>`)
+      .join('');
+    el.classList.remove('settings-loading');
+    el.innerHTML = `
+      <div class="usage-budget-bar"><div class="usage-budget-fill${pct >= 80 ? ' usage-budget-fill--warn' : ''}" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="usage-budget-label">${(s.total_cost_usd || 0).toFixed(2)} of ${USAGE_MONTHLY_BUDGET_USD} · ${s.turns} turns · today ${(s.today_cost_usd || 0).toFixed(2)}</div>
+      <div class="usage-cold-label">${coldPct}% of turns were cache-cold (full-price context re-read)</div>
+      ${models}`;
+  } catch {
+    el.classList.remove('settings-loading');
+    el.textContent = 'Usage data unavailable — the ledger endpoint goes live after the next bridge restart.';
   }
 }
 

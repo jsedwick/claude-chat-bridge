@@ -4645,6 +4645,40 @@ pre.streaming {
   margin-bottom: 12px;
 }
 
+/* Usage section — monthly budget meter */
+.usage-budget-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.usage-budget-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.usage-budget-fill--warn {
+  background: #e0a030;
+}
+.usage-budget-label {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.usage-cold-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.usage-model-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+
 /* Settings list items */
 .settings-item {
   display: flex;
