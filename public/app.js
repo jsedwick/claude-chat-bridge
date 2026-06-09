@@ -5233,6 +5233,10 @@ function captureContextState(sessionId, info) {
 function refreshContextMeter() {
   const meter = document.getElementById('ctx-meter');
   if (!meter) return;
+  if (localStorage.getItem('chat-bridge-hide-ctx-meter') === 'true') {
+    meter.style.display = 'none';
+    return;
+  }
   const state = currentSessionId ? sessionContextState.get(currentSessionId) : null;
   if (!state || !state.contextWindow) {
     meter.style.display = 'none';
@@ -7308,14 +7312,43 @@ function renderSettingsContent() {
 const USAGE_MONTHLY_BUDGET_USD = 100;
 
 function renderUsageSettings(container) {
+  const meterHidden = localStorage.getItem('chat-bridge-hide-ctx-meter') === 'true';
   container.innerHTML = `
     <h2 class="settings-title">Usage</h2>
     <div class="settings-section">
       <div class="settings-section-title">API spend this month</div>
       <div class="settings-section-desc">Metered <code>claude -p</code> usage recorded per turn by the bridge, measured against the ${USAGE_MONTHLY_BUDGET_USD}/month API credit.</div>
       <div id="usage-summary" class="settings-loading">Loading…</div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Hide Context Meter</div>
+      <div class="settings-section-desc">Hide the per-session context/cost bar shown above the message input.</div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${meterHidden ? 'active' : ''}" onclick="setCtxMeterHidden(true)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+          On
+        </button>
+        <button class="settings-theme-btn ${!meterHidden ? 'active' : ''}" onclick="setCtxMeterHidden(false)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          Off
+        </button>
+      </div>
     </div>`;
   loadUsageSummary();
+}
+
+function setCtxMeterHidden(hidden) {
+  localStorage.setItem('chat-bridge-hide-ctx-meter', hidden ? 'true' : 'false');
+  refreshContextMeter();
+  const container = document.getElementById('settings-content');
+  if (container && activeSettingsSection === 'usage') renderUsageSettings(container);
 }
 
 async function loadUsageSummary() {
