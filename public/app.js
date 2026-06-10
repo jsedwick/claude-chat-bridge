@@ -7157,7 +7157,7 @@ function switchView(view) {
   }
   currentView = view;
   document.getElementById('sidebar-view-menu').style.display = 'none';
-  const labels = { sessions: 'Sessions', kb: 'Knowledge Base', settings: 'Settings' };
+  const labels = { sessions: 'Sessions', kb: 'Knowledge Base', settings: 'Settings', terminal: 'Terminal' };
   document.getElementById('sidebar-view-label').textContent = labels[view] || view;
 
   // Update dropdown active state
@@ -7172,6 +7172,7 @@ function switchView(view) {
   const chatMain = document.querySelector('.chat-main');
   const settingsPanel = document.getElementById('settings-panel');
   const kbPanel = document.getElementById('kb-panel');
+  const terminalPanel = document.getElementById('terminal-panel');
 
   // Hide everything first
   sessionsView.style.display = 'none';
@@ -7181,6 +7182,7 @@ function switchView(view) {
   chatMain.style.display = 'none';
   settingsPanel.style.display = 'none';
   kbPanel.style.display = 'none';
+  terminalPanel.style.display = 'none';
 
   if (view === 'settings') {
     settingsView.style.display = '';
@@ -7194,11 +7196,66 @@ function switchView(view) {
       if (!kbPrefsLoaded) loadKbPreferences();
     }
     loadKbTrash();
+  } else if (view === 'terminal') {
+    terminalPanel.style.display = 'flex';
+    initTerminal();
   } else {
     sessionsView.style.display = '';
     sessionsToolbar.style.display = '';
     chatMain.style.display = '';
   }
+}
+
+// ---- Integrated terminal (Decision 004, Phase 1) ----
+// xterm.js front-end bridged to the node-pty/tmux backend at /api/terminal.
+let _term = null, _termFit = null, _termWs = null;
+function initTerminal() {
+  const container = document.getElementById('terminal-container');
+  if (_term) {
+    // Already initialized — just refit to the (possibly changed) viewport.
+    setTimeout(() => { try { _termFit.fit(); sendTerminalResize(); _term.focus(); } catch (e) {} }, 0);
+    return;
+  }
+  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') {
+    container.textContent = 'Terminal library failed to load (CDN unreachable).';
+    return;
+  }
+  const fontSize = window.innerWidth < 700 ? 16 : 13;
+  _term = new Terminal({
+    cursorBlink: true,
+    fontSize,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    theme: { background: '#000000' },
+  });
+  _termFit = new FitAddon.FitAddon();
+  _term.loadAddon(_termFit);
+  _term.open(container);
+  try { _termFit.fit(); } catch (e) {}
+  _term.onData((d) => {
+    if (_termWs && _termWs.readyState === WebSocket.OPEN) {
+      _termWs.send(JSON.stringify({ type: 'data', data: d }));
+    }
+  });
+  window.addEventListener('resize', () => {
+    if (currentView !== 'terminal') return;
+    try { _termFit.fit(); sendTerminalResize(); } catch (e) {}
+  });
+  connectTerminalWs();
+}
+function sendTerminalResize() {
+  if (_term && _termWs && _termWs.readyState === WebSocket.OPEN) {
+    _termWs.send(JSON.stringify({ type: 'resize', cols: _term.cols, rows: _term.rows }));
+  }
+}
+function connectTerminalWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  _termWs = new WebSocket(`${proto}://${location.host}/api/terminal?session=claude`);
+  _termWs.onopen = () => { sendTerminalResize(); if (_term) _term.focus(); };
+  _termWs.onmessage = (e) => { if (_term) _term.write(e.data); };
+  _termWs.onclose = () => {
+    if (_term) _term.write('\r\n\x1b[33m[disconnected — switch away and back to reconnect]\x1b[0m\r\n');
+  };
+  _termWs.onerror = () => {};
 }
 
 function goHome() {

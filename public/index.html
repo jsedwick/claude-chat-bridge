@@ -16,6 +16,9 @@
   <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
   <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 </head>
 <body>
   <!-- Session Sidebar -->
@@ -33,6 +36,7 @@
           <button class="sidebar-view-option" data-view="home" onclick="goHome()">Home</button>
           <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions</button>
           <button class="sidebar-view-option" data-view="kb" onclick="switchView('kb')">Knowledge Base</button>
+          <button class="sidebar-view-option" data-view="terminal" onclick="switchView('terminal')">Terminal</button>
           <button class="sidebar-view-option" data-view="settings" onclick="switchView('settings')">Settings</button>
         </div>
       </div>
@@ -475,6 +479,10 @@
   </main>
 
   <!-- Settings Panel (replaces chat content when in settings view) -->
+  <div id="terminal-panel" style="display:none; flex:1; min-height:0; flex-direction:column; background:#000">
+    <div id="terminal-container" style="flex:1; min-height:0; width:100%; padding:6px 8px; box-sizing:border-box"></div>
+  </div>
+
   <div id="settings-panel" class="settings-panel" style="display:none">
     <header class="chat-header">
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>

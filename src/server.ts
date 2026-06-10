@@ -17,6 +17,7 @@ import pushRoutes from './routes/push';
 import usageRoutes from './routes/usage';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
+import { attachTerminal } from './services/terminal';
 
 const app = express();
 
@@ -90,6 +91,7 @@ function startServer() {
 
   if (useHttp) {
     const server = http.createServer(app);
+    attachTerminal(server);
     server.listen(config.port, '0.0.0.0', () => {
       console.log(`Chat Bridge running on HTTP at http://0.0.0.0:${config.port}`);
       startReaper();
@@ -113,6 +115,7 @@ function startServer() {
       };
 
       const server = https.createServer(httpsOptions, app);
+      attachTerminal(server);
 
       server.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EADDRINUSE') {

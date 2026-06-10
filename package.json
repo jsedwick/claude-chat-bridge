@@ -5,6 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
     "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "start:http": "node dist/server.js --http"
@@ -12,9 +13,12 @@
   "author": "Jesse Sedwick",
   "license": "MIT",
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "cors": "^2.8.5",
     "express": "^5.2.1",
-    "web-push": "^3.6.7"
+    "node-pty": "^1.1.0",
+    "web-push": "^3.6.7",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
