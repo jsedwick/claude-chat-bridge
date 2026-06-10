@@ -60,6 +60,14 @@ interface ActiveStream {
 const activeStreams = new Map<string, ActiveStream>();
 const STREAM_BUFFER_TTL = 60_000; // Keep buffer 60s after stream ends
 
+// Generation counter per app session. Each runClaude invocation claims a new
+// generation; a previous turn's process can outlive its result frame (persistent
+// monitors keep the CLI alive) and exit AFTER the next turn has revived the
+// shared stream. Its close-time cleanup must then be skipped — unguarded, it
+// re-arms the stream-deletion timer and the live turn's events are silently
+// dropped (2026-06-09 lost-message incident).
+const sessionGenerations = new Map<string, number>();
+
 function getOrCreateStream(appSessionId: string): ActiveStream {
   let stream = activeStreams.get(appSessionId);
   if (!stream) {
@@ -323,6 +331,10 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   // Set up stream buffer and register initial listener
   const stream = getOrCreateStream(appSessionId);
   stream.listeners.add(onEvent);
+  // Claim ownership of this session's shared state (see sessionGenerations).
+  const myGeneration = (sessionGenerations.get(appSessionId) || 0) + 1;
+  sessionGenerations.set(appSessionId, myGeneration);
+  const isCurrentGeneration = () => sessionGenerations.get(appSessionId) === myGeneration;
 
   let capturedSessionId: string | null = sessionId || null;
   let authFailed = false;
@@ -472,7 +484,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
           // Surface a failed result so the user sees the error instead of an
           // empty, silently-finished turn. error_during_execution (e.g. a
           // failed --resume/fork) and other non-success results set is_error.
-          if (parsed.is_error === true) {
+          if (parsed.is_error === true && isCurrentGeneration()) {
             const detail =
               typeof parsed.result === 'string' && parsed.result.trim()
                 ? `: ${parsed.result.trim()}`
@@ -482,50 +494,56 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               data: `Run ended with an error (${parsed.subtype || 'error_during_execution'})${detail}`,
             });
           }
-          // Clear the post-AskUserQuestion suppression flag so the synthetic
-          // 'done' below emits, and a subsequent turn doesn't inherit it.
-          sessionPostAskUser.delete(appSessionId);
-          const usage = parsed.usage;
-          const cost = parsed.total_cost_usd;
-          emitToStream(appSessionId, {
-            type: 'done',
-            data: JSON.stringify({
-              session_id: parsed.session_id,
-              is_error: parsed.is_error === true,
-              duration_ms: parsed.duration_ms,
-              cost_usd: cost,
-              input_tokens: usage?.input_tokens,
-              output_tokens: usage?.output_tokens,
-              cache_creation_input_tokens: usage?.cache_creation_input_tokens,
-              cache_read_input_tokens: usage?.cache_read_input_tokens,
-              model_usage: parsed.modelUsage,
-              last_turn_usage: lastTurnUsage,
-              // Include final response text for recovery when text_delta events are lost
-              result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
-              trace_id: traceId,
-            }),
-          });
+          // A stale generation's late result (a monitor-triggered turn inside a
+          // previous process) must not emit 'done' into the live turn's stream
+          // (the route would end its HTTP response mid-turn) nor tear down the
+          // live turn's shared state.
+          if (isCurrentGeneration()) {
+            // Clear the post-AskUserQuestion suppression flag so the synthetic
+            // 'done' below emits, and a subsequent turn doesn't inherit it.
+            sessionPostAskUser.delete(appSessionId);
+            const usage = parsed.usage;
+            const cost = parsed.total_cost_usd;
+            emitToStream(appSessionId, {
+              type: 'done',
+              data: JSON.stringify({
+                session_id: parsed.session_id,
+                is_error: parsed.is_error === true,
+                duration_ms: parsed.duration_ms,
+                cost_usd: cost,
+                input_tokens: usage?.input_tokens,
+                output_tokens: usage?.output_tokens,
+                cache_creation_input_tokens: usage?.cache_creation_input_tokens,
+                cache_read_input_tokens: usage?.cache_read_input_tokens,
+                model_usage: parsed.modelUsage,
+                last_turn_usage: lastTurnUsage,
+                // Include final response text for recovery when text_delta events are lost
+                result_text: typeof parsed.result === 'string' ? parsed.result : undefined,
+                trace_id: traceId,
+              }),
+            });
 
-          // Clean up immediately on done — don't wait for process exit.
-          // With plugin monitors, the CLI process outlives the response indefinitely,
-          // leaving the session in activeSessions/appSessionMap (blocks new sessions,
-          // causes sidebar pulse, and allows duplicate message sends).
-          //
-          // Intentionally do NOT delete claudeToAppMap here: monitors that fire
-          // tool calls after the result event still need their permission requests
-          // to resolve to the right app session. The lookup table is cleaned up
-          // in proc.on('close') when the actual claude process exits.
-          activeSessions.delete(trackingId);
-          appSessionMap.delete(appSessionId);
-          if (capturedSessionId && trackingId !== capturedSessionId) {
-            activeSessions.delete(capturedSessionId);
+            // Clean up immediately on done — don't wait for process exit.
+            // With plugin monitors, the CLI process outlives the response indefinitely,
+            // leaving the session in activeSessions/appSessionMap (blocks new sessions,
+            // causes sidebar pulse, and allows duplicate message sends).
+            //
+            // Intentionally do NOT delete claudeToAppMap here: monitors that fire
+            // tool calls after the result event still need their permission requests
+            // to resolve to the right app session. The lookup table is cleaned up
+            // in proc.on('close') when the actual claude process exits.
+            activeSessions.delete(trackingId);
+            appSessionMap.delete(appSessionId);
+            if (capturedSessionId && trackingId !== capturedSessionId) {
+              activeSessions.delete(capturedSessionId);
+            }
+            // Mark stream as done so reconnect replays buffer instead of
+            // subscribing and waiting for a process that's only running monitors.
+            closeStream(appSessionId);
           }
           // Remove this listener so events from a future process on the same
           // session don't trigger duplicate saves via this closure's onEvent.
           stream.listeners.delete(onEvent);
-          // Mark stream as done so reconnect replays buffer instead of
-          // subscribing and waiting for a process that's only running monitors.
-          closeStream(appSessionId);
         }
       } catch {
         // Non-JSON line — check if it looks like an error message from Claude Code
@@ -553,21 +571,30 @@ export function runClaude(options: ClaudeRunnerOptions): void {
   });
 
   proc.on('close', (code) => {
-    activeSessions.delete(trackingId);
-    appSessionMap.delete(appSessionId);
-    resetStreamedText(appSessionId);
-    // Preserve sessionPostAskUser through the buffer flush below so any leaked
-    // post-AUQ events in the remnant buffer are also suppressed. Deletion
-    // happens after the flush.
-    if (capturedSessionId) {
-      claudeToAppMap.delete(capturedSessionId);
-      if (trackingId !== capturedSessionId) {
-        activeSessions.delete(capturedSessionId);
+    // A stale generation exiting (a previous turn's process kept alive by
+    // monitors) must not touch shared per-session state: the next turn has
+    // already revived the stream and re-registered these map entries. The
+    // 2026-06-09 incident: the stale close re-armed closeStream's deletion
+    // timer, which deleted the live stream 60s into the next turn — every
+    // subsequent event (including the final assistant text) was dropped.
+    const current = isCurrentGeneration();
+    if (current) {
+      activeSessions.delete(trackingId);
+      appSessionMap.delete(appSessionId);
+      resetStreamedText(appSessionId);
+      // Preserve sessionPostAskUser through the buffer flush below so any leaked
+      // post-AUQ events in the remnant buffer are also suppressed. Deletion
+      // happens after the flush.
+      if (capturedSessionId) {
+        claudeToAppMap.delete(capturedSessionId);
+        if (trackingId !== capturedSessionId) {
+          activeSessions.delete(capturedSessionId);
+        }
       }
     }
 
     // Process any remaining buffer — emit events, not just capture session ID
-    if (buffer.trim()) {
+    if (current && buffer.trim()) {
       for (const line of buffer.split('\n')) {
         if (!line.trim()) continue;
         try {
@@ -650,7 +677,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
       }
     }
 
-    if (code !== 0 && code !== null && !authFailed) {
+    if (current && code !== 0 && code !== null && !authFailed) {
       emitToStream(appSessionId, { type: 'error', data: `Claude process exited with code ${code}` });
     }
 
@@ -669,21 +696,26 @@ export function runClaude(options: ClaudeRunnerOptions): void {
     }
 
     // Remove the initial listener and close the stream
-    sessionToolUseIds.delete(appSessionId);
-    sessionPendingAskUser.delete(appSessionId);
-    sessionPostAskUser.delete(appSessionId);
+    if (current) {
+      sessionToolUseIds.delete(appSessionId);
+      sessionPendingAskUser.delete(appSessionId);
+      sessionPostAskUser.delete(appSessionId);
+      closeStream(appSessionId);
+    }
     stream.listeners.delete(onEvent);
-    closeStream(appSessionId);
     onClose(capturedSessionId);
   });
 
   proc.on('error', (err) => {
-    activeSessions.delete(trackingId);
-    sessionPendingAskUser.delete(appSessionId);
-    sessionPostAskUser.delete(appSessionId);
+    const current = isCurrentGeneration();
+    if (current) {
+      activeSessions.delete(trackingId);
+      sessionPendingAskUser.delete(appSessionId);
+      sessionPostAskUser.delete(appSessionId);
+    }
     emitToStream(appSessionId, { type: 'error', data: `Failed to spawn claude: ${err.message}` });
     stream.listeners.delete(onEvent);
-    closeStream(appSessionId);
+    if (current) closeStream(appSessionId);
     onClose(null);
   });
 }
