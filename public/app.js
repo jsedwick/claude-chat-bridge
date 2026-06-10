@@ -7173,6 +7173,8 @@ function switchView(view) {
   const settingsPanel = document.getElementById('settings-panel');
   const kbPanel = document.getElementById('kb-panel');
   const terminalPanel = document.getElementById('terminal-panel');
+  const terminalView = document.getElementById('terminal-view');
+  const terminalToolbar = document.getElementById('terminal-toolbar');
 
   // Hide everything first
   sessionsView.style.display = 'none';
@@ -7183,6 +7185,8 @@ function switchView(view) {
   settingsPanel.style.display = 'none';
   kbPanel.style.display = 'none';
   terminalPanel.style.display = 'none';
+  terminalView.style.display = 'none';
+  terminalToolbar.style.display = 'none';
 
   if (view === 'settings') {
     settingsView.style.display = '';
@@ -7197,8 +7201,11 @@ function switchView(view) {
     }
     loadKbTrash();
   } else if (view === 'terminal') {
+    terminalView.style.display = '';
+    terminalToolbar.style.display = '';
     terminalPanel.style.display = 'flex';
     initTerminal();
+    renderTerminalSessionList();
   } else {
     sessionsView.style.display = '';
     sessionsToolbar.style.display = '';
@@ -7208,7 +7215,10 @@ function switchView(view) {
 
 // ---- Integrated terminal (Decision 004, Phase 1) ----
 // xterm.js front-end bridged to the node-pty/tmux backend at /api/terminal.
+// Multiple tmux sessions = terminal tabs; one xterm/WS at a time, switching
+// disposes and re-attaches (tmux redraws, so content survives server-side).
 let _term = null, _termFit = null, _termWs = null;
+let _termSession = localStorage.getItem('chat-bridge-term-session') || 'claude';
 function initTerminal() {
   const container = document.getElementById('terminal-container');
   if (_term) {
@@ -7236,11 +7246,26 @@ function initTerminal() {
       _termWs.send(JSON.stringify({ type: 'data', data: d }));
     }
   });
-  window.addEventListener('resize', () => {
-    if (currentView !== 'terminal') return;
-    try { _termFit.fit(); sendTerminalResize(); } catch (e) {}
-  });
-  initTerminalTouchScroll(container);
+  // Guard listener registration — initTerminal re-runs on every session-tab
+  // switch, and stacked handlers would double-fire (duplicate wheel reports).
+  if (!window._termResizeBound) {
+    window._termResizeBound = true;
+    window.addEventListener('resize', () => {
+      if (currentView !== 'terminal') return;
+      try { _termFit.fit(); sendTerminalResize(); } catch (e) {}
+    });
+  }
+  if (!container._touchScrollBound) {
+    container._touchScrollBound = true;
+    initTerminalTouchScroll(container);
+    // tmux's mouse mode draws its own right-click pane menu, which overlapped
+    // the browser's native context menu. Suppress the native one over the
+    // terminal; Shift+right-click still reaches it (matches xterm's shift-
+    // bypass convention for selection).
+    container.addEventListener('contextmenu', (e) => {
+      if (!e.shiftKey) e.preventDefault();
+    });
+  }
   connectTerminalWs();
 }
 
@@ -7314,6 +7339,241 @@ function flashTermBtn(id, ok) {
   btn.classList.add(ok ? 'term-btn-ok' : 'term-btn-err');
   setTimeout(() => btn.classList.remove('term-btn-ok', 'term-btn-err'), 600);
 }
+
+// ---- Terminal session starter (Decision 004 Phase 2 polish) ----
+// Types a full line into the PTY. Whatever is foreground in tmux receives it —
+// the shell normally, but a running claude TUI would get it as prompt text,
+// which is visible and harmless.
+function terminalType(line) {
+  if (!_termWs || _termWs.readyState !== WebSocket.OPEN) return;
+  _termWs.send(JSON.stringify({ type: 'data', data: line + '\r' }));
+  if (_term) _term.focus();
+}
+
+function shQuote(p) {
+  return "'" + String(p).replace(/'/g, "'\\''") + "'";
+}
+
+// Sidebar folder button (same placement as the chat view's picker): selecting
+// a directory types `cd '<path>'` into the active terminal.
+function toggleTerminalSidebarDirPicker() {
+  const picker = document.getElementById('terminal-sidebar-dir-picker');
+  const isOpen = picker.style.display !== 'none';
+  if (isOpen) { picker.style.display = 'none'; return; }
+  const onSelect = (dirPath) => {
+    picker.style.display = 'none';
+    localStorage.setItem('chat-bridge-last-dir', dirPath);
+    terminalType('cd ' + shQuote(dirPath));
+    if (sidebar.classList.contains('open')) toggleSidebar();
+  };
+  const last = localStorage.getItem('chat-bridge-last-dir');
+  if (last) {
+    renderDirBrowser(picker, last, onSelect);
+  } else {
+    renderDirRoots(picker, onSelect);
+  }
+}
+
+// ---- Terminal session tabs (sidebar parity with the chat session list) ----
+// tmux is the source of truth. Switching disposes the local xterm and
+// re-attaches the WS to the chosen session; tmux redraws the screen.
+function switchTerminalSession(name) {
+  if (_termWs) {
+    try { _termWs.onclose = null; _termWs.onmessage = null; _termWs.close(); } catch (e) {}
+    _termWs = null;
+  }
+  if (_term) {
+    try { _term.dispose(); } catch (e) {}
+    _term = null;
+    _termFit = null;
+  }
+  _termSession = name;
+  localStorage.setItem('chat-bridge-term-session', name);
+  const container = document.getElementById('terminal-container');
+  if (container) container.innerHTML = '';
+  initTerminal();
+  renderTerminalSessionList();
+}
+
+async function renderTerminalSessionList() {
+  const list = document.getElementById('terminal-session-list');
+  if (!list) return;
+  let sessions = [];
+  try {
+    const res = await fetch('/api/terminal/sessions');
+    if (res.ok) sessions = await res.json();
+  } catch (e) { /* endpoint unavailable — degrade below */ }
+  // Always show the active session even if the list endpoint isn't live yet
+  // (pre-restart) or tmux hasn't started the session's server.
+  if (!sessions.some((s) => s.name === _termSession)) {
+    sessions.unshift({ name: _termSession, pending: true });
+  }
+  list.innerHTML = '';
+  for (const s of sessions) {
+    const wrap = document.createElement('div');
+    wrap.className = 'terminal-session-wrap';
+    const item = document.createElement('div');
+    item.className = 'terminal-session-item' + (s.name === _termSession ? ' active' : '');
+    item.onclick = () => {
+      if (s.name !== _termSession) switchTerminalSession(s.name);
+      if (sidebar.classList.contains('open')) toggleSidebar();
+    };
+    const nameEl = document.createElement('div');
+    nameEl.className = 'terminal-session-name';
+    nameEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span></span>';
+    const nameSpan = nameEl.querySelector('span');
+    nameSpan.textContent = s.name;
+    nameSpan.ondblclick = (e) => {
+      e.stopPropagation();
+      startTerminalTabRename(s.name, nameSpan);
+    };
+    item.appendChild(nameEl);
+    const detailsEl = document.createElement('div');
+    detailsEl.className = 'terminal-session-details';
+    detailsEl.style.display = 'none';
+    const infoBtn = document.createElement('button');
+    infoBtn.className = 'terminal-session-info';
+    infoBtn.setAttribute('aria-label', `Session details for ${s.name}`);
+    infoBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+    infoBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleTerminalSessionDetails(s.name, detailsEl);
+    };
+    item.appendChild(infoBtn);
+    const killBtn = document.createElement('button');
+    killBtn.className = 'terminal-session-kill';
+    killBtn.setAttribute('aria-label', `Kill session ${s.name}`);
+    killBtn.textContent = '×';
+    killBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Kill terminal session "${s.name}"? Anything running in it will be terminated.`)) return;
+      try {
+        await fetch(`/api/terminal/sessions/${encodeURIComponent(s.name)}`, { method: 'DELETE' });
+      } catch (err) {}
+      if (s.name === _termSession) {
+        switchTerminalSession('claude'); // reconnect recreates the default session
+      } else {
+        renderTerminalSessionList();
+      }
+    };
+    item.appendChild(killBtn);
+    wrap.appendChild(item);
+    wrap.appendChild(detailsEl);
+    list.appendChild(wrap);
+  }
+}
+
+// Inline tab rename — mirrors the chat session list's dblclick contentEditable
+// flow, committing to tmux rename-session via PATCH.
+function startTerminalTabRename(oldName, el) {
+  const originalText = el.textContent;
+  el.contentEditable = true;
+  el.classList.add('editing');
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+
+  async function finish() {
+    el.contentEditable = false;
+    el.classList.remove('editing');
+    const name = el.textContent.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    if (!name || name === oldName) {
+      el.textContent = originalText;
+      return;
+    }
+    try {
+      const res = await fetch(`/api/terminal/sessions/${encodeURIComponent(oldName)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      if (_termSession === oldName) {
+        // tmux clients follow renames — no reconnect needed, just track it.
+        _termSession = name;
+        localStorage.setItem('chat-bridge-term-session', name);
+      }
+    } catch (err) {
+      el.textContent = originalText;
+    }
+    renderTerminalSessionList();
+  }
+
+  el.onblur = finish;
+  el.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (e.key === 'Escape') {
+      el.contentEditable = false;
+      el.classList.remove('editing');
+      el.textContent = originalText;
+      el.onblur = null;
+    }
+  };
+}
+
+async function toggleTerminalSessionDetails(name, detailsEl) {
+  if (detailsEl.style.display !== 'none') {
+    detailsEl.style.display = 'none';
+    return;
+  }
+  detailsEl.style.display = 'block';
+  detailsEl.innerHTML = '<div class="terminal-session-details-row">Loading…</div>';
+  try {
+    const res = await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/details`);
+    if (!res.ok) throw new Error(String(res.status));
+    const d = await res.json();
+    const created = d.created ? new Date(d.created).toLocaleString() : '—';
+    detailsEl.innerHTML = `
+      <div class="terminal-session-details-row"><span>Created</span><span>${escapeHtml(created)}</span></div>
+      <div class="terminal-session-details-row"><span>Status</span><span>${d.attached ? 'attached' : 'detached'}</span></div>
+      <div class="terminal-session-details-row"><span>Windows · Panes</span><span>${d.windows} · ${d.panes}</span></div>
+      <div class="terminal-session-details-row"><span>Size</span><span>${escapeHtml(d.size || '—')}</span></div>
+      <div class="terminal-session-details-row"><span>Running</span><span>${escapeHtml(d.command || '—')}</span></div>
+      <div class="terminal-session-details-row"><span>Directory</span><span title="${escapeHtml(d.path || '')}">${escapeHtml(d.path || '—')}</span></div>`;
+  } catch (err) {
+    detailsEl.innerHTML = '<div class="terminal-session-details-row">Details unavailable — endpoint goes live after the next bridge restart.</div>';
+  }
+}
+
+function promptNewTerminalSession() {
+  let name = prompt('Name for the new terminal session:', '');
+  if (name === null) return;
+  // Mirror the server's sanitizer so the tab label matches the tmux session.
+  name = name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+  if (!name) return;
+  switchTerminalSession(name);
+  if (sidebar.classList.contains('open')) toggleSidebar();
+}
+
+// Start button: launch interactive Claude Code with the vault session-start
+// command matching the chosen context. Defaults follow the chat view's
+// Work/Personal mode tabs (currentMode).
+function toggleTerminalStartMenu() {
+  const menu = document.getElementById('terminal-start-menu');
+  const picker = document.getElementById('terminal-dir-picker');
+  if (picker) picker.style.display = 'none';
+  const isOpen = menu.style.display !== 'none';
+  if (isOpen) { menu.style.display = 'none'; return; }
+  menu.innerHTML = '';
+  for (const mode of ['work', 'personal']) {
+    const btn = document.createElement('button');
+    btn.className = 'terminal-start-option' + (mode === currentMode ? ' active' : '');
+    const label = mode === 'work' ? 'Work' : 'Personal';
+    btn.innerHTML = `<span>Start Claude — ${label}</span><code>/vault:${mode}</code>`;
+    btn.onclick = () => {
+      menu.style.display = 'none';
+      // The vault plugin has no system-wide registration — skills + MCP load
+      // only via --plugin-dir (mirrors the bridge runner's spawn args; the
+      // MCP server rides in .mcp.json at the plugin root). Terminal sessions
+      // are the trusted interactive path: skip permission prompts entirely.
+      terminalType(`claude --dangerously-skip-permissions --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${mode}"`);
+    };
+    menu.appendChild(btn);
+  }
+  menu.style.display = 'block';
+}
 function sendTerminalResize() {
   if (_term && _termWs && _termWs.readyState === WebSocket.OPEN) {
     _termWs.send(JSON.stringify({ type: 'resize', cols: _term.cols, rows: _term.rows }));
@@ -7321,7 +7581,7 @@ function sendTerminalResize() {
 }
 function connectTerminalWs() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  _termWs = new WebSocket(`${proto}://${location.host}/api/terminal?session=claude`);
+  _termWs = new WebSocket(`${proto}://${location.host}/api/terminal?session=${encodeURIComponent(_termSession)}`);
   _termWs.onopen = () => { sendTerminalResize(); if (_term) _term.focus(); };
   _termWs.onmessage = (e) => { if (_term) _term.write(e.data); };
   _termWs.onclose = () => {

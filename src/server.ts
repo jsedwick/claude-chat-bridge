@@ -17,7 +17,7 @@ import pushRoutes from './routes/push';
 import usageRoutes from './routes/usage';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
-import { attachTerminal, terminalClipboard } from './services/terminal';
+import { attachTerminal, terminalClipboard, terminalSessions, terminalKillSession, terminalRenameSession, terminalSessionDetails } from './services/terminal';
 
 const app = express();
 
@@ -63,6 +63,10 @@ app.use('/api/triage', triageRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/usage', usageRoutes);
 app.get('/api/terminal/clipboard', terminalClipboard);
+app.get('/api/terminal/sessions', terminalSessions);
+app.get('/api/terminal/sessions/:name/details', terminalSessionDetails);
+app.patch('/api/terminal/sessions/:name', terminalRenameSession);
+app.delete('/api/terminal/sessions/:name', terminalKillSession);
 
 // Health check
 app.get('/api/health', (_req, res) => {

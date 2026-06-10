@@ -54,6 +54,92 @@ function originAllowed(req: http.IncomingMessage): boolean {
   }
 }
 
+// Terminal session tabs (sidebar parity with the chat session list). tmux is
+// the source of truth: list live sessions, and kill on tab close. Creation
+// needs no endpoint — connecting the WS with ?session=<name> attaches-or-creates.
+export function terminalSessions(_req: Request, res: Response): void {
+  // Colon separator: tmux forbids ':' in session names, and (unlike tab) it
+  // survives tmux's format-output sanitization, which replaces control chars
+  // with '_' — tabs here silently merged all three fields into one string.
+  execFile(
+    TMUX,
+    ['list-sessions', '-F', '#{session_name}:#{session_created}:#{session_attached}'],
+    (err, stdout) => {
+      if (err) {
+        res.json([]); // no tmux server running — no sessions yet
+        return;
+      }
+      const sessions = stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [name, created, attached] = line.split(':');
+          return { name, created: Number(created) * 1000, attached: attached !== '0' };
+        });
+      res.json(sessions);
+    }
+  );
+}
+
+export function terminalRenameSession(req: Request, res: Response): void {
+  const oldName = sanitizeSession(String(req.params.name || ''));
+  const newName = sanitizeSession(String((req.body || {}).name || ''));
+  if (!newName) {
+    res.status(400).json({ error: 'invalid session name' });
+    return;
+  }
+  execFile(TMUX, ['rename-session', '-t', oldName, newName], (err) => {
+    if (err) {
+      res.status(409).json({ error: 'rename failed — duplicate or missing session' });
+      return;
+    }
+    res.json({ name: newName });
+  });
+}
+
+// Session metadata for the details panel. Two queries: colon-joined safe
+// fields first (numbers + command name), then the cwd alone on its own line —
+// paths may contain colons, so it can't ride in the joined format.
+export function terminalSessionDetails(req: Request, res: Response): void {
+  const name = sanitizeSession(String(req.params.name || ''));
+  execFile(
+    TMUX,
+    ['display-message', '-p', '-t', name,
+      '#{session_created}:#{session_attached}:#{session_windows}:#{window_panes}:#{pane_width}x#{pane_height}:#{pane_current_command}'],
+    (err, stdout) => {
+      if (err) {
+        res.status(404).json({ error: 'session not found' });
+        return;
+      }
+      const [created, attached, windows, panes, size, ...cmd] = stdout.trim().split(':');
+      execFile(TMUX, ['display-message', '-p', '-t', name, '#{pane_current_path}'], (err2, pathOut) => {
+        res.json({
+          name,
+          created: Number(created) * 1000,
+          attached: attached !== '0',
+          windows: Number(windows),
+          panes: Number(panes),
+          size,
+          command: cmd.join(':'),
+          path: err2 ? '' : pathOut.trim(),
+        });
+      });
+    }
+  );
+}
+
+export function terminalKillSession(req: Request, res: Response): void {
+  const name = sanitizeSession(String(req.params.name || ''));
+  execFile(TMUX, ['kill-session', '-t', name], (err) => {
+    if (err) {
+      res.status(404).json({ error: 'session not found' });
+      return;
+    }
+    res.json({ killed: name });
+  });
+}
+
 // With tmux mouse on, a drag-selection is copied by tmux into its own paste
 // buffer (copy-selection-and-cancel on drag end) — it never reaches the
 // browser's clipboard. The frontend Copy button falls back to fetching the
@@ -100,6 +186,13 @@ function startSession(ws: WebSocket, session: string): void {
     rows: 24,
     cwd: process.env.HOME,
   });
+  // Web-terminal shells are NOT bridge chat sessions. shellExecOpts spreads
+  // process.env, so a bridge started from a bridge-spawned shell would leak
+  // CHAT_BRIDGE_SESSION into the PTY — and the first PTY to start the tmux
+  // server bakes it into tmux's global env, making the permission hook deny
+  // every interactive claude run inside tmux. Strip the markers.
+  delete (opts.env as Record<string, unknown>).CHAT_BRIDGE_SESSION;
+  delete (opts.env as Record<string, unknown>).CHAT_BRIDGE_SESSION_STORE;
 
   // Login shell (-l) so rc files rebuild the full PATH (incl. ~/.local/bin for
   // `claude`) under launchd's minimal env; exec tmux so closing tmux ends the PTY.

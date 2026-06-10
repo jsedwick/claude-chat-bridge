@@ -38,7 +38,9 @@ if [ "$decision" = "allow" ]; then
   echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"decision\":{\"behavior\":\"allow\"}}}"
   exit 0
 else
-  # Output deny decision in hook format
+  # Output deny decision in hook format. Exit-2 semantics surface stderr to
+  # the model — without it the CLI shows "hook error: No stderr output".
+  echo "Permission denied via Chat Bridge" >&2
   echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"decision\":{\"behavior\":\"deny\",\"message\":\"Permission denied via Chat Bridge\"}}}"
   exit 2
 fi

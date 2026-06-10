@@ -34,9 +34,9 @@
         </button>
         <div id="sidebar-view-menu" class="sidebar-view-menu" style="display:none">
           <button class="sidebar-view-option" data-view="home" onclick="goHome()">Home</button>
-          <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions<span class="view-billing-tag view-billing-tag--metered">metered</span></button>
+          <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions</button>
           <button class="sidebar-view-option" data-view="kb" onclick="switchView('kb')">Knowledge Base</button>
-          <button class="sidebar-view-option" data-view="terminal" onclick="switchView('terminal')">Terminal<span class="view-billing-tag">included</span></button>
+          <button class="sidebar-view-option" data-view="terminal" onclick="switchView('terminal')">Terminal</button>
           <button class="sidebar-view-option" data-view="settings" onclick="switchView('settings')">Settings</button>
         </div>
       </div>
@@ -50,6 +50,17 @@
           <div id="sidebar-dir-picker" class="sidebar-dir-picker" style="display:none"></div>
         </div>
         <button id="new-chat-btn" class="btn-new-chat" disabled onclick="createNewSession()">+ New Chat</button>
+      </div>
+      <div id="terminal-toolbar" class="sidebar-new-chat" style="display:none">
+        <div class="sidebar-dir-wrapper">
+          <button class="btn-sidebar-dir" onclick="toggleTerminalSidebarDirPicker()" aria-label="cd to directory">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+          <div id="terminal-sidebar-dir-picker" class="sidebar-dir-picker" style="display:none"></div>
+        </div>
+        <button class="btn-new-chat" onclick="promptNewTerminalSession()">+ New Terminal</button>
       </div>
     </div>
     <!-- Sessions view -->
@@ -136,6 +147,10 @@
         </div>
         <div id="kb-trash-list" class="kb-trash-list" style="display: none;"></div>
       </div>
+    </div>
+    <!-- Terminal view (sidebar session tabs) -->
+    <div id="terminal-view" style="display:none">
+      <div id="terminal-session-list" class="terminal-session-list"></div>
     </div>
     <!-- Settings view (sidebar nav) -->
     <div id="settings-view" class="settings-nav" style="display:none">
@@ -484,6 +499,14 @@
       <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
       <h1 class="chat-title" style="cursor:default">Terminal<span class="view-billing-tag">included</span></h1>
       <div class="terminal-header-actions">
+        <div class="terminal-dropdown-wrapper">
+          <button id="term-start-btn" class="kb-action-btn" onclick="toggleTerminalStartMenu()" aria-label="Start Claude session" title="Start Claude with vault context">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+          </button>
+          <div id="terminal-start-menu" class="terminal-dropdown terminal-start-menu" style="display:none"></div>
+        </div>
         <button id="term-copy-btn" class="kb-action-btn" onclick="terminalCopy()" aria-label="Copy selection">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>

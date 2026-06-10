@@ -4529,9 +4529,8 @@ pre.streaming {
   color: var(--accent);
 }
 
-/* Billing-mode tags in the view menu (Decision 004) */
+/* Billing-mode tag in the terminal header (Decision 004) */
 .view-billing-tag {
-  float: right;
   font-size: 10px;
   line-height: 1.6;
   padding: 0 6px;
@@ -4539,11 +4538,6 @@ pre.streaming {
   margin-left: 8px;
   color: var(--text-muted);
   border: 1px solid var(--border);
-}
-
-.view-billing-tag--metered {
-  color: #e0a030;
-  border-color: #e0a030;
 }
 
 /* Tag placement inside panel headers (terminal header) vs. the float layout
@@ -4567,6 +4561,163 @@ pre.streaming {
 }
 
 .kb-action-btn.term-btn-err {
+  color: var(--danger, #dc2626);
+}
+
+/* Terminal header dropdowns (dir picker + session starter) */
+.terminal-dropdown-wrapper {
+  position: relative;
+}
+
+.terminal-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 264px;
+  max-width: 90vw;
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 8px 24px var(--shadow);
+  padding: 4px;
+}
+
+.terminal-start-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.terminal-start-option:hover {
+  background: var(--bg-primary);
+}
+
+.terminal-start-option.active {
+  color: var(--accent);
+}
+
+.terminal-start-option code {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Terminal session tabs in the sidebar */
+.terminal-session-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.terminal-session-item {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.terminal-session-item:hover {
+  background: var(--bg-primary);
+}
+
+.terminal-session-item.active {
+  background: var(--bg-primary);
+}
+
+.terminal-session-item.active .terminal-session-name {
+  color: var(--accent);
+}
+
+.terminal-session-name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  min-width: 0;
+}
+
+.terminal-session-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-session-name span.editing {
+  outline: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0 4px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.terminal-session-info {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 8px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.terminal-session-info:hover {
+  color: var(--text-primary);
+}
+
+.terminal-session-details {
+  padding: 4px 12px 8px;
+  border-left: 2px solid var(--border);
+  margin: 2px 0 4px 12px;
+}
+
+.terminal-session-details-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+
+.terminal-session-details-row span:last-child {
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.terminal-session-kill {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.terminal-session-kill:hover {
   color: var(--danger, #dc2626);
 }
 
