@@ -364,6 +364,8 @@ async function setMode(mode) {
 
     // Reload sidebar and welcome screen with filtered sessions/topics
     await Promise.all([loadSessions(), loadWelcomeSessions()]);
+    // Terminal tabs are mode-filtered too
+    renderTerminalSessionList();
     // Refresh KB trash listing if KB view is currently up
     if (document.getElementById('kb-view').style.display !== 'none') loadKbTrash();
     // Reset topics loaded flags so they re-fetch for the new mode
@@ -734,13 +736,18 @@ function toggleDirPicker() {
   }
 }
 
-// Close dir pickers on outside click
+// Close dir pickers and terminal dropdowns on outside click
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.dir-picker-wrapper')) {
     dirPicker.style.display = 'none';
   }
   if (!e.target.closest('.sidebar-dir-wrapper')) {
     sidebarDirPicker.style.display = 'none';
+    const termSidebarPicker = document.getElementById('terminal-sidebar-dir-picker');
+    if (termSidebarPicker) termSidebarPicker.style.display = 'none';
+  }
+  if (!e.target.closest('.terminal-dropdown-wrapper')) {
+    hideTerminalDropdowns();
   }
 });
 
@@ -7219,6 +7226,23 @@ function switchView(view) {
 // disposes and re-attaches (tmux redraws, so content survives server-side).
 let _term = null, _termFit = null, _termWs = null;
 let _termSession = localStorage.getItem('chat-bridge-term-session') || 'claude';
+
+// The emulator's colors follow the bridge UI theme, not Claude Code's /theme —
+// the TUI only restyles its own text and assumes the emulator background.
+function terminalThemeColors() {
+  const light = document.documentElement.getAttribute('data-theme') === 'light';
+  return light
+    ? { background: '#ffffff', foreground: '#1f2328', cursor: '#1f2328', cursorAccent: '#ffffff', selectionBackground: '#b3d4fc' }
+    : { background: '#000000' };
+}
+
+function applyTerminalTheme() {
+  const colors = terminalThemeColors();
+  const panel = document.getElementById('terminal-panel');
+  if (panel) panel.style.background = colors.background;
+  if (_term) _term.options.theme = colors;
+}
+
 function initTerminal() {
   const container = document.getElementById('terminal-container');
   if (_term) {
@@ -7235,11 +7259,12 @@ function initTerminal() {
     cursorBlink: true,
     fontSize,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: { background: '#000000' },
+    theme: terminalThemeColors(),
   });
   _termFit = new FitAddon.FitAddon();
   _term.loadAddon(_termFit);
   _term.open(container);
+  applyTerminalTheme();
   try { _termFit.fit(); } catch (e) {}
   _term.onData((d) => {
     if (_termWs && _termWs.readyState === WebSocket.OPEN) {
@@ -7403,6 +7428,11 @@ async function renderTerminalSessionList() {
     const res = await fetch('/api/terminal/sessions');
     if (res.ok) sessions = await res.json();
   } catch (e) { /* endpoint unavailable — degrade below */ }
+  // Context filter: sessions tagged via @bridge_mode show only under their
+  // mode's tab; untagged sessions (created outside the bridge or pre-feature)
+  // show under both. The active session always shows — the xterm is attached
+  // to it regardless of which tab is selected.
+  sessions = sessions.filter((s) => !s.mode || s.mode === currentMode || s.name === _termSession);
   // Always show the active session even if the list endpoint isn't live yet
   // (pre-restart) or tmux hasn't started the session's server.
   if (!sessions.some((s) => s.name === _termSession)) {
@@ -7427,6 +7457,13 @@ async function renderTerminalSessionList() {
       e.stopPropagation();
       startTerminalTabRename(s.name, nameSpan);
     };
+    if (s.path) {
+      const dirSpan = document.createElement('span');
+      dirSpan.className = 'terminal-session-dir';
+      dirSpan.textContent = s.path.split('/').pop() || '/';
+      dirSpan.title = s.path;
+      nameEl.appendChild(dirSpan);
+    }
     item.appendChild(nameEl);
     const detailsEl = document.createElement('div');
     detailsEl.className = 'terminal-session-details';
@@ -7544,18 +7581,41 @@ function promptNewTerminalSession() {
   name = name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
   if (!name) return;
   switchTerminalSession(name);
+  tagTerminalSessionMode(name, currentMode);
   if (sidebar.classList.contains('open')) toggleSidebar();
+}
+
+// Tag a freshly created session with the active context mode. tmux creates
+// the session lazily when the WS attaches, so retry briefly until it exists.
+function tagTerminalSessionMode(name, mode, attempt = 0) {
+  fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  }).then((res) => {
+    if (!res.ok) throw new Error(String(res.status));
+    renderTerminalSessionList();
+  }).catch(() => {
+    if (attempt < 3) setTimeout(() => tagTerminalSessionMode(name, mode, attempt + 1), 800 * (attempt + 1));
+  });
 }
 
 // Start button: launch interactive Claude Code with the vault session-start
 // command matching the chosen context. Defaults follow the chat view's
 // Work/Personal mode tabs (currentMode).
+// Only one terminal header dropdown may be open at a time.
+function hideTerminalDropdowns() {
+  for (const id of ['terminal-dir-picker', 'terminal-start-menu', 'terminal-workflow-menu', 'terminal-close-menu']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+}
+
 function toggleTerminalStartMenu() {
   const menu = document.getElementById('terminal-start-menu');
-  const picker = document.getElementById('terminal-dir-picker');
-  if (picker) picker.style.display = 'none';
   const isOpen = menu.style.display !== 'none';
-  if (isOpen) { menu.style.display = 'none'; return; }
+  hideTerminalDropdowns();
+  if (isOpen) return;
   menu.innerHTML = '';
   for (const mode of ['work', 'personal']) {
     const btn = document.createElement('button');
@@ -7569,6 +7629,96 @@ function toggleTerminalStartMenu() {
       // MCP server rides in .mcp.json at the plugin root). Terminal sessions
       // are the trusted interactive path: skip permission prompts entirely.
       terminalType(`claude --dangerously-skip-permissions --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${mode}"`);
+    };
+    menu.appendChild(btn);
+  }
+  menu.style.display = 'block';
+}
+
+// Workflow button: mirrors the chat view's Workflow flyout, but pastes the
+// `/vault:workflow <slug>` command into the active terminal WITHOUT submitting
+// it — review and press Enter. Pasting (vs typing + \r) keeps bracketed-paste
+// semantics so a running claude TUI receives it as prompt text instead of
+// keystrokes that would fight the slash-command autocomplete.
+function terminalInsert(text) {
+  if (!_term) return;
+  _term.paste(text);
+  _term.focus();
+}
+
+async function toggleTerminalWorkflowMenu() {
+  const menu = document.getElementById('terminal-workflow-menu');
+  const isOpen = menu.style.display !== 'none';
+  hideTerminalDropdowns();
+  if (isOpen) return;
+  menu.innerHTML = '<div class="flyout-empty">Loading…</div>';
+  menu.style.display = 'block';
+  let items = [];
+  try {
+    const res = await fetchWithRetry(`/api/vault/workflows?mode=${currentMode}`);
+    items = await res.json();
+  } catch { items = []; }
+  menu.innerHTML = '';
+  if (!Array.isArray(items) || items.length === 0) {
+    menu.innerHTML = '<div class="flyout-empty">None available</div>';
+    return;
+  }
+  // API returns items sorted by category then slug (uncategorized first), so
+  // sequential headers are enough — no grouping pass needed.
+  let lastCategory = null;
+  for (const item of items) {
+    const cat = item.category || '';
+    if (cat && cat !== lastCategory) {
+      const header = document.createElement('div');
+      header.className = 'terminal-workflow-category';
+      header.textContent = cat.replace(/-/g, ' ');
+      menu.appendChild(header);
+    }
+    lastCategory = cat;
+    const btn = document.createElement('button');
+    btn.className = 'terminal-workflow-option';
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = (item.slug.includes('/') ? item.slug.split('/').pop() : item.slug).replace(/-/g, ' ');
+    btn.appendChild(labelSpan);
+    if (item.description) {
+      const descSpan = document.createElement('span');
+      descSpan.className = 'terminal-workflow-desc';
+      descSpan.textContent = item.description;
+      btn.appendChild(descSpan);
+    }
+    btn.onclick = () => {
+      menu.style.display = 'none';
+      terminalInsert(`/vault:workflow ${item.slug}`);
+    };
+    menu.appendChild(btn);
+  }
+}
+
+// Close button: insert a session-close command — full close (git + vault
+// maintenance) or close-no-git. Pastes without submitting, same as the
+// workflow menu: review and press Enter.
+function toggleTerminalCloseMenu() {
+  const menu = document.getElementById('terminal-close-menu');
+  const isOpen = menu.style.display !== 'none';
+  hideTerminalDropdowns();
+  if (isOpen) return;
+  menu.innerHTML = '';
+  const options = [
+    { label: 'Close Session', cmd: '/vault:close' },
+    { label: 'Close (No Git)', cmd: '/vault:close-no-git' },
+  ];
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.className = 'terminal-start-option';
+    const label = document.createElement('span');
+    label.textContent = opt.label;
+    const code = document.createElement('code');
+    code.textContent = opt.cmd;
+    btn.appendChild(label);
+    btn.appendChild(code);
+    btn.onclick = () => {
+      menu.style.display = 'none';
+      terminalInsert(opt.cmd);
     };
     menu.appendChild(btn);
   }
@@ -8426,6 +8576,7 @@ function setTheme(theme) {
   document.querySelectorAll('.settings-theme-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.theme === theme);
   });
+  applyTerminalTheme();
 }
 
 // Updates settings — version check

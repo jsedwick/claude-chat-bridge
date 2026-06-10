@@ -61,9 +61,15 @@ export function terminalSessions(_req: Request, res: Response): void {
   // Colon separator: tmux forbids ':' in session names, and (unlike tab) it
   // survives tmux's format-output sanitization, which replaces control chars
   // with '_' — tabs here silently merged all three fields into one string.
+  // The cwd rides last because paths MAY contain colons: the first four
+  // fields are colon-free (sanitized name, numeric timestamps, validated
+  // mode), so everything past them is rejoined as the path.
+  // #{pane_current_path} resolves to each session's active pane;
+  // #{@bridge_mode} is the context tag set by terminalSessionMode (empty for
+  // untagged sessions).
   execFile(
     TMUX,
-    ['list-sessions', '-F', '#{session_name}:#{session_created}:#{session_attached}'],
+    ['list-sessions', '-F', '#{session_name}:#{session_created}:#{session_attached}:#{@bridge_mode}:#{pane_current_path}'],
     (err, stdout) => {
       if (err) {
         res.json([]); // no tmux server running — no sessions yet
@@ -74,8 +80,9 @@ export function terminalSessions(_req: Request, res: Response): void {
         .split('\n')
         .filter(Boolean)
         .map((line) => {
-          const [name, created, attached] = line.split(':');
-          return { name, created: Number(created) * 1000, attached: attached !== '0' };
+          const parts = line.split(':');
+          const [name, created, attached, mode] = parts;
+          return { name, created: Number(created) * 1000, attached: attached !== '0', mode: mode || '', path: parts.slice(4).join(':') };
         });
       res.json(sessions);
     }
@@ -95,6 +102,25 @@ export function terminalRenameSession(req: Request, res: Response): void {
       return;
     }
     res.json({ name: newName });
+  });
+}
+
+// Tag a session with its bridge context mode. Stored as a tmux user option so
+// the tag lives with the session itself — visible from any browser, gone when
+// the session is killed.
+export function terminalSessionMode(req: Request, res: Response): void {
+  const name = sanitizeSession(String(req.params.name || ''));
+  const mode = String((req.body || {}).mode || '');
+  if (mode !== 'work' && mode !== 'personal') {
+    res.status(400).json({ error: 'mode must be "work" or "personal"' });
+    return;
+  }
+  execFile(TMUX, ['set-option', '-t', name, '@bridge_mode', mode], (err) => {
+    if (err) {
+      res.status(404).json({ error: 'session not found' });
+      return;
+    }
+    res.json({ name, mode });
   });
 }
 

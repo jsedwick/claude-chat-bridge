@@ -4615,6 +4615,41 @@ pre.streaming {
   color: var(--text-muted);
 }
 
+/* Terminal workflow menu (mirrors the chat view's Workflow flyout) */
+.terminal-workflow-category {
+  padding: 8px 12px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--text-muted);
+}
+
+.terminal-workflow-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.terminal-workflow-option:hover {
+  background: var(--bg-primary);
+}
+
+.terminal-workflow-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* Terminal session tabs in the sidebar */
 .terminal-session-list {
   padding: 8px;
@@ -4666,6 +4701,16 @@ pre.streaming {
   padding: 0 4px;
   overflow: visible;
   white-space: normal;
+}
+
+/* Cwd badge — mirrors the chat session list's .session-item-dir */
+.terminal-session-dir {
+  background: var(--bg-primary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--accent);
+  flex-shrink: 0;
 }
 
 .terminal-session-info {
