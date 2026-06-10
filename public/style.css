@@ -4680,8 +4680,8 @@ pre.streaming {
 .terminal-session-name {
   flex: 1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   color: var(--text-primary);
   padding: 10px 12px;
   font-size: 13px;
@@ -4689,7 +4689,14 @@ pre.streaming {
   min-width: 0;
 }
 
-.terminal-session-name span {
+.terminal-session-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-session-name-row span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4703,14 +4710,20 @@ pre.streaming {
   white-space: normal;
 }
 
-/* Cwd badge — mirrors the chat session list's .session-item-dir */
+/* Cwd badge — mirrors the chat session list's .session-item-dir. Centered on
+   its own line below the name (align-self in the column flex) so it never
+   competes with the name for horizontal space. */
 .terminal-session-dir {
+  align-self: center;
+  max-width: 100%;
   background: var(--bg-primary);
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 10px;
   color: var(--accent);
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .terminal-session-info {

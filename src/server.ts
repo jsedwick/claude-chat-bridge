@@ -17,7 +17,7 @@ import pushRoutes from './routes/push';
 import usageRoutes from './routes/usage';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
-import { attachTerminal, terminalClipboard, terminalSessions, terminalKillSession, terminalRenameSession, terminalSessionDetails, terminalSessionMode } from './services/terminal';
+import { attachTerminal, terminalClipboard, terminalSessions, terminalKillSession, terminalRenameSession, terminalSessionDetails, terminalSessionMode, terminalArchiveSession, terminalUnarchiveSession, terminalTrashSession, terminalRestoreSession, terminalSessionFiles, terminalSessionFileDiff } from './services/terminal';
 
 const app = express();
 
@@ -65,8 +65,14 @@ app.use('/api/usage', usageRoutes);
 app.get('/api/terminal/clipboard', terminalClipboard);
 app.get('/api/terminal/sessions', terminalSessions);
 app.get('/api/terminal/sessions/:name/details', terminalSessionDetails);
+app.get('/api/terminal/sessions/:name/files', terminalSessionFiles);
+app.get('/api/terminal/sessions/:name/file-diff', terminalSessionFileDiff);
 app.patch('/api/terminal/sessions/:name', terminalRenameSession);
 app.put('/api/terminal/sessions/:name/mode', terminalSessionMode);
+app.post('/api/terminal/sessions/:name/archive', terminalArchiveSession);
+app.post('/api/terminal/sessions/:name/unarchive', terminalUnarchiveSession);
+app.post('/api/terminal/sessions/:name/trash', terminalTrashSession);
+app.post('/api/terminal/sessions/:name/restore', terminalRestoreSession);
 app.delete('/api/terminal/sessions/:name', terminalKillSession);
 
 // Health check

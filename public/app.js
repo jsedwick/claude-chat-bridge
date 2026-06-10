@@ -3487,8 +3487,8 @@ function buildSessionFileList() {
   const vaultDocs = new Map(); // path -> type info
   const codeFiles = new Map();
 
-  // Reset sections
-  document.querySelectorAll('.session-details-section').forEach(s => s.classList.remove('expanded'));
+  // Reset sections (scoped — the terminal details panel shares these classes)
+  document.querySelectorAll('#session-details-panel .session-details-section').forEach(s => s.classList.remove('expanded'));
 
   // Scan stored messages for tool calls
   if (!currentSessionId) return;
@@ -3532,7 +3532,7 @@ function buildSessionFileList() {
       // its own collapsed-by-default behavior (auto-expands on Edit click) and
       // its list always contains static display/editor children, which would
       // otherwise force-expand it on every render.
-      document.querySelectorAll('.session-details-section:not(#handoff-section)').forEach(section => {
+      document.querySelectorAll('#session-details-panel .session-details-section:not(#handoff-section)').forEach(section => {
         const list = section.querySelector('.session-details-list');
         if (list && list.children.length > 0) {
           section.classList.add('expanded');
@@ -3545,7 +3545,9 @@ function buildSessionFileList() {
     .catch(err => console.error('Failed to load session files:', err));
 }
 
-function renderFileList(listId, countId, fileMap) {
+// diffUrl (optional): path → endpoint URL, for callers whose diffs don't live
+// under the chat session route (the terminal details panel).
+function renderFileList(listId, countId, fileMap, diffUrl) {
   const listEl = document.getElementById(listId);
   const countEl = document.getElementById(countId);
   countEl.textContent = `(${fileMap.size})`;
@@ -3567,7 +3569,7 @@ function renderFileList(listId, countId, fileMap) {
       <span class="session-file-chevron">&#9654;</span>
       <span class="session-file-name">${escapeHtml(shortPath)}</span>
     `;
-    header.onclick = (e) => { e.stopPropagation(); toggleFileDiff(item, filePath); };
+    header.onclick = (e) => { e.stopPropagation(); toggleFileDiff(item, filePath, diffUrl); };
     item.appendChild(header);
     const diffDiv = document.createElement('div');
     diffDiv.className = 'session-file-diff';
@@ -3576,7 +3578,7 @@ function renderFileList(listId, countId, fileMap) {
   }
 }
 
-async function toggleFileDiff(itemEl, filePath) {
+async function toggleFileDiff(itemEl, filePath, diffUrl) {
   const diffEl = itemEl.querySelector('.session-file-diff');
   if (itemEl.classList.contains('diff-open')) {
     itemEl.classList.remove('diff-open');
@@ -3593,7 +3595,10 @@ async function toggleFileDiff(itemEl, filePath) {
   itemEl.classList.add('diff-open');
 
   try {
-    const res = await fetchWithRetry(`/api/sessions/${currentSessionId}/file-diff?path=${encodeURIComponent(filePath)}`);
+    const url = diffUrl
+      ? diffUrl(filePath)
+      : `/api/sessions/${currentSessionId}/file-diff?path=${encodeURIComponent(filePath)}`;
+    const res = await fetchWithRetry(url);
     const data = await res.json();
     if (data.diff) {
       diffEl.innerHTML = `<pre class="tool-diff">${renderDiffBlock(data.diff)}</pre>`;
@@ -4393,6 +4398,50 @@ function createAssistantMessage() {
   return el;
 }
 
+// Block-level / table-structural tags. Whitespace-only text nodes sitting
+// between two of these are insignificant formatting noise (marked pretty-prints
+// its output with a newline between every block, and inside every table row and
+// cell). Left on the clipboard, rich-text editors render those nodes as stray
+// spaces and blank lines — the "random whitespace" on paste.
+const CLIPBOARD_BLOCK_TAGS = new Set([
+  'ADDRESS','ARTICLE','ASIDE','BLOCKQUOTE','DETAILS','DIV','DL','DD','DT',
+  'FIELDSET','FIGCAPTION','FIGURE','FOOTER','FORM','H1','H2','H3','H4','H5','H6',
+  'HEADER','HR','LI','MAIN','NAV','OL','P','PRE','SECTION','TABLE','THEAD',
+  'TBODY','TFOOT','TR','TD','TH','UL','CAPTION','COLGROUP','COL','BR',
+]);
+
+// Strip the inter-tag whitespace marked emits, in place, so the HTML put on the
+// clipboard keeps its formatting (tables, headings, bold) without the stray
+// spaces. Code is sacred: anything inside <pre>/<code> keeps its exact
+// whitespace. Elsewhere, a whitespace-only node is dropped when both neighbors
+// are block-level (pure noise) and collapsed to a single space when it sits
+// between inline content (a genuine word gap, e.g. "</strong> <em>"); text
+// nodes with real content get their internal whitespace runs collapsed exactly
+// as the browser renders them.
+function normalizeWhitespaceForClipboard(root) {
+  const isBlock = (node) => !node || (node.nodeType === 1 && CLIPBOARD_BLOCK_TAGS.has(node.tagName));
+  const inPre = (node) => {
+    for (let p = node.parentNode; p; p = p.parentNode) {
+      if (p.nodeType === 1 && (p.tagName === 'PRE' || p.tagName === 'CODE')) return true;
+    }
+    return false;
+  };
+  const textNodes = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) textNodes.push(n);
+  for (const tn of textNodes) {
+    if (inPre(tn)) continue;
+    if (/\S/.test(tn.nodeValue)) {
+      tn.nodeValue = tn.nodeValue.replace(/\s+/g, ' ');
+      continue;
+    }
+    const prevInline = tn.previousSibling && !isBlock(tn.previousSibling);
+    const nextInline = tn.nextSibling && !isBlock(tn.nextSibling);
+    if (prevInline && nextInline) tn.nodeValue = ' ';
+    else tn.remove();
+  }
+}
+
 function extractMessageContent(el) {
   const clone = el.cloneNode(true);
   // Remove the action menu elements from the clone
@@ -4403,8 +4452,12 @@ function extractMessageContent(el) {
   // Remove code block copy buttons
   clone.querySelectorAll('.btn-copy-code').forEach(b => b.remove());
 
-  // Build HTML version (clean copy of the rendered content)
-  const html = clone.innerHTML;
+  // HTML version (rich-text paste): normalize on a dedicated clone so the
+  // table→markdown rewrite below — which only the plain-text version wants —
+  // doesn't touch it.
+  const htmlClone = clone.cloneNode(true);
+  normalizeWhitespaceForClipboard(htmlClone);
+  const html = htmlClone.innerHTML;
 
   // Build plain text version with markdown tables
   clone.querySelectorAll('table').forEach(table => {
@@ -4427,7 +4480,10 @@ function extractMessageContent(el) {
     table.replaceWith(textNode);
   });
 
-  return { html, text: clone.innerText };
+  // Tidy the plain-text version: drop trailing spaces before line breaks and
+  // cap blank-line runs at one, so plain-text paste is clean too.
+  const text = clone.innerText.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { html, text };
 }
 
 function ensureCopyButton(el) {
@@ -7226,6 +7282,8 @@ function switchView(view) {
 // disposes and re-attaches (tmux redraws, so content survives server-side).
 let _term = null, _termFit = null, _termWs = null;
 let _termSession = localStorage.getItem('chat-bridge-term-session') || 'claude';
+let _termNewCwd = null; // start dir for the next WS connect — set by the new-session flow only
+let _termPickedDir = null; // armed by the terminal sidebar dir picker; gates + New Terminal
 
 // The emulator's colors follow the bridge UI theme, not Claude Code's /theme —
 // the TUI only restyles its own text and assumes the emulator background.
@@ -7254,7 +7312,7 @@ function initTerminal() {
     container.textContent = 'Terminal library failed to load (CDN unreachable).';
     return;
   }
-  const fontSize = window.innerWidth < 700 ? 16 : 13;
+  const fontSize = window.innerWidth < 700 ? 16 : 15;
   _term = new Terminal({
     cursorBlink: true,
     fontSize,
@@ -7338,25 +7396,122 @@ async function terminalPaste() {
     flashTermBtn('term-paste-btn', false);
   }
 }
+// Plain-text clipboard write with the same resilience as the chat-bubble copy:
+// the async Clipboard API first, falling back to a hidden-textarea execCommand
+// when it's unavailable (older/non-secure contexts). Returns whether it landed.
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* fall through to the execCommand path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// The terminal only has the rendered grid — the Claude TUI has already
+// word-wrapped, indented, and ANSI-styled its output, and getSelection()
+// returns just the characters. Two best-effort recoveries bring it closer to
+// the chat-bubble copy:
+//   - Bold: xterm tracks a per-cell bold flag, so contiguous bold runs are
+//     wrapped in **…** (the markers hug non-space chars so the markdown is
+//     valid). This is the only TUI style that maps cleanly to markdown.
+//   - Block indent: the TUI indents its whole response by a fixed margin;
+//     dedenting the common leading whitespace removes it.
+// What still can't round-trip: the hanging indent on *wrapped* list lines —
+// the TUI emits those as real spaces+newlines, indistinguishable from genuine
+// indentation, so they're left as-is.
+
+// Strip per-line trailing whitespace and leading/trailing blank lines, leaving
+// interior blank lines and (post-dedent) intentional indentation intact.
+function tidyTerminalWhitespace(text) {
+  return text.replace(/[ \t]+$/gm, '').replace(/^\n+/, '').replace(/\n+$/, '');
+}
+
+// Remove the smallest leading-space count shared by all non-blank lines.
+function dedentBlock(text) {
+  const lines = text.split('\n');
+  let min = Infinity;
+  for (const l of lines) {
+    if (!l.trim()) continue;
+    min = Math.min(min, l.match(/^ */)[0].length);
+  }
+  if (!isFinite(min) || min === 0) return text;
+  return lines.map((l) => l.slice(min)).join('\n');
+}
+
+// One grid row → markdown, wrapping bold runs in **. Spaces are deferred so the
+// markers land against non-space characters (markdown rejects "** bold **").
+function terminalLineToMarkdown(line, startX, endX) {
+  let out = '';
+  let open = false;
+  let pending = '';
+  for (let x = startX; x < endX; x++) {
+    const cell = line.getCell(x);
+    if (!cell) break;
+    const chars = cell.getChars();
+    const ch = chars === '' ? ' ' : chars; // unwritten cell → padding space
+    if (ch === ' ') { pending += ' '; continue; }
+    const bold = cell.isBold() !== 0;
+    if (bold && !open) { out += pending + '**'; pending = ''; open = true; }
+    else if (!bold && open) { out += '**' + pending; pending = ''; open = false; }
+    else { out += pending; pending = ''; }
+    out += ch;
+  }
+  if (open) out += '**';
+  return out + pending;
+}
+
+// Reconstruct the live xterm selection as lightweight markdown. Returns null
+// when there's no selection or the buffer walk fails, so the caller can fall
+// back to the tmux paste buffer.
+function getTerminalSelectionMarkdown() {
+  try {
+    const pos = _term.getSelectionPosition();
+    if (!pos) return null;
+    const buf = _term.buffer.active;
+    const lines = [];
+    for (let y = pos.start.y; y <= pos.end.y; y++) {
+      const line = buf.getLine(y);
+      if (!line) { lines.push(''); continue; }
+      const startX = y === pos.start.y ? pos.start.x : 0;
+      const endX = y === pos.end.y ? pos.end.x : _term.cols;
+      lines.push(terminalLineToMarkdown(line, startX, endX));
+    }
+    const text = tidyTerminalWhitespace(dedentBlock(lines.join('\n')));
+    return text || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function terminalCopy() {
   if (!_term) return;
-  // Local xterm selection (Shift+drag bypasses tmux mouse reporting) wins;
-  // otherwise fall back to tmux's paste buffer, where a plain drag-selection
-  // lands when tmux mouse mode is on.
-  let text = _term.getSelection();
+  // Live xterm selection (Shift+drag bypasses tmux mouse reporting) wins, and
+  // carries the per-cell styling needed for bold reconstruction. A plain tmux
+  // drag-selection lands in tmux's paste buffer instead — that's flat text
+  // with no attributes, so it only gets the dedent + whitespace tidy.
+  let text = getTerminalSelectionMarkdown();
   if (!text) {
     try {
       const res = await fetch('/api/terminal/clipboard');
-      if (res.ok) text = await res.text();
+      if (res.ok) text = tidyTerminalWhitespace(dedentBlock(await res.text()));
     } catch (e) {}
   }
   if (!text) { flashTermBtn('term-copy-btn', false); return; }
-  try {
-    await navigator.clipboard.writeText(text);
-    flashTermBtn('term-copy-btn', true);
-  } catch (e) {
-    flashTermBtn('term-copy-btn', false);
-  }
+  flashTermBtn('term-copy-btn', await copyTextToClipboard(text));
 }
 function flashTermBtn(id, ok) {
   const btn = document.getElementById(id);
@@ -7389,11 +7544,20 @@ function toggleTerminalSidebarDirPicker() {
     picker.style.display = 'none';
     localStorage.setItem('chat-bridge-last-dir', dirPath);
     terminalType('cd ' + shQuote(dirPath));
+    // Arm + New Terminal with the pick — same flow as the chat sidebar's
+    // picker arming + New Chat.
+    _termPickedDir = dirPath;
+    const termDirBtn = document.getElementById('term-dir-btn');
+    termDirBtn.classList.add('selected');
+    termDirBtn.title = dirPath;
+    document.getElementById('new-term-btn').disabled = false;
     if (sidebar.classList.contains('open')) toggleSidebar();
   };
-  const last = localStorage.getItem('chat-bridge-last-dir');
-  if (last) {
-    renderDirBrowser(picker, last, onSelect);
+  // Open at the armed pick if one exists, else at the roots — mirrors the
+  // chat sidebar picker (no auto-jump to a stale last-dir; renderDirRoots
+  // still offers it as the "recent" shortcut).
+  if (_termPickedDir) {
+    renderDirBrowser(picker, _termPickedDir, onSelect);
   } else {
     renderDirRoots(picker, onSelect);
   }
@@ -7429,74 +7593,202 @@ async function renderTerminalSessionList() {
     if (res.ok) sessions = await res.json();
   } catch (e) { /* endpoint unavailable — degrade below */ }
   // Context filter: sessions tagged via @bridge_mode show only under their
-  // mode's tab; untagged sessions (created outside the bridge or pre-feature)
-  // show under both. The active session always shows — the xterm is attached
-  // to it regardless of which tab is selected.
-  sessions = sessions.filter((s) => !s.mode || s.mode === currentMode || s.name === _termSession);
-  // Always show the active session even if the list endpoint isn't live yet
-  // (pre-restart) or tmux hasn't started the session's server.
-  if (!sessions.some((s) => s.name === _termSession)) {
+  // mode's tab — strictly, including the attached session (the xterm stays on
+  // it, but its tab hides under the other context). Untagged sessions
+  // (created outside the bridge, pre-feature) show under both until a bridge
+  // attach adopts them into the context active at that moment.
+  const knownToTmux = sessions.some((s) => s.name === _termSession);
+  sessions = sessions.filter((s) => !s.mode || s.mode === currentMode);
+  // Lifecycle buckets — the same Archived/Trash split as the chat sidebar.
+  // Flags are tmux user options (@bridge_archived/@bridge_trashed); a
+  // pre-restart list endpoint just omits them, landing everything in active.
+  const trashedSessions = sessions.filter((s) => s.trashed);
+  const archivedSessions = sessions.filter((s) => s.archived && !s.trashed);
+  sessions = sessions.filter((s) => !s.archived && !s.trashed);
+  // Show the active session as pending only when tmux doesn't know it at all
+  // (list endpoint not live yet, or lazy creation hasn't happened) — not when
+  // the mode filter excluded it.
+  if (!knownToTmux) {
     sessions.unshift({ name: _termSession, pending: true });
   }
   list.innerHTML = '';
-  for (const s of sessions) {
-    const wrap = document.createElement('div');
-    wrap.className = 'terminal-session-wrap';
-    const item = document.createElement('div');
-    item.className = 'terminal-session-item' + (s.name === _termSession ? ' active' : '');
-    item.onclick = () => {
-      if (s.name !== _termSession) switchTerminalSession(s.name);
-      if (sidebar.classList.contains('open')) toggleSidebar();
-    };
-    const nameEl = document.createElement('div');
-    nameEl.className = 'terminal-session-name';
-    nameEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span></span>';
-    const nameSpan = nameEl.querySelector('span');
-    nameSpan.textContent = s.name;
-    nameSpan.ondblclick = (e) => {
+  for (const s of sessions) list.appendChild(buildTerminalSessionRow(s, 'active'));
+  renderTerminalArchiveList(archivedSessions);
+  renderTerminalTrashList(trashedSessions);
+}
+
+// One sidebar row. kind picks the action pair, mirroring the chat session
+// list: active → archive/trash, archived → unarchive/trash, trashed →
+// restore/permanent-delete. Only the trash row's × actually kills tmux —
+// the main list's × is now a soft-delete into the Trash section.
+function buildTerminalSessionRow(s, kind) {
+  const wrap = document.createElement('div');
+  wrap.className = 'terminal-session-wrap';
+  const item = document.createElement('div');
+  item.className = 'terminal-session-item' + (s.name === _termSession ? ' active' : '');
+  item.onclick = () => {
+    if (s.name !== _termSession) switchTerminalSession(s.name);
+    if (sidebar.classList.contains('open')) toggleSidebar();
+  };
+  const nameEl = document.createElement('div');
+  nameEl.className = 'terminal-session-name';
+  // Icon + name share the top row; the cwd badge (if any) drops to a centered
+  // second line so it never steals horizontal space from the name.
+  const nameRow = document.createElement('div');
+  nameRow.className = 'terminal-session-name-row';
+  nameRow.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span></span>';
+  const nameSpan = nameRow.querySelector('span');
+  nameSpan.textContent = s.name;
+  nameSpan.ondblclick = (e) => {
+    e.stopPropagation();
+    startTerminalTabRename(s.name, nameSpan);
+  };
+  nameEl.appendChild(nameRow);
+  if (s.path) {
+    const dirSpan = document.createElement('span');
+    dirSpan.className = 'terminal-session-dir';
+    dirSpan.textContent = s.path.split('/').pop() || '/';
+    dirSpan.title = s.path;
+    nameEl.appendChild(dirSpan);
+  }
+  item.appendChild(nameEl);
+  const infoBtn = document.createElement('button');
+  infoBtn.className = 'terminal-session-info';
+  infoBtn.setAttribute('aria-label', `Session details for ${s.name}`);
+  infoBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+  infoBtn.onclick = (e) => {
+    e.stopPropagation();
+    toggleTerminalSessionDetails(s.name);
+  };
+  item.appendChild(infoBtn);
+  const RESTORE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+  if (kind === 'active') {
+    const ARCHIVE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+    item.appendChild(terminalRowActionBtn(ARCHIVE_SVG, `Archive session ${s.name}`, 'Archive', () => archiveTerminalSession(s.name)));
+  } else if (kind === 'archived') {
+    item.appendChild(terminalRowActionBtn(RESTORE_SVG, `Unarchive session ${s.name}`, 'Unarchive', () => unarchiveTerminalSession(s.name)));
+  } else {
+    item.appendChild(terminalRowActionBtn(RESTORE_SVG, `Restore session ${s.name}`, 'Restore', () => restoreTerminalSession(s.name)));
+  }
+  const xBtn = document.createElement('button');
+  xBtn.className = 'terminal-session-kill';
+  xBtn.textContent = '×';
+  if (kind === 'trashed') {
+    xBtn.setAttribute('aria-label', `Permanently delete session ${s.name}`);
+    xBtn.title = 'Delete permanently';
+    xBtn.onclick = (e) => {
       e.stopPropagation();
-      startTerminalTabRename(s.name, nameSpan);
+      permanentlyDeleteTerminalSession(s.name);
     };
-    if (s.path) {
-      const dirSpan = document.createElement('span');
-      dirSpan.className = 'terminal-session-dir';
-      dirSpan.textContent = s.path.split('/').pop() || '/';
-      dirSpan.title = s.path;
-      nameEl.appendChild(dirSpan);
-    }
-    item.appendChild(nameEl);
-    const detailsEl = document.createElement('div');
-    detailsEl.className = 'terminal-session-details';
-    detailsEl.style.display = 'none';
-    const infoBtn = document.createElement('button');
-    infoBtn.className = 'terminal-session-info';
-    infoBtn.setAttribute('aria-label', `Session details for ${s.name}`);
-    infoBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
-    infoBtn.onclick = (e) => {
+  } else {
+    xBtn.setAttribute('aria-label', `Move session ${s.name} to trash`);
+    xBtn.title = 'Move to trash';
+    xBtn.onclick = (e) => {
       e.stopPropagation();
-      toggleTerminalSessionDetails(s.name, detailsEl);
+      trashTerminalSession(s.name);
     };
-    item.appendChild(infoBtn);
-    const killBtn = document.createElement('button');
-    killBtn.className = 'terminal-session-kill';
-    killBtn.setAttribute('aria-label', `Kill session ${s.name}`);
-    killBtn.textContent = '×';
-    killBtn.onclick = async (e) => {
-      e.stopPropagation();
-      if (!confirm(`Kill terminal session "${s.name}"? Anything running in it will be terminated.`)) return;
-      try {
-        await fetch(`/api/terminal/sessions/${encodeURIComponent(s.name)}`, { method: 'DELETE' });
-      } catch (err) {}
-      if (s.name === _termSession) {
-        switchTerminalSession('claude'); // reconnect recreates the default session
-      } else {
-        renderTerminalSessionList();
-      }
-    };
-    item.appendChild(killBtn);
-    wrap.appendChild(item);
-    wrap.appendChild(detailsEl);
-    list.appendChild(wrap);
+  }
+  item.appendChild(xBtn);
+  wrap.appendChild(item);
+  return wrap;
+}
+
+function terminalRowActionBtn(svg, label, title, onClick) {
+  const btn = document.createElement('button');
+  btn.className = 'terminal-session-info';
+  btn.setAttribute('aria-label', label);
+  btn.title = title;
+  btn.innerHTML = svg;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    onClick();
+  };
+  return btn;
+}
+
+function renderTerminalArchiveList(sessions) {
+  const countEl = document.getElementById('term-archive-count');
+  const listEl = document.getElementById('term-archive-list');
+  countEl.textContent = sessions.length;
+  if (!sessions.length) {
+    listEl.innerHTML = '<div class="archive-empty">No archived sessions</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  for (const s of sessions) listEl.appendChild(buildTerminalSessionRow(s, 'archived'));
+}
+
+function renderTerminalTrashList(sessions) {
+  const countEl = document.getElementById('term-trash-count');
+  const listEl = document.getElementById('term-trash-list');
+  countEl.textContent = sessions.length;
+  if (!sessions.length) {
+    listEl.innerHTML = '<div class="trash-empty">No deleted sessions</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  for (const s of sessions) listEl.appendChild(buildTerminalSessionRow(s, 'trashed'));
+}
+
+function toggleTerminalArchiveSection() {
+  const listEl = document.getElementById('term-archive-list');
+  const chevron = document.getElementById('term-archive-chevron');
+  const isOpen = listEl.style.display !== 'none';
+  listEl.style.display = isOpen ? 'none' : 'block';
+  chevron.classList.toggle('expanded', !isOpen);
+}
+
+function toggleTerminalTrashSection() {
+  const listEl = document.getElementById('term-trash-list');
+  const chevron = document.getElementById('term-trash-chevron');
+  const isOpen = listEl.style.display !== 'none';
+  listEl.style.display = isOpen ? 'none' : 'block';
+  chevron.classList.toggle('expanded', !isOpen);
+}
+
+// Lifecycle actions. tmux owns the flags, so each action round-trips and
+// re-renders rather than patching the DOM. Archiving or trashing the
+// attached session sends the xterm home to the default session — the chat
+// view's "archiving the open session closes it", in terminal terms.
+async function archiveTerminalSession(name) {
+  try {
+    await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/archive`, { method: 'POST' });
+  } catch (err) {}
+  if (name === _termSession && name !== 'claude') switchTerminalSession('claude');
+  else renderTerminalSessionList();
+}
+
+async function unarchiveTerminalSession(name) {
+  try {
+    await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/unarchive`, { method: 'POST' });
+  } catch (err) {}
+  renderTerminalSessionList();
+}
+
+async function trashTerminalSession(name) {
+  try {
+    await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/trash`, { method: 'POST' });
+  } catch (err) {}
+  if (name === _termSession && name !== 'claude') switchTerminalSession('claude');
+  else renderTerminalSessionList();
+}
+
+async function restoreTerminalSession(name) {
+  try {
+    await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/restore`, { method: 'POST' });
+  } catch (err) {}
+  renderTerminalSessionList();
+}
+
+async function permanentlyDeleteTerminalSession(name) {
+  if (!confirm(`Permanently delete terminal session "${name}"? Anything running in it will be terminated.`)) return;
+  try {
+    await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  } catch (err) {}
+  if (name === _termSession) {
+    switchTerminalSession('claude'); // reconnect recreates the default session
+  } else {
+    renderTerminalSessionList();
   }
 }
 
@@ -7515,7 +7807,7 @@ function startTerminalTabRename(oldName, el) {
   async function finish() {
     el.contentEditable = false;
     el.classList.remove('editing');
-    const name = el.textContent.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    const name = el.textContent.replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
     if (!name || name === oldName) {
       el.textContent = originalText;
       return;
@@ -7550,19 +7842,43 @@ function startTerminalTabRename(oldName, el) {
   };
 }
 
-async function toggleTerminalSessionDetails(name, detailsEl) {
-  if (detailsEl.style.display !== 'none') {
-    detailsEl.style.display = 'none';
+// Chat-view parity: the ⓘ button opens a details panel above the terminal
+// with per-file diffs of vault documents and code files changed since the
+// tmux session was created (git is the data source server-side — terminal
+// sessions have no message log to scan). The old metadata rows live on as
+// the collapsed Session Info section.
+let _termDetailsSession = null;
+
+function toggleTerminalSessionDetails(name) {
+  const panel = document.getElementById('term-session-details-panel');
+  if (panel.style.display !== 'none' && _termDetailsSession === name) {
+    panel.style.display = 'none';
+    _termDetailsSession = null;
     return;
   }
-  detailsEl.style.display = 'block';
-  detailsEl.innerHTML = '<div class="terminal-session-details-row">Loading…</div>';
+  _termDetailsSession = name;
+  panel.style.display = 'block';
+  if (sidebar.classList.contains('open')) toggleSidebar();
+  document.getElementById('term-info-name').textContent = name;
+  panel.querySelectorAll('.session-details-section').forEach(s => s.classList.remove('expanded'));
+  document.getElementById('term-info-list').innerHTML = '<div class="session-details-loading">Loading…</div>';
+  for (const prefix of ['term-vault-docs', 'term-code-files']) {
+    document.getElementById(prefix + '-list').innerHTML = '<div class="session-details-loading">Loading…</div>';
+    document.getElementById(prefix + '-count').textContent = '';
+  }
+  loadTermSessionInfo(name);
+  loadTermSessionFiles(name);
+}
+
+async function loadTermSessionInfo(name) {
+  const listEl = document.getElementById('term-info-list');
   try {
     const res = await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/details`);
     if (!res.ok) throw new Error(String(res.status));
     const d = await res.json();
+    if (_termDetailsSession !== name) return; // user switched targets mid-flight
     const created = d.created ? new Date(d.created).toLocaleString() : '—';
-    detailsEl.innerHTML = `
+    listEl.innerHTML = `
       <div class="terminal-session-details-row"><span>Created</span><span>${escapeHtml(created)}</span></div>
       <div class="terminal-session-details-row"><span>Status</span><span>${d.attached ? 'attached' : 'detached'}</span></div>
       <div class="terminal-session-details-row"><span>Windows · Panes</span><span>${d.windows} · ${d.panes}</span></div>
@@ -7570,69 +7886,72 @@ async function toggleTerminalSessionDetails(name, detailsEl) {
       <div class="terminal-session-details-row"><span>Running</span><span>${escapeHtml(d.command || '—')}</span></div>
       <div class="terminal-session-details-row"><span>Directory</span><span title="${escapeHtml(d.path || '')}">${escapeHtml(d.path || '—')}</span></div>`;
   } catch (err) {
-    detailsEl.innerHTML = '<div class="terminal-session-details-row">Details unavailable — endpoint goes live after the next bridge restart.</div>';
+    listEl.innerHTML = '<div class="session-details-empty">Details unavailable — endpoint goes live after the next bridge restart.</div>';
+  }
+}
+
+async function loadTermSessionFiles(name) {
+  try {
+    const res = await fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/files?mode=${encodeURIComponent(currentMode)}`);
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    if (_termDetailsSession !== name) return;
+    const diffUrl = (fp) => `/api/terminal/sessions/${encodeURIComponent(name)}/file-diff?path=${encodeURIComponent(fp)}`;
+    renderFileList('term-vault-docs-list', 'term-vault-docs-count', new Map((data.vaultDocs || []).map(p => [p, {}])), diffUrl);
+    renderFileList('term-code-files-list', 'term-code-files-count', new Map((data.codeFiles || []).map(p => [p, {}])), diffUrl);
+    // Auto-expand the sections that have content (chat-view behavior); the
+    // Session Info section stays collapsed — metadata on demand.
+    document.querySelectorAll('#term-session-details-panel .session-details-section:not(#term-info-section)').forEach(section => {
+      const list = section.querySelector('.session-details-list');
+      if (list && list.querySelector('.session-file-item')) section.classList.add('expanded');
+    });
+  } catch (err) {
+    for (const prefix of ['term-vault-docs', 'term-code-files']) {
+      document.getElementById(prefix + '-list').innerHTML =
+        '<div class="session-details-empty">File list unavailable — endpoint goes live after the next bridge restart.</div>';
+    }
   }
 }
 
 function promptNewTerminalSession() {
+  if (!_termPickedDir) return; // button is disabled until a directory is picked
   let name = prompt('Name for the new terminal session:', '');
   if (name === null) return;
   // Mirror the server's sanitizer so the tab label matches the tmux session.
-  name = name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+  name = name.replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
   if (!name) return;
+  _termNewCwd = _termPickedDir;
   switchTerminalSession(name);
-  tagTerminalSessionMode(name, currentMode);
+  // The WS attach lazily creates + tags the session server-side (?mode= on
+  // the socket URL); refresh once it exists so the pending row fills in.
+  setTimeout(renderTerminalSessionList, 1200);
+  // Disarm for next time — parity with the chat view's post-create reset.
+  _termPickedDir = null;
+  const termDirBtn = document.getElementById('term-dir-btn');
+  termDirBtn.classList.remove('selected');
+  termDirBtn.title = '';
+  document.getElementById('new-term-btn').disabled = true;
   if (sidebar.classList.contains('open')) toggleSidebar();
 }
 
-// Tag a freshly created session with the active context mode. tmux creates
-// the session lazily when the WS attaches, so retry briefly until it exists.
-function tagTerminalSessionMode(name, mode, attempt = 0) {
-  fetch(`/api/terminal/sessions/${encodeURIComponent(name)}/mode`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  }).then((res) => {
-    if (!res.ok) throw new Error(String(res.status));
-    renderTerminalSessionList();
-  }).catch(() => {
-    if (attempt < 3) setTimeout(() => tagTerminalSessionMode(name, mode, attempt + 1), 800 * (attempt + 1));
-  });
-}
-
-// Start button: launch interactive Claude Code with the vault session-start
-// command matching the chosen context. Defaults follow the chat view's
-// Work/Personal mode tabs (currentMode).
 // Only one terminal header dropdown may be open at a time.
 function hideTerminalDropdowns() {
-  for (const id of ['terminal-dir-picker', 'terminal-start-menu', 'terminal-workflow-menu', 'terminal-close-menu']) {
+  for (const id of ['terminal-dir-picker', 'terminal-workflow-menu', 'terminal-close-menu']) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
 }
 
-function toggleTerminalStartMenu() {
-  const menu = document.getElementById('terminal-start-menu');
-  const isOpen = menu.style.display !== 'none';
+// Start button: launch interactive Claude Code with the vault session-start
+// command for the context tab currently selected (Work → /vault:work,
+// Personal → /vault:personal) — no menu, the tabs are the selector.
+function terminalStartClaude() {
   hideTerminalDropdowns();
-  if (isOpen) return;
-  menu.innerHTML = '';
-  for (const mode of ['work', 'personal']) {
-    const btn = document.createElement('button');
-    btn.className = 'terminal-start-option' + (mode === currentMode ? ' active' : '');
-    const label = mode === 'work' ? 'Work' : 'Personal';
-    btn.innerHTML = `<span>Start Claude — ${label}</span><code>/vault:${mode}</code>`;
-    btn.onclick = () => {
-      menu.style.display = 'none';
-      // The vault plugin has no system-wide registration — skills + MCP load
-      // only via --plugin-dir (mirrors the bridge runner's spawn args; the
-      // MCP server rides in .mcp.json at the plugin root). Terminal sessions
-      // are the trusted interactive path: skip permission prompts entirely.
-      terminalType(`claude --dangerously-skip-permissions --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${mode}"`);
-    };
-    menu.appendChild(btn);
-  }
-  menu.style.display = 'block';
+  // The vault plugin has no system-wide registration — skills + MCP load
+  // only via --plugin-dir (mirrors the bridge runner's spawn args; the
+  // MCP server rides in .mcp.json at the plugin root). Terminal sessions
+  // are the trusted interactive path: skip permission prompts entirely.
+  terminalType(`claude --dangerously-skip-permissions --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${currentMode}"`);
 }
 
 // Workflow button: mirrors the chat view's Workflow flyout, but pastes the
@@ -7731,7 +8050,14 @@ function sendTerminalResize() {
 }
 function connectTerminalWs() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  _termWs = new WebSocket(`${proto}://${location.host}/api/terminal?session=${encodeURIComponent(_termSession)}`);
+  let wsUrl = `${proto}://${location.host}/api/terminal?session=${encodeURIComponent(_termSession)}&mode=${currentMode}`;
+  // One-shot: only the connect that creates a session should carry a start
+  // dir; reconnects attach to the existing session, where cwd is meaningless.
+  if (_termNewCwd) {
+    wsUrl += `&cwd=${encodeURIComponent(_termNewCwd)}`;
+    _termNewCwd = null;
+  }
+  _termWs = new WebSocket(wsUrl);
   _termWs.onopen = () => { sendTerminalResize(); if (_term) _term.focus(); };
   _termWs.onmessage = (e) => { if (_term) _term.write(e.data); };
   _termWs.onclose = () => {
