@@ -4555,6 +4555,21 @@ pre.streaming {
   margin-left: 8px;
 }
 
+/* Terminal header clipboard actions */
+.terminal-header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.kb-action-btn.term-btn-ok {
+  color: #2da44e;
+}
+
+.kb-action-btn.term-btn-err {
+  color: var(--danger, #dc2626);
+}
+
 /* Settings sidebar nav */
 .settings-nav {
   flex: 1;

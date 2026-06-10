@@ -7240,7 +7240,79 @@ function initTerminal() {
     if (currentView !== 'terminal') return;
     try { _termFit.fit(); sendTerminalResize(); } catch (e) {}
   });
+  initTerminalTouchScroll(container);
   connectTerminalWs();
+}
+
+// Touch scrollback: xterm.js scrolls only its own buffer on touch, which is
+// empty under tmux's alternate screen. Translate vertical swipes into SGR
+// mouse-wheel reports so tmux (mouse on) scrolls its history. Desktop wheel
+// events are already forwarded by xterm.js when mouse reporting is active.
+function initTerminalTouchScroll(container) {
+  let touchY = null;
+  container.addEventListener('touchstart', (e) => {
+    touchY = e.touches[0].clientY;
+  }, { passive: true });
+  container.addEventListener('touchmove', (e) => {
+    if (touchY === null || !_term) return;
+    if (!_term.modes || _term.modes.mouseTrackingMode === 'none') return;
+    if (!_termWs || _termWs.readyState !== WebSocket.OPEN) return;
+    const rect = container.getBoundingClientRect();
+    const cellH = rect.height / _term.rows;
+    const cellW = rect.width / _term.cols;
+    const dy = e.touches[0].clientY - touchY;
+    const steps = Math.trunc(dy / cellH);
+    if (steps !== 0) {
+      touchY += steps * cellH;
+      const col = Math.min(_term.cols, Math.max(1, Math.ceil((e.touches[0].clientX - rect.left) / cellW)));
+      const row = Math.min(_term.rows, Math.max(1, Math.ceil((e.touches[0].clientY - rect.top) / cellH)));
+      const btn = steps > 0 ? 64 : 65; // content follows finger: swipe down = wheel up
+      for (let i = 0; i < Math.abs(steps); i++) {
+        _termWs.send(JSON.stringify({ type: 'data', data: `\x1b[<${btn};${col};${row}M` }));
+      }
+      e.preventDefault();
+    }
+  }, { passive: false });
+  container.addEventListener('touchend', () => { touchY = null; }, { passive: true });
+}
+
+// Header clipboard buttons — mobile xterm has no Cmd+V or long-press paste,
+// so paste/copy go through the async Clipboard API (HTTPS-only, user gesture).
+async function terminalPaste() {
+  if (!_term) return;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) { _term.paste(text); _term.focus(); }
+    flashTermBtn('term-paste-btn', true);
+  } catch (e) {
+    flashTermBtn('term-paste-btn', false);
+  }
+}
+async function terminalCopy() {
+  if (!_term) return;
+  // Local xterm selection (Shift+drag bypasses tmux mouse reporting) wins;
+  // otherwise fall back to tmux's paste buffer, where a plain drag-selection
+  // lands when tmux mouse mode is on.
+  let text = _term.getSelection();
+  if (!text) {
+    try {
+      const res = await fetch('/api/terminal/clipboard');
+      if (res.ok) text = await res.text();
+    } catch (e) {}
+  }
+  if (!text) { flashTermBtn('term-copy-btn', false); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    flashTermBtn('term-copy-btn', true);
+  } catch (e) {
+    flashTermBtn('term-copy-btn', false);
+  }
+}
+function flashTermBtn(id, ok) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.classList.add(ok ? 'term-btn-ok' : 'term-btn-err');
+  setTimeout(() => btn.classList.remove('term-btn-ok', 'term-btn-err'), 600);
 }
 function sendTerminalResize() {
   if (_term && _termWs && _termWs.readyState === WebSocket.OPEN) {

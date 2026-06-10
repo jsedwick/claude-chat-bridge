@@ -2,6 +2,8 @@ import http from 'http';
 import https from 'https';
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
+import type { Request, Response } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import { shellExecOpts } from './shell-env';
@@ -52,6 +54,20 @@ function originAllowed(req: http.IncomingMessage): boolean {
   }
 }
 
+// With tmux mouse on, a drag-selection is copied by tmux into its own paste
+// buffer (copy-selection-and-cancel on drag end) — it never reaches the
+// browser's clipboard. The frontend Copy button falls back to fetching the
+// most recent tmux buffer through this endpoint.
+export function terminalClipboard(_req: Request, res: Response): void {
+  execFile(TMUX, ['show-buffer'], { maxBuffer: 1024 * 1024 }, (err, stdout) => {
+    if (err) {
+      res.status(204).end(); // no buffer yet (or no tmux server) — nothing to copy
+      return;
+    }
+    res.type('text/plain').send(stdout);
+  });
+}
+
 export function attachTerminal(server: http.Server | https.Server): void {
   ensureSpawnHelperExecutable();
   const wss = new WebSocketServer({ noServer: true });
@@ -87,7 +103,9 @@ function startSession(ws: WebSocket, session: string): void {
 
   // Login shell (-l) so rc files rebuild the full PATH (incl. ~/.local/bin for
   // `claude`) under launchd's minimal env; exec tmux so closing tmux ends the PTY.
-  const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s ${session}`], opts as pty.IPtyForkOptions);
+  // mouse on (session-scoped via command chain, not -g) lets wheel/touch scroll
+  // reach tmux's scrollback — without it the alternate screen swallows scrolling.
+  const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s ${session} \\; set-option mouse on`], opts as pty.IPtyForkOptions);
 
   term.onData((data) => {
     if (ws.readyState === ws.OPEN) ws.send(data);
