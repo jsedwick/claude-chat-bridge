@@ -34,9 +34,9 @@
         </button>
         <div id="sidebar-view-menu" class="sidebar-view-menu" style="display:none">
           <button class="sidebar-view-option" data-view="home" onclick="goHome()">Home</button>
-          <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions</button>
+          <button class="sidebar-view-option active" data-view="sessions" onclick="switchView('sessions')">Sessions<span class="view-billing-tag view-billing-tag--metered">metered</span></button>
           <button class="sidebar-view-option" data-view="kb" onclick="switchView('kb')">Knowledge Base</button>
-          <button class="sidebar-view-option" data-view="terminal" onclick="switchView('terminal')">Terminal</button>
+          <button class="sidebar-view-option" data-view="terminal" onclick="switchView('terminal')">Terminal<span class="view-billing-tag">included</span></button>
           <button class="sidebar-view-option" data-view="settings" onclick="switchView('settings')">Settings</button>
         </div>
       </div>
@@ -480,6 +480,10 @@
 
   <!-- Settings Panel (replaces chat content when in settings view) -->
   <div id="terminal-panel" style="display:none; flex:1; min-height:0; flex-direction:column; background:#000">
+    <header class="chat-header">
+      <button class="btn-menu" onclick="toggleSidebar()" aria-label="Menu">&#9776;</button>
+      <h1 class="chat-title" style="cursor:default">Terminal<span class="view-billing-tag">included</span></h1>
+    </header>
     <div id="terminal-container" style="flex:1; min-height:0; width:100%; padding:6px 8px; box-sizing:border-box"></div>
   </div>
 

@@ -7370,8 +7370,28 @@ const USAGE_MONTHLY_BUDGET_USD = 100;
 
 function renderUsageSettings(container) {
   const meterHidden = localStorage.getItem('chat-bridge-hide-ctx-meter') === 'true';
+  const viewMode = localStorage.getItem('chat-bridge-view-mode') === 'terminal' ? 'terminal' : 'chat';
   container.innerHTML = `
     <h2 class="settings-title">Usage</h2>
+    <div class="settings-section">
+      <div class="settings-section-title">Billing Mode</div>
+      <div class="settings-section-desc"><strong>Terminal</strong> runs interactive Claude Code under your Claude subscription — no metered credits. <strong>Chat</strong> uses the Agent SDK, which spends from the monthly metered API credit (per-user allotment after June 15, 2026). This sets which view the bridge opens in.</div>
+      <div class="settings-theme-toggle">
+        <button class="settings-theme-btn ${viewMode === 'terminal' ? 'active' : ''}" onclick="setViewMode('terminal')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"/>
+            <line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+          Terminal — included
+        </button>
+        <button class="settings-theme-btn ${viewMode === 'chat' ? 'active' : ''}" onclick="setViewMode('chat')">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          Chat — metered
+        </button>
+      </div>
+    </div>
     <div class="settings-section">
       <div class="settings-section-title">API spend this month</div>
       <div class="settings-section-desc">Metered <code>claude -p</code> usage recorded per turn by the bridge, measured against the ${USAGE_MONTHLY_BUDGET_USD}/month API credit.</div>
@@ -7399,6 +7419,14 @@ function renderUsageSettings(container) {
       </div>
     </div>`;
   loadUsageSummary();
+}
+
+function setViewMode(mode) {
+  mode = mode === 'terminal' ? 'terminal' : 'chat';
+  localStorage.setItem('chat-bridge-view-mode', mode);
+  // Selecting a billing mode takes effect immediately: navigate to the
+  // chosen view rather than waiting for the next page load.
+  switchView(mode === 'terminal' ? 'terminal' : 'sessions');
 }
 
 function setCtxMeterHidden(hidden) {
@@ -8724,6 +8752,12 @@ async function loadKbPreferences() {
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
+  // Decision 004 billing mode: open in the saved view — 'terminal' is the
+  // subscription-included PTY, 'chat' is the metered Agent SDK path.
+  if (localStorage.getItem('chat-bridge-view-mode') === 'terminal') {
+    switchView('terminal');
+  }
+
   // Initialize TTS toggle button state
   updateTTSToggleBtn();
 

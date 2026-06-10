@@ -4529,6 +4529,32 @@ pre.streaming {
   color: var(--accent);
 }
 
+/* Billing-mode tags in the view menu (Decision 004) */
+.view-billing-tag {
+  float: right;
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 8px;
+  margin-left: 8px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.view-billing-tag--metered {
+  color: #e0a030;
+  border-color: #e0a030;
+}
+
+/* Tag placement inside panel headers (terminal header) vs. the float layout
+   used in the view menu */
+.chat-title .view-billing-tag {
+  float: none;
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
 /* Settings sidebar nav */
 .settings-nav {
   flex: 1;
