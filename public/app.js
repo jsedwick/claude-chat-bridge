@@ -7391,18 +7391,6 @@ let _termModel = (() => {
   return saved;
 })();
 
-// MRU tab ordering: session name → last-active epoch ms. The attached tab is
-// stamped "now" on every render (and on switch, via the render it triggers), so
-// the active sidebar bucket sorts most-recently-used to the top. Persisted so
-// the order survives a reload.
-let _termLastActive = {};
-try { _termLastActive = JSON.parse(localStorage.getItem('chat-bridge-term-last-active') || '{}') || {}; } catch (e) { _termLastActive = {}; }
-function markTerminalActive(name) {
-  if (!name) return;
-  _termLastActive[name] = Date.now();
-  try { localStorage.setItem('chat-bridge-term-last-active', JSON.stringify(_termLastActive)); } catch (e) {}
-}
-
 // Sessions the user has closed via the Close-Session menu. The TUI is opaque to
 // us, so the menu click is the only close signal; closed tabs render dimmed,
 // mirroring the chat Sessions view. Persisted, and pruned on render once tmux
@@ -7491,6 +7479,24 @@ function initTerminal() {
   if (typeof ClipboardAddon !== 'undefined') {
     try { _term.loadAddon(new ClipboardAddon.ClipboardAddon()); } catch (e) {}
   }
+  // Cmd+C copies the live xterm selection. tmux mouse mode owns a plain drag
+  // (for scrollback), so make a selection with Shift+drag — that bypasses mouse
+  // reporting and hands xterm a real selection. getSelection() returns the exact
+  // rendered text (soft-wrapped lines rejoined, trailing padding trimmed), which
+  // is faithful even under the WebGL renderer, where the browser's own Cmd+C has
+  // no DOM text to grab. No selection → fall through, so Cmd+C is inert and a
+  // bare Ctrl+C still reaches the PTY as SIGINT.
+  _term.attachCustomKeyEventHandler((e) => {
+    if (e.type === 'keydown' && e.metaKey && !e.ctrlKey && !e.altKey &&
+        (e.key === 'c' || e.key === 'C') && _term.hasSelection()) {
+      const sel = _term.getSelection();
+      if (sel) {
+        copyTextToClipboard(sel).then((ok) => flashTermBtn('term-copy-btn', ok));
+        return false; // handled — don't forward Cmd+C to the PTY
+      }
+    }
+    return true;
+  });
   applyTerminalTheme();
   try { _termFit.fit(); } catch (e) {}
   _term.onData((d) => {
@@ -7795,11 +7801,10 @@ async function renderTerminalSessionList() {
   const trashedSessions = sessions.filter((s) => s.trashed);
   const archivedSessions = sessions.filter((s) => s.archived && !s.trashed);
   sessions = sessions.filter((s) => !s.archived && !s.trashed);
-  // The currently-attached tab counts as active "now"; MRU-sort the rest so the
-  // tab most recently switched to floats to the top. Never-focused sessions
-  // fall back to their creation time, keeping a stable order below focused ones.
-  markTerminalActive(_termSession);
-  sessions.sort((a, b) => (_termLastActive[b.name] || b.created || 0) - (_termLastActive[a.name] || a.created || 0));
+  // Stable order: newest-started at the top, by tmux's session_created (epoch ms
+  // from the list endpoint). Clicking a tab no longer reorders the list — only
+  // starting a new session changes the order.
+  sessions.sort((a, b) => (b.created || 0) - (a.created || 0));
   // Show the active session as pending only when tmux doesn't know it at all
   // (list endpoint not live yet, or lazy creation hasn't happened) — not when
   // the mode filter excluded it.
