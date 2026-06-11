@@ -2575,6 +2575,12 @@ function refreshWelcomeProjects() {
 let startChatInProjectBusy = false;
 async function startChatInProject(repoPath) {
   if (!repoPath || startChatInProjectBusy) return;
+  // Terminal billing mode: open the project in a new terminal session running
+  // claude (Start-button parity) instead of a metered chat (Usage → Billing Mode).
+  if (billingViewMode() === 'terminal') {
+    startTerminalSessionWithPrompt(repoPath, `/vault:${currentMode}`);
+    return;
+  }
   startChatInProjectBusy = true;
   try {
     // If user clicked Start Chat from the KB-welcome Projects tab, they're in 'kb' view;
@@ -7372,6 +7378,10 @@ let _term = null, _termFit = null, _termWs = null;
 let _termSession = localStorage.getItem('chat-bridge-term-session') || 'claude';
 let _termNewCwd = null; // start dir for the next WS connect — set by the new-session flow only
 let _termPickedDir = null; // armed by the terminal sidebar dir picker; gates + New Terminal
+// Command typed into a freshly-created terminal session once its shell is ready
+// (first WS output = tmux up). Set by the continue/start-in-terminal flows so
+// Terminal billing mode can launch claude with a kickoff prompt; null otherwise.
+let _termPendingLaunch = null;
 // Last model chosen in the terminal model picker. Default is Opus when never
 // chosen; '' = the user explicitly picked "Default" → start button launches
 // with the CLI default (no --model flag).
@@ -7724,6 +7734,9 @@ function toggleTerminalSidebarDirPicker() {
 // tmux is the source of truth. Switching disposes the local xterm and
 // re-attaches the WS to the chosen session; tmux redraws the screen.
 function switchTerminalSession(name) {
+  // Drop any armed launch from a prior new-session flow — a plain tab switch
+  // must not inherit it. startTerminalSessionWithPrompt re-arms after this call.
+  _termPendingLaunch = null;
   if (_termWs) {
     try { _termWs.onclose = null; _termWs.onmessage = null; _termWs.close(); } catch (e) {}
     _termWs = null;
@@ -8115,16 +8128,20 @@ async function loadTermSessionFiles(name) {
 // Default tab name for a brand-new terminal: a date/time label mirroring the
 // chat Sessions view's auto-name, so the user is never forced to name a tab
 // upfront (rename later via dblclick on the sidebar tab or the banner). Kept
-// tmux-safe — no ':' (illegal in tmux session names, stripped by the rename
-// sanitizer) — and second-precise because the name doubles as the tmux session
-// key and the server attaches-or-creates by name (`tmux new -A`); minute
-// precision alone would let two quick + New Terminal clicks collide onto one
-// session instead of opening a second.
+// 12-hour clock so the time reads as a time, not a second date — the AM/PM
+// and comma keep "9-15-02" from looking like a malformed date. tmux-safe: no
+// ':' and no '.' — tmux silently rewrites both to '_' at creation (so the
+// name never round-trips) and a '.' in any -t target parses as the
+// window.pane separator, breaking rename/trash/kill for the session. Comma
+// and hyphen are verified safe. Second-precise because the name doubles as
+// the tmux session key and the server attaches-or-creates by name
+// (`tmux new -A`); minute precision alone would let two quick + New Terminal
+// clicks collide onto one session instead of opening a second.
 function defaultTerminalSessionName() {
   const d = new Date();
   const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  return `${date} ${time.replace(/:/g, '-')}`; // e.g. "Jun 11 07-12-45"
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  return `${date}, ${time.replace(/:/g, '-')}`; // e.g. "Jun 11, 8-41-41 AM"
 }
 
 function createNewTerminalSession() {
@@ -8164,6 +8181,42 @@ function terminalStartClaude() {
   // A model chosen in the picker launches via --model; unset keeps the CLI default.
   const modelFlag = _termModel ? ` --model "${_termModel}"` : '';
   terminalType(`claude --dangerously-skip-permissions${modelFlag} --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${currentMode}"`);
+}
+
+// POSIX single-quote escaping so an arbitrary kickoff prompt (which may contain
+// quotes, parens, etc.) is a single safe argument on the typed shell line.
+function shSingleQuote(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+
+// Build the interactive-claude launch line used by the start-in-Terminal flows.
+// Mirrors terminalStartClaude's flags (skip-permissions, optional model,
+// plugin-dir) but takes the initial prompt as a parameter so each entry point
+// can pass its own kickoff. The prompt is single-quoted (shell-safe); the
+// --plugin-dir keeps "$HOME" double-quoted so the shell expands it.
+function buildTerminalClaudeLaunch(prompt) {
+  const modelFlag = _termModel ? ` --model "${_termModel}"` : '';
+  return `claude --dangerously-skip-permissions${modelFlag} --plugin-dir "$HOME/Projects/obsidian-claude-plugin" ${shSingleQuote(prompt)}`;
+}
+
+// Terminal-mode counterpart to the chat view's "POST /api/sessions + auto-send"
+// continue/start flows: open a brand-new terminal session in `cwd`, then type
+// the claude launch line once its shell is ready (see connectTerminalWs).
+function startTerminalSessionWithPrompt(cwd, prompt) {
+  const name = defaultTerminalSessionName();
+  const launch = buildTerminalClaudeLaunch(prompt);
+  // Reveal the terminal panel. switchView's initTerminal can't be trusted to
+  // connect the new session — it no-ops when _term already exists — so it's only
+  // for visibility here; switchTerminalSession below does the reliable connect.
+  if (currentView !== 'terminal') switchView('terminal');
+  // Set the cwd AFTER switchView so a stray initTerminal connect to the prior
+  // session can't consume it; switchTerminalSession's connect is the one that
+  // creates the new session, and it reads _termNewCwd synchronously.
+  _termNewCwd = cwd || null;
+  switchTerminalSession(name); // dispose any attach, create + connect the new session in cwd
+  _termPendingLaunch = launch; // armed after connect; read async in WS onmessage
+  setTimeout(renderTerminalSessionList, 1200); // fill in the pending row once tmux creates it
+  if (sidebar.classList.contains('open')) toggleSidebar();
 }
 
 // Model picker (far-right header control). Reuses the chat view's MODEL_OPTIONS.
@@ -8337,7 +8390,18 @@ function connectTerminalWs() {
   }
   _termWs = new WebSocket(wsUrl);
   _termWs.onopen = () => { sendTerminalResize(); if (_term) _term.focus(); };
-  _termWs.onmessage = (e) => { if (_term) _term.write(e.data); };
+  _termWs.onmessage = (e) => {
+    if (_term) _term.write(e.data);
+    // First server output means tmux is up and the shell is starting. If a
+    // launch was armed (continue/start in Terminal mode), type it now; a short
+    // settle lets the login shell finish drawing its prompt first. Keystrokes
+    // buffer in the tty regardless, so this only needs to be roughly on time.
+    if (_termPendingLaunch) {
+      const cmd = _termPendingLaunch;
+      _termPendingLaunch = null;
+      setTimeout(() => terminalType(cmd), 600);
+    }
+  };
   _termWs.onclose = () => {
     if (_term) _term.write('\r\n\x1b[33m[disconnected — switch away and back to reconnect]\x1b[0m\r\n');
   };
@@ -8505,6 +8569,12 @@ function renderUsageSettings(container) {
       </div>
     </div>`;
   loadUsageSummary();
+}
+
+// The Usage → Billing Mode choice ('terminal' = included subscription, 'chat' =
+// metered Agent SDK). Also routes the continue/start flows to the matching view.
+function billingViewMode() {
+  return localStorage.getItem('chat-bridge-view-mode') === 'terminal' ? 'terminal' : 'chat';
 }
 
 function setViewMode(mode) {
@@ -11200,6 +11270,14 @@ async function startFromTopic() {
   const topicName = btn.dataset.topicName;
   const topicPath = btn.dataset.topicPath;
 
+  // Terminal billing mode: start the topic session in a new terminal session
+  // instead of a metered chat session (Usage → Billing Mode).
+  if (billingViewMode() === 'terminal') {
+    const prompt = `Run /vault:${currentMode} to load my ${currentMode} context first. Then I want to work on the topic "${topicName}" — use get_topic_context to load its full context, summarize what's documented, and ask what I'd like to do.`;
+    startTerminalSessionWithPrompt(selectedNewChatDir || currentWorkingDir, prompt);
+    return;
+  }
+
   try {
     // Create a new session using the last selected working directory (or none)
     const res = await fetchWithRetry('/api/sessions', {
@@ -11243,6 +11321,14 @@ async function continueFromSession() {
 
   if (!workingDir) {
     alert('No working directory found for this session.');
+    return;
+  }
+
+  // Terminal billing mode: continue in a new terminal session instead of a
+  // metered chat session (Usage → Billing Mode).
+  if (billingViewMode() === 'terminal') {
+    const prompt = `Run /vault:${currentMode} to load my ${currentMode} context first. Then I'm continuing from a previous session: "${sessionName}" (session ID: ${sessionId}) — use get_session_context to load its full context, including related sessions and topics, and summarize what was done and what's next.`;
+    startTerminalSessionWithPrompt(workingDir, prompt);
     return;
   }
 

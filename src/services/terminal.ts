@@ -37,14 +37,21 @@ function ensureSpawnHelperExecutable(): void {
 
 // The session name is interpolated into the startSession shell command (the
 // `-lc` tmux exec), so the charset stays conservative: letters, digits,
-// spaces, underscore, hyphen — no shell metacharacters, and no ':' (it's the
-// delimiter of the list-sessions output format). Spaces ARE allowed (tmux
-// accepts them and the list format splits on ':', so they survive); the
-// shell command single-quotes the name to keep them from word-splitting.
-// Whitespace runs collapse to a single space and the ends are trimmed so the
-// frontend's optimistic tab label matches what tmux ends up storing.
+// spaces, underscore, hyphen, comma — no shell metacharacters, no ':' (it's
+// the delimiter of the list-sessions output format), and NO '.': tmux's
+// session_check_name silently rewrites '.' and ':' to '_' at creation, so a
+// dotted name never round-trips (the stored name differs from the requested
+// one and every name-keyed lookup desyncs into phantom duplicates), and a '.'
+// inside any '-t' target parses as tmux's window.pane separator — even
+// operations addressed AT a dotted name fail ("can't find pane", the
+// 2026-06-11 rename-409 storm). Comma is verified to survive both creation
+// and target parsing. Spaces ARE allowed (tmux accepts them and the list
+// format splits on ':', so they survive); the shell command single-quotes the
+// name to keep them from word-splitting. Whitespace runs collapse to a single
+// space and the ends are trimmed so the frontend's optimistic tab label
+// matches what tmux ends up storing.
 function sanitizeSession(name: string | null): string {
-  const cleaned = (name || '').replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
+  const cleaned = (name || '').replace(/[^a-zA-Z0-9 _,-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
   return cleaned || 'claude';
 }
 

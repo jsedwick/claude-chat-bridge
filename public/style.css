@@ -4674,7 +4674,19 @@ pre.streaming {
 }
 
 /* Terminal session tabs in the sidebar */
+/* Mirror #sessions-view: fill the sidebar's remaining height as a flex column
+   so the session list scrolls and the Archived/Trash sections stay pinned to
+   the bottom instead of floating up right under the active sessions. */
+#terminal-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .terminal-session-list {
+  flex: 1;
+  overflow-y: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
