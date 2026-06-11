@@ -7468,6 +7468,14 @@ function initTerminal() {
       _term.loadAddon(webgl);
     } catch (e) { /* no WebGL — stay on the DOM renderer */ }
   }
+  // OSC 52 → device clipboard. tmux emits OSC 52 on buffer sets (set-clipboard
+  // on, server-side), so a plain drag-select release lands on the clipboard of
+  // whatever device is attached — no Copy button press needed. Safari/iOS may
+  // block writes arriving outside a user gesture; the header Copy button
+  // remains the reliable fallback there.
+  if (typeof ClipboardAddon !== 'undefined') {
+    try { _term.loadAddon(new ClipboardAddon.ClipboardAddon()); } catch (e) {}
+  }
   applyTerminalTheme();
   try { _termFit.fit(); } catch (e) {}
   _term.onData((d) => {

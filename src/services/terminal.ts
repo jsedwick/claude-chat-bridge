@@ -427,11 +427,14 @@ function startSession(ws: WebSocket, session: string, mode: string, cwd: string)
   // Single-quote the session name so names with spaces don't word-split into
   // separate tmux args. sanitizeSession forbids "'" (and every other shell
   // metacharacter), so the wrap can't be broken out of — no escaping needed.
-  // terminal-features ...:RGB tells tmux the outer terminal (xterm.js, which
-  // supports truecolor) can take 24-bit color, so Claude's RGB output passes
-  // through instead of being quantized to 256 colors. Keyed on the PTY's TERM
-  // (xterm-256color, set above). Requires tmux 3.2+.
-  const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s '${session}'${tag} \\; set-option mouse on \\; set-option -sa terminal-features ',xterm-256color:RGB'`], opts as pty.IPtyForkOptions);
+  // terminal-features tells tmux what the outer terminal (xterm.js) can take,
+  // keyed on the PTY's TERM (xterm-256color, set above). Requires tmux 3.2+.
+  //   RGB — 24-bit color passes through instead of being quantized to 256.
+  //   clipboard + set-clipboard on — buffer sets (mouse drag-release, copy-mode
+  //   y) emit OSC 52 down the PTY; the browser's clipboard addon writes it to
+  //   the attached device's clipboard. tmux only emits OSC 52 when the feature
+  //   flag says the outer terminal supports it.
+  const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s '${session}'${tag} \\; set-option mouse on \\; set-option -sa terminal-features ',xterm-256color:RGB:clipboard' \\; set-option -s set-clipboard on`], opts as pty.IPtyForkOptions);
 
   let creationSnapshotted = false;
   term.onData((data) => {
