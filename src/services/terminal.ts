@@ -424,8 +424,13 @@ function startSession(ws: WebSocket, session: string, mode: string, cwd: string)
 
   // Login shell (-l) so rc files rebuild the full PATH (incl. ~/.local/bin for
   // `claude`) under launchd's minimal env; exec tmux so closing tmux ends the PTY.
-  // mouse on (session-scoped via command chain, not -g) lets wheel/touch scroll
-  // reach tmux's scrollback — without it the alternate screen swallows scrolling.
+  // mouse on (session-scoped via the command chain, which re-runs on every
+  // attach so existing sessions get it too) so wheel/touch scroll reaches tmux's
+  // scrollback. Under mouse on a plain drag is captured by tmux into its paste
+  // buffer rather than an xterm selection (the shift-bypass proved unreliable
+  // through the xterm->tmux->claude nesting); the browser Cmd+C handler reads
+  // that buffer back via GET /api/terminal/clipboard, so copy and scrollback
+  // coexist.
   // Tag the session with the context tab active when it was opened. -o keeps
   // an existing tag (re-attaching under the other tab must not re-home the
   // session); -q silences the "already set" error -o would otherwise print.

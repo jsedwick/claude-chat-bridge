@@ -7325,7 +7325,7 @@ function switchView(view) {
   }
   currentView = view;
   document.getElementById('sidebar-view-menu').style.display = 'none';
-  const labels = { sessions: 'Sessions', kb: 'Knowledge Base', settings: 'Settings', terminal: 'Terminal' };
+  const labels = { sessions: 'Metered Sessions', kb: 'Knowledge Base', settings: 'Settings', terminal: 'Sessions' };
   document.getElementById('sidebar-view-label').textContent = labels[view] || view;
 
   // Update dropdown active state
@@ -7490,23 +7490,31 @@ function initTerminal() {
   if (typeof ClipboardAddon !== 'undefined') {
     try { _term.loadAddon(new ClipboardAddon.ClipboardAddon()); } catch (e) {}
   }
-  // Cmd+C copies the live xterm selection. tmux mouse mode owns a plain drag
-  // (for scrollback), so make a selection with Shift+drag — that bypasses mouse
-  // reporting and hands xterm a real selection. getSelection() returns the exact
-  // rendered text (soft-wrapped lines rejoined, trailing padding trimmed), which
-  // is faithful even under the WebGL renderer, where the browser's own Cmd+C has
-  // no DOM text to grab. No selection → fall through, so Cmd+C is inert and a
-  // bare Ctrl+C still reaches the PTY as SIGINT.
+  // Cmd+C copies the terminal selection to the clipboard. Under tmux mouse-on
+  // (kept for wheel/touch scrollback) a plain drag is captured by tmux into its
+  // paste buffer rather than producing an xterm selection — and the shift-bypass
+  // proved unreliable through the xterm→tmux→claude nesting. So: prefer a live
+  // xterm selection if one exists (Shift+drag), otherwise pull tmux's paste
+  // buffer via the clipboard endpoint (tmux show-buffer). Either way write the
+  // text RAW — no markdown/dedent transform — so indentation survives. The fetch
+  // is async but still rides the Cmd+C keypress's user-activation window, which
+  // the passive OSC 52 path lacked. A bare Ctrl+C is untouched → still SIGINT.
   _term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.metaKey && !e.ctrlKey && !e.altKey &&
-        (e.key === 'c' || e.key === 'C') && _term.hasSelection()) {
+    if (!(e.type === 'keydown' && e.metaKey && !e.ctrlKey && !e.altKey &&
+        (e.key === 'c' || e.key === 'C'))) return true;
+    if (_term.hasSelection()) {
       const sel = _term.getSelection();
       if (sel) {
         copyTextToClipboard(sel).then((ok) => flashTermBtn('term-copy-btn', ok));
-        return false; // handled — don't forward Cmd+C to the PTY
+        return false;
       }
     }
-    return true;
+    // No xterm selection — fall back to tmux's paste buffer (plain-drag copy).
+    fetch('/api/terminal/clipboard')
+      .then((res) => (res.ok ? res.text() : ''))
+      .then((text) => (text ? copyTextToClipboard(text) : false))
+      .then((ok) => flashTermBtn('term-copy-btn', ok));
+    return false;
   });
   applyTerminalTheme();
   try { _termFit.fit(); } catch (e) {}
@@ -7771,6 +7779,16 @@ function switchTerminalSession(name) {
   renderTerminalSessionList();
 }
 
+// Swap the Home welcome screen out for the live xterm. The terminal view shares
+// the chat-main welcome (Sessions/Topics/Tasks/Projects) as its Home dashboard;
+// opening a session reveals the terminal panel in its place. Mutually exclusive
+// with goHome (which does the reverse). A no-op when the panel already shows.
+function revealTerminalPanel() {
+  welcomeEl.style.display = 'none';
+  document.querySelector('.chat-main').style.display = 'none';
+  document.getElementById('terminal-panel').style.display = 'flex';
+}
+
 // Mirror the active session name into the header title. Called from
 // renderTerminalSessionList so it tracks every path that changes _termSession
 // (view switch, tab switch, rename, archive/trash).
@@ -7836,10 +7854,17 @@ function buildTerminalSessionRow(s, kind) {
   const wrap = document.createElement('div');
   wrap.className = 'terminal-session-wrap';
   const item = document.createElement('div');
-  const isClosed = kind === 'active' && _termClosed.has(s.name);
+  // A closed session stays faded (and keeps its ✓) across every bucket, not just
+  // the active list — archive/trash don't un-close it. _termClosed is pruned only
+  // when tmux forgets the session (permanent delete), so the name survives the move.
+  const isClosed = _termClosed.has(s.name);
   item.className = 'terminal-session-item' + (s.name === _termSession ? ' active' : '') + (isClosed ? ' closed' : '');
   item.onclick = () => {
+    // From the Home welcome state the panel is hidden — reveal it on any row
+    // click, then attach (a different session) or just refit (the active one).
+    revealTerminalPanel();
     if (s.name !== _termSession) switchTerminalSession(s.name);
+    else initTerminal();
     if (sidebar.classList.contains('open')) toggleSidebar();
   };
   const nameEl = document.createElement('div');
@@ -8164,6 +8189,7 @@ function createNewTerminalSession() {
   if (!_termPickedDir) return; // button is disabled until a directory is picked
   const name = defaultTerminalSessionName();
   _termNewCwd = _termPickedDir;
+  revealTerminalPanel(); // leave the Home welcome for the new session's terminal
   switchTerminalSession(name);
   // The WS attach lazily creates + tags the session server-side (?mode= on
   // the socket URL); refresh once it exists so the pending row fills in.
@@ -8225,6 +8251,7 @@ function startTerminalSessionWithPrompt(cwd, prompt) {
   // connect the new session — it no-ops when _term already exists — so it's only
   // for visibility here; switchTerminalSession below does the reliable connect.
   if (currentView !== 'terminal') switchView('terminal');
+  revealTerminalPanel(); // in case we launched from the Home welcome state
   // Set the cwd AFTER switchView so a stray initTerminal connect to the prior
   // session can't consume it; switchTerminalSession's connect is the one that
   // creates the new session, and it reads _termNewCwd synchronously.
@@ -8425,10 +8452,20 @@ function connectTerminalWs() {
 }
 
 function goHome() {
-  if (currentView !== 'sessions') {
-    switchView('sessions');
-  }
+  // Home is the dashboard for the terminal ("Sessions") view: its session
+  // sidebar on the left, with the welcome screen (Sessions/Topics/Tasks/
+  // Projects) in the main area instead of an attached xterm. Opening a session
+  // — by click or the + New Terminal flow — swaps the welcome out for the live
+  // terminal panel via revealTerminalPanel().
   document.getElementById('sidebar-view-menu').style.display = 'none';
+  // Bring up the terminal sidebar (label "Sessions", toolbar, session list).
+  // switchView no-ops when already in the terminal view, so render the list
+  // explicitly to refresh it on every Home visit.
+  if (currentView !== 'terminal') switchView('terminal');
+  else renderTerminalSessionList();
+  // switchView reveals the xterm; Home shows the welcome screen in its place.
+  document.getElementById('terminal-panel').style.display = 'none';
+  document.querySelector('.chat-main').style.display = '';
   currentSessionId = null;
   chatTitle.textContent = getAppTitle();
   currentWorkingDir = '';
@@ -8441,7 +8478,6 @@ function goHome() {
   clearMessages();
   messagesEl.scrollTop = 0;
   loadWelcomeSessions();
-  loadSessions();
 }
 
 function showSettingsSection(section) {
@@ -8536,7 +8572,7 @@ const USAGE_MONTHLY_BUDGET_USD = 100;
 
 function renderUsageSettings(container) {
   const meterHidden = localStorage.getItem('chat-bridge-hide-ctx-meter') === 'true';
-  const viewMode = localStorage.getItem('chat-bridge-view-mode') === 'terminal' ? 'terminal' : 'chat';
+  const viewMode = localStorage.getItem('chat-bridge-view-mode') === 'chat' ? 'chat' : 'terminal';
   container.innerHTML = `
     <h2 class="settings-title">Usage</h2>
     <div class="settings-section">
@@ -8590,7 +8626,7 @@ function renderUsageSettings(container) {
 // The Usage → Billing Mode choice ('terminal' = included subscription, 'chat' =
 // metered Agent SDK). Also routes the continue/start flows to the matching view.
 function billingViewMode() {
-  return localStorage.getItem('chat-bridge-view-mode') === 'terminal' ? 'terminal' : 'chat';
+  return localStorage.getItem('chat-bridge-view-mode') === 'chat' ? 'chat' : 'terminal';
 }
 
 function setViewMode(mode) {
@@ -9925,10 +9961,17 @@ async function loadKbPreferences() {
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
-  // Decision 004 billing mode: open in the saved view — 'terminal' is the
-  // subscription-included PTY, 'chat' is the metered Agent SDK path.
-  if (localStorage.getItem('chat-bridge-view-mode') === 'terminal') {
-    switchView('terminal');
+  // Decision 004 billing mode: open in the saved view. Terminal — the
+  // subscription-included PTY, now the primary "Sessions" view — is the default;
+  // only the explicit metered "Chat" preference lands on Metered Sessions.
+  if (localStorage.getItem('chat-bridge-view-mode') === 'chat') {
+    // HTML renders the metered-sessions view by default; its static label still
+    // reads "Sessions", so correct it to the renamed "Metered Sessions".
+    document.getElementById('sidebar-view-label').textContent = 'Metered Sessions';
+  } else {
+    // Default landing: the Home dashboard — terminal ("Sessions") sidebar with
+    // the welcome screen, not a bare xterm.
+    goHome();
   }
 
   // Initialize TTS toggle button state
