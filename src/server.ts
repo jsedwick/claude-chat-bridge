@@ -18,7 +18,7 @@ import usageRoutes from './routes/usage';
 import { startReaper, shutdownAll } from './services/session-reaper';
 import { resolveShellEnv } from './services/shell-env';
 import { attachTerminal, terminalClipboard, terminalSessions, terminalKillSession, terminalRenameSession, terminalSessionDetails, terminalSessionMode, terminalArchiveSession, terminalUnarchiveSession, terminalTrashSession, terminalRestoreSession, terminalSessionFiles, terminalSessionFileDiff } from './services/terminal';
-import { restoreTerminalSessions } from './services/terminal-snapshot';
+import { initTerminalPersistence, markTerminalShutdown } from './services/terminal-snapshot';
 
 const app = express();
 
@@ -98,9 +98,10 @@ function startServer() {
   const bridgeStartId = randomBytes(4).toString('hex');
   console.log(`[bridge-start] pid=${process.pid} bridgeStartId=${bridgeStartId} time=${new Date().toISOString()}`);
 
-  // Recreate tmux terminal sessions lost to a reboot (Decision 004 Phase 3) —
-  // idempotent no-op when the tmux server survived a plain bridge restart.
-  restoreTerminalSessions();
+  // Terminal-session persistence (Decision 004 Phase 3): restore sessions lost
+  // while the bridge was down, and arm the mid-run loss watchdog. Idempotent
+  // no-op when the tmux server survived a plain bridge restart.
+  initTerminalPersistence();
 
   // Determine HTTP vs HTTPS mode
   const args = process.argv.slice(2);
@@ -163,6 +164,7 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down...');
+  markTerminalShutdown(); // a shutdown-window tmux flap must not trigger a restore
   shutdownAll();
   process.exit(0);
 });
