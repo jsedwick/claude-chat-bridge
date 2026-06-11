@@ -366,6 +366,17 @@ async function setMode(mode) {
     await Promise.all([loadSessions(), loadWelcomeSessions()]);
     // Terminal tabs are mode-filtered too
     renderTerminalSessionList();
+    // In the terminal ("Sessions") view, switching context returns to the Home
+    // welcome dashboard: hide the xterm panel — and with it the banner title,
+    // which lives inside the panel — so no stale session shows until the user
+    // picks one from the newly mode-filtered sidebar. Mirrors goHome's layout.
+    if (currentView === 'terminal') {
+      document.getElementById('terminal-panel').style.display = 'none';
+      document.querySelector('.chat-main').style.display = '';
+      welcomeEl.style.display = '';
+      inputArea.style.display = 'none';
+      document.querySelector('.dir-picker-wrapper').style.display = 'none';
+    }
     // Refresh KB trash listing if KB view is currently up
     if (document.getElementById('kb-view').style.display !== 'none') loadKbTrash();
     // Reset topics loaded flags so they re-fetch for the new mode
@@ -8211,18 +8222,27 @@ function hideTerminalDropdowns() {
   }
 }
 
-// Start button: launch interactive Claude Code with the vault session-start
+// Start button: open a NEW terminal tab in the same cwd as the session being
+// viewed, then launch interactive Claude Code with the vault session-start
 // command for the context tab currently selected (Work → /vault:work,
-// Personal → /vault:personal) — no menu, the tabs are the selector.
-function terminalStartClaude() {
+// Personal → /vault:personal) — no menu, the tabs are the selector. The button
+// lives inside the terminal panel, so it's only reachable while a session is
+// attached; we read that session's live cwd (#{pane_current_path}) and hand it
+// to the standard new-session flow rather than typing into the current session.
+async function terminalStartClaude() {
   hideTerminalDropdowns();
-  // The vault plugin has no system-wide registration — skills + MCP load
-  // only via --plugin-dir (mirrors the bridge runner's spawn args; the
-  // MCP server rides in .mcp.json at the plugin root). Terminal sessions
-  // are the trusted interactive path: skip permission prompts entirely.
-  // A model chosen in the picker launches via --model; unset keeps the CLI default.
-  const modelFlag = _termModel ? ` --model "${_termModel}"` : '';
-  terminalType(`claude --dangerously-skip-permissions${modelFlag} --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${currentMode}"`);
+  let cwd = null;
+  try {
+    const res = await fetch('/api/terminal/sessions');
+    if (res.ok) {
+      const cur = (await res.json()).find((s) => s.name === _termSession);
+      cwd = cur && cur.path ? cur.path : null;
+    }
+  } catch (e) { /* list endpoint unavailable — fall back to the server default cwd */ }
+  // The vault plugin has no system-wide registration — skills + MCP load only
+  // via --plugin-dir, skip-permissions is the trusted interactive path, and the
+  // model flag is applied by buildTerminalClaudeLaunch inside the flow below.
+  startTerminalSessionWithPrompt(cwd, `/vault:${currentMode}`);
 }
 
 // POSIX single-quote escaping so an arbitrary kickoff prompt (which may contain
