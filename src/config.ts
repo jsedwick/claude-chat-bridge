@@ -72,6 +72,8 @@ export const config = {
   vapidSubject: resolve('CHAT_BRIDGE_VAPID_SUBJECT', 'vapidSubject', 'mailto:admin@localhost'),
   // Where browser push subscriptions are persisted (mirrors sessionStorePath).
   pushStorePath: path.join(__dirname, '..', 'push-subscriptions.json'),
+  // Terminal-session snapshot for reboot survival (Decision 004 Phase 3).
+  terminalSnapshotPath: path.join(__dirname, '..', 'terminal-sessions.json'),
 };
 
 // Fail loud at startup if mcpConfigPath does not resolve to a readable file.

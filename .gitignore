@@ -4,5 +4,6 @@ certs/
 chat-sessions.json
 bridge-config.json
 push-subscriptions.json
+terminal-sessions.json
 *.log
 usage-ledger.jsonl

@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import { shellExecOpts } from './shell-env';
 import { getActiveModeVaults, parseMode } from '../config';
+import { scheduleTerminalSnapshot, pruneTerminalSnapshot } from './terminal-snapshot';
 
 // Integrated terminal backend (Decision 004, Phase 1). A WebSocket upgrade on
 // TERMINAL_PATH is bridged to a node-pty PTY running an interactive login shell
@@ -109,6 +110,7 @@ export function terminalRenameSession(req: Request, res: Response): void {
       res.status(409).json({ error: 'rename failed — duplicate or missing session' });
       return;
     }
+    scheduleTerminalSnapshot();
     res.json({ name: newName });
   });
 }
@@ -128,6 +130,7 @@ export function terminalSessionMode(req: Request, res: Response): void {
       res.status(404).json({ error: 'session not found' });
       return;
     }
+    scheduleTerminalSnapshot();
     res.json({ name, mode });
   });
 }
@@ -149,6 +152,7 @@ function setLifecycleFlags(name: string, args: string[], res: Response): void {
       res.status(404).json({ error: 'session not found' });
       return;
     }
+    scheduleTerminalSnapshot();
     res.json({ name });
   });
 }
@@ -333,6 +337,10 @@ export function terminalKillSession(req: Request, res: Response): void {
       res.status(404).json({ error: 'session not found' });
       return;
     }
+    // Prune the snapshot file directly: if this was the last session the tmux
+    // server died with it, and the list-based snapshot would skip the rewrite.
+    pruneTerminalSnapshot(name);
+    scheduleTerminalSnapshot();
     res.json({ killed: name });
   });
 }
@@ -421,10 +429,19 @@ function startSession(ws: WebSocket, session: string, mode: string, cwd: string)
   // metacharacter), so the wrap can't be broken out of — no escaping needed.
   const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s '${session}'${tag} \\; set-option mouse on`], opts as pty.IPtyForkOptions);
 
+  let creationSnapshotted = false;
   term.onData((data) => {
+    // First output means tmux is up and the attach-or-create has run — capture
+    // a possibly brand-new session in the reboot snapshot.
+    if (!creationSnapshotted) {
+      creationSnapshotted = true;
+      scheduleTerminalSnapshot();
+    }
     if (ws.readyState === ws.OPEN) ws.send(data);
   });
   term.onExit(() => {
+    // An `exit` inside tmux ends the session itself (not just this client) — re-list.
+    scheduleTerminalSnapshot();
     if (ws.readyState === ws.OPEN) ws.close();
   });
 
