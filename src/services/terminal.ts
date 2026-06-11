@@ -427,7 +427,11 @@ function startSession(ws: WebSocket, session: string, mode: string, cwd: string)
   // Single-quote the session name so names with spaces don't word-split into
   // separate tmux args. sanitizeSession forbids "'" (and every other shell
   // metacharacter), so the wrap can't be broken out of — no escaping needed.
-  const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s '${session}'${tag} \\; set-option mouse on`], opts as pty.IPtyForkOptions);
+  // terminal-features ...:RGB tells tmux the outer terminal (xterm.js, which
+  // supports truecolor) can take 24-bit color, so Claude's RGB output passes
+  // through instead of being quantized to 256 colors. Keyed on the PTY's TERM
+  // (xterm-256color, set above). Requires tmux 3.2+.
+  const term = pty.spawn(shell, ['-lc', `exec ${TMUX} new -A -s '${session}'${tag} \\; set-option mouse on \\; set-option -sa terminal-features ',xterm-256color:RGB'`], opts as pty.IPtyForkOptions);
 
   let creationSnapshotted = false;
   term.onData((data) => {

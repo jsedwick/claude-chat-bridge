@@ -7407,9 +7407,26 @@ function markTerminalClosed(name) {
 // the TUI only restyles its own text and assumes the emulator background.
 function terminalThemeColors() {
   const light = document.documentElement.getAttribute('data-theme') === 'light';
+  // Full 16-color ANSI palettes so Claude's colored output (diffs, syntax,
+  // status lines) renders richly instead of falling back to xterm's muted
+  // defaults. Dark: One Dark; light: GitHub Light (matches the #1f2328 UI text).
   return light
-    ? { background: '#ffffff', foreground: '#1f2328', cursor: '#1f2328', cursorAccent: '#ffffff', selectionBackground: '#b3d4fc' }
-    : { background: '#000000' };
+    ? {
+        background: '#ffffff', foreground: '#1f2328',
+        cursor: '#1f2328', cursorAccent: '#ffffff', selectionBackground: '#b3d4fc',
+        black: '#1f2328', red: '#cf222e', green: '#116329', yellow: '#9a6700',
+        blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+        brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37', brightYellow: '#7d4e00',
+        brightBlue: '#218bff', brightMagenta: '#a475f9', brightCyan: '#3192aa', brightWhite: '#1f2328',
+      }
+    : {
+        background: '#000000', foreground: '#e6e6e6',
+        cursor: '#e6e6e6', cursorAccent: '#000000', selectionBackground: '#264f78',
+        black: '#3b4048', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+        blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
+        brightBlack: '#5c6370', brightRed: '#ff7b86', brightGreen: '#b5e890', brightYellow: '#ffd9a0',
+        brightBlue: '#7fc4ff', brightMagenta: '#dd9eed', brightCyan: '#7adfe8', brightWhite: '#ffffff',
+      };
 }
 
 function applyTerminalTheme() {
@@ -7440,6 +7457,17 @@ function initTerminal() {
   _termFit = new FitAddon.FitAddon();
   _term.loadAddon(_termFit);
   _term.open(container);
+  // GPU-accelerated rendering — crisper glyphs and smoother scrolling than the
+  // default DOM renderer. Must load after open() (needs the canvas). Falls back
+  // to the DOM renderer if WebGL is unavailable or its context is lost (GPU
+  // reset, tab backgrounded).
+  if (typeof WebglAddon !== 'undefined') {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch (e) {} });
+      _term.loadAddon(webgl);
+    } catch (e) { /* no WebGL — stay on the DOM renderer */ }
+  }
   applyTerminalTheme();
   try { _termFit.fit(); } catch (e) {}
   _term.onData((d) => {
