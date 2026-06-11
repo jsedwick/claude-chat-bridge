@@ -8033,6 +8033,14 @@ function startTerminalTabRename(oldName, el) {
   };
 }
 
+// Banner dblclick → inline rename. The banner always reflects the active
+// session, so edit _termSession in place via the same flow as the sidebar tab
+// rename (mirrors how kb-title reuses startKbRename). On commit the rename
+// updates _termSession and re-renders, which repaints the banner.
+function renameCurrentTerminalSession() {
+  startTerminalTabRename(_termSession, document.getElementById('terminal-title'));
+}
+
 // Chat-view parity: the ⓘ button opens a details panel above the terminal
 // with per-file diffs of vault documents and code files changed since the
 // tmux session was created (git is the data source server-side — terminal
@@ -8104,13 +8112,24 @@ async function loadTermSessionFiles(name) {
   }
 }
 
-function promptNewTerminalSession() {
+// Default tab name for a brand-new terminal: a date/time label mirroring the
+// chat Sessions view's auto-name, so the user is never forced to name a tab
+// upfront (rename later via dblclick on the sidebar tab or the banner). Kept
+// tmux-safe — no ':' (illegal in tmux session names, stripped by the rename
+// sanitizer) — and second-precise because the name doubles as the tmux session
+// key and the server attaches-or-creates by name (`tmux new -A`); minute
+// precision alone would let two quick + New Terminal clicks collide onto one
+// session instead of opening a second.
+function defaultTerminalSessionName() {
+  const d = new Date();
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  return `${date} ${time.replace(/:/g, '-')}`; // e.g. "Jun 11 07-12-45"
+}
+
+function createNewTerminalSession() {
   if (!_termPickedDir) return; // button is disabled until a directory is picked
-  let name = prompt('Name for the new terminal session:', '');
-  if (name === null) return;
-  // Mirror the server's sanitizer so the tab label matches the tmux session.
-  name = name.replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
-  if (!name) return;
+  const name = defaultTerminalSessionName();
   _termNewCwd = _termPickedDir;
   switchTerminalSession(name);
   // The WS attach lazily creates + tags the session server-side (?mode= on
