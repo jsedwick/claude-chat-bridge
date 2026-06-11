@@ -7372,9 +7372,14 @@ let _term = null, _termFit = null, _termWs = null;
 let _termSession = localStorage.getItem('chat-bridge-term-session') || 'claude';
 let _termNewCwd = null; // start dir for the next WS connect — set by the new-session flow only
 let _termPickedDir = null; // armed by the terminal sidebar dir picker; gates + New Terminal
-// Last model chosen in the terminal model picker. '' = unset → start button
-// launches with the CLI default (no --model flag), preserving prior behavior.
-let _termModel = localStorage.getItem('chat-bridge-term-model') || '';
+// Last model chosen in the terminal model picker. Default is Opus when never
+// chosen; '' = the user explicitly picked "Default" → start button launches
+// with the CLI default (no --model flag).
+let _termModel = (() => {
+  const saved = localStorage.getItem('chat-bridge-term-model');
+  if (saved === null) return 'opus';
+  return saved;
+})();
 
 // MRU tab ordering: session name → last-active epoch ms. The attached tab is
 // stamped "now" on every render (and on switch, via the render it triggers), so

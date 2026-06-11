@@ -8,16 +8,18 @@ import { shellExecOpts } from './shell-env';
 // terminals survive bridge restarts and browser reconnects, but a reboot kills the
 // tmux server and every session in it. This module snapshots the session list to
 // disk after every lifecycle mutation and recreates missing sessions (detached) at
-// bridge startup — names, cwds, and @bridge_* tags. It deliberately does NOT
-// freeze/thaw live processes, pane layout, or scrollback. tmux-resurrect was
+// bridge startup — names, cwds, and @bridge_* tags — then types `claude --continue`
+// into sessions that were running claude. It deliberately does NOT freeze/thaw live
+// processes, pane layout, or scrollback: a resumed claude rebuilds its own
+// conversation via --continue, the bridge never thaws the process. tmux-resurrect was
 // rejected because it drops arbitrary user options: the @bridge_* tags would come
 // back stripped and every restored session would land untagged.
 
 const TMUX = '/opt/homebrew/bin/tmux';
 
-// One persisted session. isClaude is captured for the opt-in `claude --continue`
-// resume increment (not yet built); restore currently brings back shell + cwd +
-// tags only.
+// One persisted session. isClaude drives the `claude --continue` resume increment:
+// restore brings back shell + cwd + tags, then re-launches claude in sessions that
+// were running it at snapshot time (skipping trashed ones).
 interface SnapshotEntry {
   name: string;
   cwd: string;
@@ -148,7 +150,21 @@ export function restoreTerminalSessions(): void {
       if (e.trashed) args.push(';', 'set-option', '-t', e.name, '@bridge_trashed', '1');
       restored++;
       execFile(TMUX, args, opts, (err) => {
-        if (err) console.error(`[terminal-restore] failed for "${e.name}": ${err.message}`);
+        if (err) {
+          console.error(`[terminal-restore] failed for "${e.name}": ${err.message}`);
+          return;
+        }
+        // Resume increment: a session that was running claude at snapshot time gets
+        // `claude --continue` typed into its restored shell, reopening the last
+        // conversation for that cwd. Sent after creation so the pane exists;
+        // keystrokes buffer in the tty until the shell reaches its prompt. Exiting
+        // claude drops back to the shell, matching pre-reboot state. Trashed sessions
+        // are pending purge — don't spin up claude in them.
+        if (e.isClaude && !e.trashed) {
+          execFile(TMUX, ['send-keys', '-t', e.name, 'claude --continue', 'Enter'], opts, (sendErr) => {
+            if (sendErr) console.error(`[terminal-restore] claude resume failed for "${e.name}": ${sendErr.message}`);
+          });
+        }
       });
     }
     if (restored) console.log(`[terminal-restore] recreating ${restored} tmux session(s) from snapshot`);
