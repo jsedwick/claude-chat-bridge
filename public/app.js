@@ -413,8 +413,10 @@ let currentSessionCreated = '';
 let currentClosedAt = '';
 const dirPicker = document.getElementById('dir-picker');
 
-// Shared directory browser renderer
-async function renderDirRoots(container, onSelect) {
+// Shared directory browser renderer. `navigate` is the drill-down function for
+// clicking a root/recent entry — defaults to renderDirBrowser (CWD pickers);
+// the @-file picker passes renderFilePicker so navigation lists files too.
+async function renderDirRoots(container, onSelect, navigate = renderDirBrowser) {
   container.innerHTML = '<div class="dir-browser-loading">Loading...</div>';
   container.style.display = 'block';
 
@@ -446,7 +448,7 @@ async function renderDirRoots(container, onSelect) {
       recentItem.className = 'dir-picker-item dir-picker-item-recent';
       recentItem.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + lastDirName + '</span>';
       recentItem.title = lastDir;
-      recentItem.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, lastDir, onSelect); };
+      recentItem.onclick = (e) => { e.stopPropagation(); navigate(container, lastDir, onSelect); };
       recentSection.appendChild(recentItem);
       container.appendChild(recentSection);
     }
@@ -458,7 +460,7 @@ async function renderDirRoots(container, onSelect) {
         const item = document.createElement('button');
         item.className = 'dir-picker-item';
         item.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + root.name + '</span>';
-        item.onclick = (e) => { e.stopPropagation(); renderDirBrowser(container, root.path, onSelect); };
+        item.onclick = (e) => { e.stopPropagation(); navigate(container, root.path, onSelect); };
         list.appendChild(item);
       }
       container.appendChild(list);
@@ -660,6 +662,92 @@ async function renderDirBrowser(container, startPath, onSelect, opts = {}) {
       empty.className = 'dir-browser-empty';
       empty.textContent = 'No subdirectories';
       container.appendChild(empty);
+    }
+  } catch (err) {
+    container.innerHTML = '<div class="dir-browser-empty">Failed to load directory</div>';
+  }
+}
+
+// File browser for the terminal @-reference picker. Same browse endpoint as the
+// directory picker but with includeFiles=1, so the listing shows files (and
+// images) under the subdirectories. Directories navigate in place; clicking a
+// file calls onPick(absolutePath). 403 (outside allowed paths) falls back to
+// the shared roots view, which drills back into this picker.
+const FILE_PICKER_IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'heic', 'heif', 'avif']);
+const FILE_PICKER_FOLDER_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+const FILE_PICKER_FILE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+const FILE_PICKER_IMAGE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+
+async function renderFilePicker(container, startPath, onPick) {
+  container.innerHTML = '<div class="dir-browser-loading">Loading...</div>';
+  container.style.display = 'block';
+
+  try {
+    let url = `/api/sessions/dirs/browse?path=${encodeURIComponent(startPath)}&includeFiles=1`;
+    if (typeof currentMode === 'string') url += `&mode=${currentMode}`;
+    const res = await fetch(url);
+    if (res.status === 403) {
+      return renderDirRoots(container, onPick, renderFilePicker);
+    }
+    const data = await res.json();
+
+    container.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'dir-browser-header';
+    const backBtn = document.createElement('button');
+    backBtn.className = 'dir-browser-back';
+    backBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+    if (data.parent) {
+      backBtn.title = 'Go up';
+      backBtn.onclick = (e) => { e.stopPropagation(); renderFilePicker(container, data.parent, onPick); };
+    } else {
+      backBtn.title = 'Back to allowed directories';
+      backBtn.onclick = (e) => { e.stopPropagation(); renderDirRoots(container, onPick, renderFilePicker); };
+    }
+    header.appendChild(backBtn);
+    const pathLabel = document.createElement('span');
+    pathLabel.className = 'dir-browser-path';
+    pathLabel.textContent = data.path;
+    pathLabel.title = data.path;
+    header.appendChild(pathLabel);
+    container.appendChild(header);
+
+    const list = document.createElement('div');
+    list.className = 'dir-browser-list';
+
+    for (const child of (data.children || [])) {
+      const item = document.createElement('button');
+      item.className = 'dir-picker-item';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = child.name;
+      item.innerHTML = FILE_PICKER_FOLDER_SVG;
+      item.appendChild(nameSpan);
+      item.onclick = (e) => { e.stopPropagation(); renderFilePicker(container, child.path, onPick); };
+      list.appendChild(item);
+    }
+
+    for (const f of (data.files || [])) {
+      const ext = (f.name.includes('.') ? f.name.split('.').pop() : '').toLowerCase();
+      const isImage = FILE_PICKER_IMAGE_EXTS.has(ext);
+      const item = document.createElement('button');
+      item.className = 'dir-picker-item dir-picker-item-file';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = f.name;
+      item.innerHTML = isImage ? FILE_PICKER_IMAGE_SVG : FILE_PICKER_FILE_SVG;
+      item.appendChild(nameSpan);
+      item.title = 'Insert @' + f.name;
+      item.onclick = (e) => { e.stopPropagation(); onPick(f.path); };
+      list.appendChild(item);
+    }
+
+    if (list.children.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'dir-browser-empty';
+      empty.textContent = 'Empty folder';
+      container.appendChild(empty);
+    } else {
+      container.appendChild(list);
     }
   } catch (err) {
     container.innerHTML = '<div class="dir-browser-empty">Failed to load directory</div>';
@@ -7284,6 +7372,9 @@ let _term = null, _termFit = null, _termWs = null;
 let _termSession = localStorage.getItem('chat-bridge-term-session') || 'claude';
 let _termNewCwd = null; // start dir for the next WS connect — set by the new-session flow only
 let _termPickedDir = null; // armed by the terminal sidebar dir picker; gates + New Terminal
+// Last model chosen in the terminal model picker. '' = unset → start button
+// launches with the CLI default (no --model flag), preserving prior behavior.
+let _termModel = localStorage.getItem('chat-bridge-term-model') || '';
 
 // The emulator's colors follow the bridge UI theme, not Claude Code's /theme —
 // the TUI only restyles its own text and assumes the emulator background.
@@ -7584,7 +7675,17 @@ function switchTerminalSession(name) {
   renderTerminalSessionList();
 }
 
+// Mirror the active session name into the header title. Called from
+// renderTerminalSessionList so it tracks every path that changes _termSession
+// (view switch, tab switch, rename, archive/trash).
+function updateTerminalTitle() {
+  const titleEl = document.getElementById('terminal-title');
+  if (titleEl) titleEl.textContent = _termSession;
+  renderTermModelLabel();
+}
+
 async function renderTerminalSessionList() {
+  updateTerminalTitle();
   const list = document.getElementById('terminal-session-list');
   if (!list) return;
   let sessions = [];
@@ -7936,7 +8037,7 @@ function promptNewTerminalSession() {
 
 // Only one terminal header dropdown may be open at a time.
 function hideTerminalDropdowns() {
-  for (const id of ['terminal-dir-picker', 'terminal-workflow-menu', 'terminal-close-menu']) {
+  for (const id of ['terminal-dir-picker', 'terminal-workflow-menu', 'terminal-close-menu', 'terminal-model-menu', 'terminal-file-menu']) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
@@ -7951,7 +8052,71 @@ function terminalStartClaude() {
   // only via --plugin-dir (mirrors the bridge runner's spawn args; the
   // MCP server rides in .mcp.json at the plugin root). Terminal sessions
   // are the trusted interactive path: skip permission prompts entirely.
-  terminalType(`claude --dangerously-skip-permissions --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${currentMode}"`);
+  // A model chosen in the picker launches via --model; unset keeps the CLI default.
+  const modelFlag = _termModel ? ` --model "${_termModel}"` : '';
+  terminalType(`claude --dangerously-skip-permissions${modelFlag} --plugin-dir "$HOME/Projects/obsidian-claude-plugin" "/vault:${currentMode}"`);
+}
+
+// Model picker (far-right header control). Reuses the chat view's MODEL_OPTIONS.
+// "Default" clears the launch flag (CLI default); a concrete model both sets
+// the next start-button launch flag AND pastes `/model <value>` into the
+// running session so the switch can take effect immediately.
+function renderTermModelLabel() {
+  const labelEl = document.getElementById('term-model-label');
+  if (labelEl) labelEl.textContent = _termModel ? modelLabelFor(_termModel) : 'Model';
+}
+
+function toggleTerminalModelMenu() {
+  const menu = document.getElementById('terminal-model-menu');
+  const isOpen = menu.style.display !== 'none';
+  hideTerminalDropdowns();
+  if (isOpen) return;
+  menu.innerHTML = '';
+  const options = [{ label: 'Default', value: '' }, ...MODEL_OPTIONS];
+  for (const opt of options) {
+    const btn = document.createElement('button');
+    btn.className = 'terminal-start-option' + (opt.value === _termModel ? ' active' : '');
+    const label = document.createElement('span');
+    label.textContent = opt.label;
+    btn.appendChild(label);
+    if (opt.value) {
+      const code = document.createElement('code');
+      code.textContent = `/model ${opt.value}`;
+      btn.appendChild(code);
+    }
+    btn.onclick = () => {
+      menu.style.display = 'none';
+      selectTerminalModel(opt.value);
+    };
+    menu.appendChild(btn);
+  }
+  menu.style.display = 'block';
+}
+
+function selectTerminalModel(value) {
+  _termModel = value;
+  localStorage.setItem('chat-bridge-term-model', value);
+  renderTermModelLabel();
+  // Paste (not submit) the slash command so a running TUI switches now —
+  // matches the workflow/close menus: bracketed paste keeps the command from
+  // fighting the slash-command autocomplete. The user reviews and presses Enter.
+  if (value) terminalInsert(`/model ${value}`);
+}
+
+// File picker button: browse allowed paths and paste an `@<path>` reference into
+// the active terminal (review + Enter). Gives the bridged terminal an easy way
+// to attach files/images, since `@` autocomplete and clipboard-image paste don't
+// survive the xterm-over-tmux pipe — a file-path reference is the reliable path.
+function toggleTerminalFilePicker() {
+  const menu = document.getElementById('terminal-file-menu');
+  const isOpen = menu.style.display !== 'none';
+  hideTerminalDropdowns();
+  if (isOpen) return;
+  const onPick = (filePath) => {
+    menu.style.display = 'none';
+    terminalInsert('@' + filePath + ' ');
+  };
+  renderDirRoots(menu, onPick, renderFilePicker);
 }
 
 // Workflow button: mirrors the chat view's Workflow flyout, but pastes the

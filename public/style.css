@@ -4556,6 +4556,29 @@ pre.streaming {
   gap: 4px;
 }
 
+/* Active terminal session name, upper-left of the header opposite the action
+   buttons. Reuses .chat-title type styling but left-aligned and non-interactive
+   (the name is informational here; renaming lives on the sidebar tab). */
+.terminal-title {
+  text-align: left;
+  margin-left: 8px;
+  color: var(--text-primary);
+}
+
+.terminal-title:hover {
+  background: none;
+}
+
+/* Terminal model picker button — a labeled variant of the icon-only action
+   buttons. Shows the selected model name + a chevron, far-right in the header. */
+.term-model-btn {
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .kb-action-btn.term-btn-ok {
   color: #2da44e;
 }

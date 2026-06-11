@@ -118,11 +118,18 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
     ? getCrossModeProjectRoots(activeMode)
     : new Map<string, string>();
 
+  // includeFiles=1 additionally returns regular files in `files` (used by the
+  // terminal @-reference picker). Default-off so the directory-only pickers
+  // (CWD selection) keep their existing payload shape.
+  const includeFiles = req.query.includeFiles === '1';
+
   const children: Array<{ name: string; path: string; crossMode?: string }> = [];
+  const files: Array<{ name: string; path: string }> = [];
   try {
     const entries = fs.readdirSync(resolved, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+      if (entry.name.startsWith('.')) continue;
+      if (entry.isDirectory()) {
         const childPath = path.join(resolved, entry.name);
         if (!enforce || isWithinAllowedPaths(childPath, allowedPaths)) {
           const child: { name: string; path: string; crossMode?: string } = {
@@ -133,6 +140,8 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
           if (claimedBy) child.crossMode = claimedBy;
           children.push(child);
         }
+      } else if (includeFiles && entry.isFile()) {
+        files.push({ name: entry.name, path: path.join(resolved, entry.name) });
       }
     }
   } catch {
@@ -140,6 +149,7 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
   }
 
   children.sort((a, b) => a.name.localeCompare(b.name));
+  files.sort((a, b) => a.name.localeCompare(b.name));
 
   // Only allow navigating up if the parent is still within allowed paths
   const parentDir = path.dirname(resolved);
@@ -153,6 +163,7 @@ router.get('/dirs/browse', (req: Request, res: Response) => {
     parent: hasParent ? parentDir : null,
     children,
     crossMode: currentCrossMode,
+    ...(includeFiles ? { files } : {}),
   });
 });
 
