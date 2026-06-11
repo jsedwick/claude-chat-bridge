@@ -3641,7 +3641,7 @@ function buildSessionFileList() {
 
 // diffUrl (optional): path → endpoint URL, for callers whose diffs don't live
 // under the chat session route (the terminal details panel).
-function renderFileList(listId, countId, fileMap, diffUrl) {
+function renderFileList(listId, countId, fileMap, diffUrl, opts) {
   const listEl = document.getElementById(listId);
   const countEl = document.getElementById(countId);
   countEl.textContent = `(${fileMap.size})`;
@@ -3664,6 +3664,17 @@ function renderFileList(listId, countId, fileMap, diffUrl) {
       <span class="session-file-name">${escapeHtml(shortPath)}</span>
     `;
     header.onclick = (e) => { e.stopPropagation(); toggleFileDiff(item, filePath, diffUrl); };
+    if (opts && opts.kbLink) {
+      // Open this vault doc directly in the Knowledge Base view. stopPropagation
+      // so the click doesn't also toggle the inline diff under the file name.
+      const gotoBtn = document.createElement('button');
+      gotoBtn.type = 'button';
+      gotoBtn.className = 'session-file-goto';
+      gotoBtn.textContent = 'Goto';
+      gotoBtn.title = 'Open in Knowledge Base';
+      gotoBtn.onclick = (e) => { e.stopPropagation(); navigateToKbFile(filePath); };
+      header.appendChild(gotoBtn);
+    }
     item.appendChild(header);
     const diffDiv = document.createElement('div');
     diffDiv.className = 'session-file-diff';
@@ -8114,7 +8125,7 @@ async function loadTermSessionFiles(name) {
     const data = await res.json();
     if (_termDetailsSession !== name) return;
     const diffUrl = (fp) => `/api/terminal/sessions/${encodeURIComponent(name)}/file-diff?path=${encodeURIComponent(fp)}`;
-    renderFileList('term-vault-docs-list', 'term-vault-docs-count', new Map((data.vaultDocs || []).map(p => [p, {}])), diffUrl);
+    renderFileList('term-vault-docs-list', 'term-vault-docs-count', new Map((data.vaultDocs || []).map(p => [p, {}])), diffUrl, { kbLink: true });
     renderFileList('term-code-files-list', 'term-code-files-count', new Map((data.codeFiles || []).map(p => [p, {}])), diffUrl);
     // Auto-expand the sections that have content (chat-view behavior); the
     // Session Info section stays collapsed — metadata on demand.
@@ -10109,13 +10120,17 @@ function resolveVaultPath(filePath) {
 
 function navigateToKbFile(filePath) {
   const resolved = resolveVaultPath(filePath);
-  // Fresh trip into KB from a session — discard prior in-KB history AND skip the
+  // Fresh trip into KB from outside it — discard prior in-KB history AND skip the
   // history push inside loadKbFile, since the stale kbCurrentFile from the
   // previous trip would otherwise get pushed onto the freshly-cleared stack and
-  // beat Back to the entry point on first press.
-  const externalEntry = currentView === 'sessions' && currentSessionId;
+  // beat Back to the entry point on first press. From a chat session we record an
+  // entry point so Back returns to it; the terminal view (the session-details
+  // Goto button) has no session to return to, so clear any stale entry point.
+  const fromSession = currentView === 'sessions' && currentSessionId;
+  const fromTerminal = currentView === 'terminal';
+  const externalEntry = fromSession || fromTerminal;
   if (externalEntry) {
-    kbEntryPoint = { sessionId: currentSessionId };
+    kbEntryPoint = fromSession ? { sessionId: currentSessionId } : null;
     kbHistory = [];
   }
   kbPendingNavigation = resolved;

@@ -1244,6 +1244,24 @@ html, body {
   text-decoration-style: solid;
 }
 
+.session-file-goto {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.session-file-goto:hover {
+  color: var(--accent-hover, #7bb8ff);
+  border-color: var(--accent);
+}
+
 .session-file-diff {
   display: none;
   margin-top: 6px;
