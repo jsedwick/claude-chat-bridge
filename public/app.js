@@ -7689,12 +7689,10 @@ function terminalType(line) {
   if (_term) _term.focus();
 }
 
-function shQuote(p) {
-  return "'" + String(p).replace(/'/g, "'\\''") + "'";
-}
-
 // Sidebar folder button (same placement as the chat view's picker): selecting
-// a directory types `cd '<path>'` into the active terminal.
+// a directory arms the pick for + New Terminal — it does NOT touch the
+// currently-attached terminal. A new tab opens in the picked directory only
+// when the user clicks + New Terminal.
 function toggleTerminalSidebarDirPicker() {
   const picker = document.getElementById('terminal-sidebar-dir-picker');
   const isOpen = picker.style.display !== 'none';
@@ -7702,9 +7700,9 @@ function toggleTerminalSidebarDirPicker() {
   const onSelect = (dirPath) => {
     picker.style.display = 'none';
     localStorage.setItem('chat-bridge-last-dir', dirPath);
-    terminalType('cd ' + shQuote(dirPath));
     // Arm + New Terminal with the pick — same flow as the chat sidebar's
-    // picker arming + New Chat.
+    // picker arming + New Chat. The attached terminal is left untouched; the
+    // pick only takes effect when the user clicks + New Terminal.
     _termPickedDir = dirPath;
     const termDirBtn = document.getElementById('term-dir-btn');
     termDirBtn.classList.add('selected');
