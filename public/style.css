@@ -4700,6 +4700,23 @@ pre.streaming {
   color: var(--accent);
 }
 
+/* Closed via the Close-Session menu — dimmed + muted, mirroring the chat
+   Sessions view's .session-item.closed. Placed after .active so a closed
+   current tab reads as closed (muted) rather than accent. */
+.terminal-session-item.closed {
+  opacity: 0.55;
+}
+
+.terminal-session-item.closed .terminal-session-name {
+  color: var(--text-muted);
+}
+
+.terminal-session-closed-badge {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 11px;
+}
+
 .terminal-session-name {
   flex: 1;
   display: flex;

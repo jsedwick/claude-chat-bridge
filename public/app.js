@@ -7376,6 +7376,33 @@ let _termPickedDir = null; // armed by the terminal sidebar dir picker; gates + 
 // launches with the CLI default (no --model flag), preserving prior behavior.
 let _termModel = localStorage.getItem('chat-bridge-term-model') || '';
 
+// MRU tab ordering: session name → last-active epoch ms. The attached tab is
+// stamped "now" on every render (and on switch, via the render it triggers), so
+// the active sidebar bucket sorts most-recently-used to the top. Persisted so
+// the order survives a reload.
+let _termLastActive = {};
+try { _termLastActive = JSON.parse(localStorage.getItem('chat-bridge-term-last-active') || '{}') || {}; } catch (e) { _termLastActive = {}; }
+function markTerminalActive(name) {
+  if (!name) return;
+  _termLastActive[name] = Date.now();
+  try { localStorage.setItem('chat-bridge-term-last-active', JSON.stringify(_termLastActive)); } catch (e) {}
+}
+
+// Sessions the user has closed via the Close-Session menu. The TUI is opaque to
+// us, so the menu click is the only close signal; closed tabs render dimmed,
+// mirroring the chat Sessions view. Persisted, and pruned on render once tmux
+// no longer lists the session (killed / permanently deleted).
+let _termClosed = new Set();
+try { _termClosed = new Set(JSON.parse(localStorage.getItem('chat-bridge-term-closed') || '[]')); } catch (e) { _termClosed = new Set(); }
+function saveTerminalClosed() {
+  try { localStorage.setItem('chat-bridge-term-closed', JSON.stringify([..._termClosed])); } catch (e) {}
+}
+function markTerminalClosed(name) {
+  if (!name) return;
+  _termClosed.add(name);
+  saveTerminalClosed();
+}
+
 // The emulator's colors follow the bridge UI theme, not Claude Code's /theme —
 // the TUI only restyles its own text and assumes the emulator background.
 function terminalThemeColors() {
@@ -7699,6 +7726,16 @@ async function renderTerminalSessionList() {
   // (created outside the bridge, pre-feature) show under both until a bridge
   // attach adopts them into the context active at that moment.
   const knownToTmux = sessions.some((s) => s.name === _termSession);
+  // Drop closed-tab flags for sessions tmux no longer knows about (killed or
+  // permanently deleted) so a later session reusing the name starts clean.
+  // Checked against the full list, before the mode filter, so an other-mode
+  // closed session isn't pruned just for being hidden from this tab.
+  if (_termClosed.size) {
+    const live = new Set(sessions.map((s) => s.name));
+    let pruned = false;
+    for (const name of [..._termClosed]) if (!live.has(name)) { _termClosed.delete(name); pruned = true; }
+    if (pruned) saveTerminalClosed();
+  }
   sessions = sessions.filter((s) => !s.mode || s.mode === currentMode);
   // Lifecycle buckets — the same Archived/Trash split as the chat sidebar.
   // Flags are tmux user options (@bridge_archived/@bridge_trashed); a
@@ -7706,6 +7743,11 @@ async function renderTerminalSessionList() {
   const trashedSessions = sessions.filter((s) => s.trashed);
   const archivedSessions = sessions.filter((s) => s.archived && !s.trashed);
   sessions = sessions.filter((s) => !s.archived && !s.trashed);
+  // The currently-attached tab counts as active "now"; MRU-sort the rest so the
+  // tab most recently switched to floats to the top. Never-focused sessions
+  // fall back to their creation time, keeping a stable order below focused ones.
+  markTerminalActive(_termSession);
+  sessions.sort((a, b) => (_termLastActive[b.name] || b.created || 0) - (_termLastActive[a.name] || a.created || 0));
   // Show the active session as pending only when tmux doesn't know it at all
   // (list endpoint not live yet, or lazy creation hasn't happened) — not when
   // the mode filter excluded it.
@@ -7726,7 +7768,8 @@ function buildTerminalSessionRow(s, kind) {
   const wrap = document.createElement('div');
   wrap.className = 'terminal-session-wrap';
   const item = document.createElement('div');
-  item.className = 'terminal-session-item' + (s.name === _termSession ? ' active' : '');
+  const isClosed = kind === 'active' && _termClosed.has(s.name);
+  item.className = 'terminal-session-item' + (s.name === _termSession ? ' active' : '') + (isClosed ? ' closed' : '');
   item.onclick = () => {
     if (s.name !== _termSession) switchTerminalSession(s.name);
     if (sidebar.classList.contains('open')) toggleSidebar();
@@ -7744,6 +7787,14 @@ function buildTerminalSessionRow(s, kind) {
     e.stopPropagation();
     startTerminalTabRename(s.name, nameSpan);
   };
+  // Closed-session checkmark, ahead of the name — mirrors the chat view's badge.
+  if (isClosed) {
+    const closedBadge = document.createElement('span');
+    closedBadge.className = 'terminal-session-closed-badge';
+    closedBadge.title = 'Session closed';
+    closedBadge.textContent = '✓';
+    nameRow.insertBefore(closedBadge, nameSpan);
+  }
   nameEl.appendChild(nameRow);
   if (s.path) {
     const dirSpan = document.createElement('span');
@@ -8203,6 +8254,10 @@ function toggleTerminalCloseMenu() {
     btn.onclick = () => {
       menu.style.display = 'none';
       terminalInsert(opt.cmd);
+      // The click is our only signal a close was initiated (the TUI is opaque
+      // to us) — dim the attached tab, mirroring the chat closed-session look.
+      markTerminalClosed(_termSession);
+      renderTerminalSessionList();
     };
     menu.appendChild(btn);
   }
