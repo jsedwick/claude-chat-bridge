@@ -7472,7 +7472,7 @@ function initTerminal() {
     container.textContent = 'Terminal library failed to load (CDN unreachable).';
     return;
   }
-  const fontSize = window.innerWidth < 700 ? 16 : 15;
+  const fontSize = window.innerWidth < 700 ? 16 : 13;
   _term = new Terminal({
     cursorBlink: true,
     fontSize,
