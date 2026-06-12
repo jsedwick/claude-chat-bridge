@@ -5,6 +5,7 @@ import path from 'path';
 import { getObsidianRoot, getObsidianVaults, getVaultPath, getActiveModeVaults, getVaultModeForPath, parseMode } from '../config';
 import { scanVaultProjects } from '../services/vault-projects';
 import { moveToTrash, restoreFromTrash, listTrash, emptyTrash, permanentDelete, isInTrash } from '../services/kb-trash';
+import { semanticSearch } from '../services/kb-semantic';
 
 const router = Router();
 
@@ -317,16 +318,142 @@ router.get('/projects', (req: Request, res: Response) => {
 
 // --- KB Browser endpoints ---
 
-// Recursive search for KB files matching a query
-router.get('/kb/search', (req: Request, res: Response) => {
-  const q = ((req.query.q as string) || '').trim().toLowerCase();
+// Resolve vault directory names for a ?vaults= filter ('work' | 'personal');
+// anything else means all configured vaults.
+function vaultNamesForFilter(filter: string | undefined): string[] {
+  if (filter === 'work' || filter === 'personal') {
+    return getActiveModeVaults(filter).map(v => path.basename(v.path));
+  }
+  return getObsidianVaults();
+}
+
+// Recursive search for KB files matching a query.
+// scope=name (default): file-name substring match.
+// scope=content: full-text literal scan with per-file snippets.
+// scope=semantic: cosine similarity over the MCP server's embedding cache.
+// vaults=work|personal: narrow to that mode's vaults (default: all).
+router.get('/kb/search', async (req: Request, res: Response) => {
+  const rawQ = ((req.query.q as string) || '').trim();
+  const q = rawQ.toLowerCase();
+  const scope = (req.query.scope as string) || 'name';
   if (!q) {
     res.json({ results: [] });
     return;
   }
 
   const root = getObsidianRoot();
-  const vaultNames = getObsidianVaults();
+  const vaultNames = vaultNamesForFilter(req.query.vaults as string);
+
+  if (scope === 'semantic') {
+    try {
+      const { available, results } = await semanticSearch(rawQ, 30, vaultNames);
+      res.json({
+        embeddingsAvailable: available,
+        results: results.map(r => ({
+          name: path.basename(r.path, '.md'),
+          path: r.path,
+          folder: path.relative(root, path.dirname(r.path)),
+          score: r.score,
+        })),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: 'Semantic search failed: ' + (err instanceof Error ? err.message : String(err)),
+      });
+    }
+    return;
+  }
+
+  if (scope === 'content') {
+    const MAX_FILES = 50;
+    const MAX_SNIPPETS = 3;
+    const SNIPPET_LEN = 180;
+    const matched: { name: string; path: string; folder: string; matches: number; snippets: string[] }[] = [];
+
+    function extractSnippets(content: string): { count: number; snippets: string[] } {
+      const lower = content.toLowerCase();
+      let count = 0;
+      let idx = lower.indexOf(q);
+      while (idx !== -1) {
+        count++;
+        idx = lower.indexOf(q, idx + q.length);
+      }
+      const snippets: string[] = [];
+      for (const line of content.split('\n')) {
+        if (snippets.length >= MAX_SNIPPETS) break;
+        let text = line.trim();
+        const li = text.toLowerCase().indexOf(q);
+        if (li === -1) continue;
+        if (text.length > SNIPPET_LEN) {
+          // Window the snippet around the first match in the line
+          const start = Math.max(0, li - 50);
+          text =
+            (start > 0 ? '…' : '') +
+            text.slice(start, start + SNIPPET_LEN) +
+            (start + SNIPPET_LEN < text.length ? '…' : '');
+        }
+        snippets.push(text);
+      }
+      return { count, snippets };
+    }
+
+    // Enumerate first (fast), then read in concurrent async batches so a
+    // content scan never blocks the event loop the terminal WebSockets share.
+    const files: string[] = [];
+    function collectFiles(dir: string) {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          collectFiles(full);
+        } else if (e.isFile() && e.name.endsWith('.md')) {
+          files.push(full);
+        }
+      }
+    }
+
+    for (const vault of vaultNames) {
+      const vaultDir = path.join(root, vault);
+      if (fs.existsSync(vaultDir)) {
+        collectFiles(vaultDir);
+      }
+    }
+
+    const BATCH = 64;
+    for (let i = 0; i < files.length; i += BATCH) {
+      await Promise.all(
+        files.slice(i, i + BATCH).map(async full => {
+          let content;
+          try {
+            content = await fs.promises.readFile(full, 'utf-8');
+          } catch {
+            return;
+          }
+          if (!content.toLowerCase().includes(q)) return;
+          const { count, snippets } = extractSnippets(content);
+          matched.push({
+            name: path.basename(full, '.md'),
+            path: full,
+            folder: path.relative(root, path.dirname(full)),
+            matches: count,
+            snippets,
+          });
+        })
+      );
+    }
+
+    matched.sort((a, b) => b.matches - a.matches);
+    res.json({ results: matched.slice(0, MAX_FILES) });
+    return;
+  }
+
+  // scope=name (default): file-name substring match
   const results: { name: string; path: string; folder: string }[] = [];
   const MAX_RESULTS = 100;
 
@@ -365,10 +492,10 @@ router.get('/kb/search', (req: Request, res: Response) => {
   res.json({ results });
 });
 
-// 50 most recently modified .md files across all vaults
-router.get('/kb/recent', (_req: Request, res: Response) => {
+// 50 most recently modified .md files across all vaults (or one mode's via ?vaults=)
+router.get('/kb/recent', (req: Request, res: Response) => {
   const root = getObsidianRoot();
-  const vaultNames = getObsidianVaults();
+  const vaultNames = vaultNamesForFilter(req.query.vaults as string);
   const files: { name: string; path: string; folder: string; modified: number }[] = [];
 
   function walk(dir: string) {
@@ -428,10 +555,10 @@ function validateKbPath(filePath: string): string | null {
   return resolved;
 }
 
-// List directory contents for KB tree
+// List directory contents for KB tree (?vaults= narrows the root vault list)
 router.get('/kb/tree', (req: Request, res: Response) => {
   const root = getObsidianRoot();
-  const vaultNames = getObsidianVaults();
+  const vaultNames = vaultNamesForFilter(req.query.vaults as string);
   const reqPath = (req.query.path as string) || root;
   const resolved = validateKbPath(reqPath);
   if (!resolved) {

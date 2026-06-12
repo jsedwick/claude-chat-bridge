@@ -755,6 +755,42 @@ html, body {
   border-bottom-color: rgba(5, 150, 105, 0.4);
 }
 
+/* KB header tint follows the KB vault filter, NOT the session context — the KB
+   browses both contexts, so the banner reflects what's being viewed. The #id
+   selectors outweigh the [data-mode] rules above; All stays neutral. */
+#kb-panel .chat-header {
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border);
+}
+
+#kb-panel[data-kb-vaults="work"] .chat-header {
+  background:
+    linear-gradient(rgba(107, 179, 255, 0.14), rgba(107, 179, 255, 0.14)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(107, 179, 255, 0.45);
+}
+
+#kb-panel[data-kb-vaults="personal"] .chat-header {
+  background:
+    linear-gradient(rgba(107, 223, 176, 0.14), rgba(107, 223, 176, 0.14)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(107, 223, 176, 0.45);
+}
+
+[data-theme="light"] #kb-panel[data-kb-vaults="work"] .chat-header {
+  background:
+    linear-gradient(rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.10)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(37, 99, 235, 0.4);
+}
+
+[data-theme="light"] #kb-panel[data-kb-vaults="personal"] .chat-header {
+  background:
+    linear-gradient(rgba(5, 150, 105, 0.10), rgba(5, 150, 105, 0.10)),
+    var(--bg-secondary);
+  border-bottom-color: rgba(5, 150, 105, 0.4);
+}
+
 .btn-menu {
   background: none;
   border: none;
@@ -5442,6 +5478,39 @@ pre.streaming {
   margin-bottom: 6px;
 }
 
+.kb-vault-filter {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-bottom: 6px;
+  padding: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.kb-vault-filter-btn {
+  flex: 1;
+  padding: 3px 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.kb-vault-filter-btn:hover {
+  color: var(--text-primary);
+}
+
+.kb-vault-filter-btn.active {
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+
 .kb-search-icon {
   position: absolute;
   left: 10px;
@@ -5454,7 +5523,7 @@ pre.streaming {
 .kb-search-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 7px 30px 7px 30px;
+  padding: 7px 70px 7px 30px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-primary);
@@ -5484,6 +5553,32 @@ pre.streaming {
 
 .kb-search-input::placeholder {
   color: var(--text-muted);
+}
+
+.kb-search-scope {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.kb-search-scope:hover {
+  color: var(--text-primary);
+}
+
+.kb-search-scope.active {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* KB Sidebar Toolbar */
@@ -5650,6 +5745,29 @@ pre.streaming {
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 1px;
+}
+
+.kb-search-result-badge {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.kb-search-result-snippet {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.kb-search-result-snippet mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text-primary);
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .kb-search-empty {
@@ -5883,14 +6001,6 @@ pre.streaming {
 }
 [data-theme="light"] [data-vault-mode="personal"] {
   background: rgba(5, 150, 105, 0.05);
-}
-
-/* Cross-mode greying — items whose vault doesn't match the active mode render
-   dimmed. CSS reads html[data-mode] so mode switches react without re-rendering
-   the tree; the wrapper-level data-vault-mode tint above is untouched. */
-html[data-mode="work"] .kb-tree-item[data-entry-mode="personal"],
-html[data-mode="personal"] .kb-tree-item[data-entry-mode="work"] {
-  opacity: 0.55;
 }
 
 /* Drag and drop */

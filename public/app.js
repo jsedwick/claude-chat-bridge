@@ -9979,6 +9979,42 @@ async function loadKbPreferences() {
   }
 }
 
+// KB search scope: 'name' (filename filter) | 'content' (full-text) | 'semantic'
+const KB_SEARCH_SCOPES = ['name', 'content', 'semantic'];
+const KB_SCOPE_META = {
+  name: { label: 'Name', placeholder: 'Filter by name…', debounce: 200 },
+  content: { label: 'Text', placeholder: 'Search content…', debounce: 400 },
+  semantic: { label: 'Sem', placeholder: 'Semantic search…', debounce: 600 },
+};
+let kbSearchScope = localStorage.getItem('kb-search-scope') || 'name';
+if (!KB_SEARCH_SCOPES.includes(kbSearchScope)) kbSearchScope = 'name';
+
+function applyKbSearchScopeUi() {
+  const btn = document.getElementById('kb-search-scope');
+  const input = document.getElementById('kb-search');
+  if (!btn || !input) return;
+  btn.textContent = KB_SCOPE_META[kbSearchScope].label;
+  btn.classList.toggle('active', kbSearchScope !== 'name');
+  input.placeholder = KB_SCOPE_META[kbSearchScope].placeholder;
+}
+
+// KB vault filter: 'all' | 'work' | 'personal' — narrows search, tree root, and Recent
+let kbVaultFilter = localStorage.getItem('kb-vault-filter') || 'all';
+if (!['all', 'work', 'personal'].includes(kbVaultFilter)) kbVaultFilter = 'all';
+
+function kbVaultsQS() {
+  return kbVaultFilter === 'all' ? '' : `&vaults=${kbVaultFilter}`;
+}
+
+function applyKbVaultFilterUi() {
+  document.querySelectorAll('#kb-vault-filter .kb-vault-filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.vaults === kbVaultFilter);
+  });
+  // The KB header tint follows this filter (All = neutral), not the session context
+  const kbPanel = document.getElementById('kb-panel');
+  if (kbPanel) kbPanel.dataset.kbVaults = kbVaultFilter;
+}
+
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
   // Decision 004 billing mode: open in the saved view. Terminal — the
@@ -10032,8 +10068,35 @@ document.addEventListener('DOMContentLoaded', () => {
         kbShowingRecent = false;
         document.getElementById('kb-toolbar-recent').classList.remove('active');
       }
-      kbSearchTimer = setTimeout(() => kbSearchDocs(q), 200);
+      kbSearchTimer = setTimeout(() => kbSearchDocs(q), KB_SCOPE_META[kbSearchScope].debounce);
     });
+    const scopeBtn = document.getElementById('kb-search-scope');
+    if (scopeBtn) {
+      applyKbSearchScopeUi();
+      scopeBtn.addEventListener('click', () => {
+        const i = KB_SEARCH_SCOPES.indexOf(kbSearchScope);
+        kbSearchScope = KB_SEARCH_SCOPES[(i + 1) % KB_SEARCH_SCOPES.length];
+        localStorage.setItem('kb-search-scope', kbSearchScope);
+        applyKbSearchScopeUi();
+        const q = searchInput.value.trim();
+        if (q) kbSearchDocs(q);
+        searchInput.focus();
+      });
+    }
+    const vaultFilterEl = document.getElementById('kb-vault-filter');
+    if (vaultFilterEl) {
+      applyKbVaultFilterUi();
+      vaultFilterEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.kb-vault-filter-btn');
+        if (!btn || btn.dataset.vaults === kbVaultFilter) return;
+        kbVaultFilter = btn.dataset.vaults;
+        localStorage.setItem('kb-vault-filter', kbVaultFilter);
+        applyKbVaultFilterUi();
+        loadKbTree(); // re-render root with the new vault set
+        refreshKbSearchIfActive();
+        if (kbShowingRecent) loadKbRecentFiles();
+      });
+    }
     clearBtn.addEventListener('click', () => {
       searchInput.value = '';
       clearBtn.style.display = 'none';
@@ -10055,22 +10118,46 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// Escape HTML, then wrap case-insensitive occurrences of the query in <mark>
+function highlightKbMatch(text, query) {
+  const escaped = escapeHtml(text);
+  const re = new RegExp(escapeRegex(escapeHtml(query)), 'gi');
+  return escaped.replace(re, m => `<mark>${m}</mark>`);
+}
+
 async function kbSearchDocs(query) {
   const treeEl = document.getElementById('kb-tree');
   const resultsEl = document.getElementById('kb-search-results');
+  const scope = kbSearchScope;
   try {
-    const res = await fetchWithRetry(`/api/vault/kb/search?q=${encodeURIComponent(query)}`);
+    if (scope === 'semantic') {
+      // First-ever semantic query loads the embedding model server-side
+      // (seconds, not ms) — show progress immediately and allow a long fetch.
+      treeEl.style.display = 'none';
+      resultsEl.style.display = '';
+      resultsEl.innerHTML = '<div class="kb-search-empty">Searching…</div>';
+    }
+    const vaultsFilter = kbVaultFilter;
+    const res = await fetchWithRetry(
+      `/api/vault/kb/search?q=${encodeURIComponent(query)}&scope=${scope}${kbVaultsQS()}`,
+      {},
+      { timeout: scope === 'semantic' ? 120000 : 10000 }
+    );
     const data = await res.json();
 
-    // If input changed while fetching, discard stale results
+    // If input, scope, or vault filter changed while fetching, discard stale results
     const current = document.getElementById('kb-search').value.trim();
-    if (current !== query) return;
+    if (current !== query || kbSearchScope !== scope || kbVaultFilter !== vaultsFilter) return;
 
     treeEl.style.display = 'none';
     resultsEl.style.display = '';
     resultsEl.innerHTML = '';
 
-    if (data.results.length === 0) {
+    if (scope === 'semantic' && data.embeddingsAvailable === false) {
+      resultsEl.innerHTML = '<div class="kb-search-empty">No embedding cache found — enable embeddings in the MCP server</div>';
+      return;
+    }
+    if (!data.results || data.results.length === 0) {
       resultsEl.innerHTML = '<div class="kb-search-empty">No matching documents</div>';
       return;
     }
@@ -10078,9 +10165,21 @@ async function kbSearchDocs(query) {
     for (const r of data.results) {
       const item = document.createElement('div');
       item.className = 'kb-search-result';
-      item.innerHTML =
-        `<span class="kb-search-result-name">${escapeHtml(r.name)}</span>` +
+      let badge = '';
+      if (scope === 'semantic') {
+        badge = `<span class="kb-search-result-badge">${Math.round(r.score * 100)}%</span>`;
+      } else if (scope === 'content' && r.matches > 1) {
+        badge = `<span class="kb-search-result-badge">${r.matches}×</span>`;
+      }
+      let html =
+        `<span class="kb-search-result-name">${escapeHtml(r.name)}${badge}</span>` +
         `<span class="kb-search-result-folder">${escapeHtml(r.folder)}</span>`;
+      if (scope === 'content' && r.snippets) {
+        for (const s of r.snippets) {
+          html += `<span class="kb-search-result-snippet">${highlightKbMatch(s, query)}</span>`;
+        }
+      }
+      item.innerHTML = html;
       item.addEventListener('click', () => {
         if (kbIsEditing) {
           clearTimeout(kbAutosaveTimer);
@@ -10257,7 +10356,7 @@ function linkifyVaultPaths(escapedText) {
 async function loadKbTree(dirPath) {
   const url = dirPath
     ? `/api/vault/kb/tree?path=${encodeURIComponent(dirPath)}`
-    : '/api/vault/kb/tree';
+    : '/api/vault/kb/tree' + (kbVaultFilter === 'all' ? '' : `?vaults=${kbVaultFilter}`);
   try {
     const res = await fetchWithRetry(url);
     const data = await res.json();
@@ -10701,12 +10800,10 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
   const isDir = entry.type === 'directory';
   const isRootVault = depth === 0 && isDir;
   const skipRename = !!opts.skipRename;
-  // Cross-mode entries belong to the inactive vault — only read actions exposed.
-  const isCrossMode = !!(entry.vaultMode && entry.vaultMode !== currentMode);
 
   const items = [];
 
-  if (isDir && !isCrossMode) {
+  if (isDir) {
     items.push({ label: 'New File', action: () => {
       // Find the tree item's children container and chevron for createKbFile
       const dirItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
@@ -10722,7 +10819,7 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
     items.push({ label: 'New Folder', action: () => createKbDir(entry.path) });
   }
 
-  if (!isRootVault && !skipRename && !isCrossMode) {
+  if (!isRootVault && !skipRename) {
     items.push({ label: 'Rename', action: () => {
       const treeItem = document.querySelector(`.kb-tree-item[data-path="${CSS.escape(entry.path)}"]`);
       if (!treeItem) return;
@@ -10736,9 +10833,7 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
   }
 
   if (!isDir) {
-    if (!isCrossMode) {
-      items.push({ label: 'Duplicate', action: () => duplicateKbFile(entry.path) });
-    }
+    items.push({ label: 'Duplicate', action: () => duplicateKbFile(entry.path) });
     items.push({ label: 'Export', action: () => showKbExportModal(entry.path, entry.name) });
   }
 
@@ -10749,7 +10844,7 @@ function showKbContextMenu(x, y, entry, depth, opts = {}) {
     navigator.clipboard.writeText(relativePath).catch(() => {});
   }});
 
-  if (!isRootVault && !isCrossMode) {
+  if (!isRootVault) {
     if (isDir) {
       items.push({ label: 'Delete Folder', className: 'danger', action: () => deleteKbDir(entry.path) });
     } else {
@@ -11049,7 +11144,6 @@ function startKbRename(entryPath, nameEl) {
 
 function renameCurrentKbFile() {
   if (!kbCurrentFile) return;
-  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) return;
   startKbRename(kbCurrentFile.path, document.getElementById('kb-title'));
 }
 
@@ -11087,17 +11181,12 @@ function createKbTreeNode(entry, depth) {
   item.className = 'kb-tree-item' + (entry.type === 'file' ? ' kb-tree-file' : '');
   item.dataset.path = entry.path;
   item.dataset.type = entry.type;
-  // Track each item's vault mode so CSS can grey out cross-mode entries when
-  // the active mode mismatches html[data-mode]. JS handlers also re-check at
-  // fire time, so mode switches react without re-rendering the tree.
-  if (entry.vaultMode) item.dataset.entryMode = entry.vaultMode;
 
   // Drag-and-drop: make non-root items draggable (root vaults are drop-only)
   const isRootVault = depth === 0 && entry.type === 'directory';
   item.draggable = !isRootVault;
   item.addEventListener('dragstart', (e) => {
     if (isRootVault) { e.preventDefault(); return; }
-    if (entry.vaultMode && entry.vaultMode !== currentMode) { e.preventDefault(); return; }
     e.dataTransfer.setData('text/plain', entry.path);
     e.dataTransfer.effectAllowed = 'move';
     item.classList.add('kb-dragging');
@@ -11126,8 +11215,6 @@ function createKbTreeNode(entry, depth) {
       e.preventDefault();
       e.stopPropagation();
       item.classList.remove('kb-drop-target');
-      // Refuse drops into a directory belonging to the inactive mode.
-      if (entry.vaultMode && entry.vaultMode !== currentMode) return;
       const sourcePath = e.dataTransfer.getData('text/plain');
       if (!sourcePath || sourcePath === entry.path) return;
       // Don't drop a folder into itself
@@ -11284,7 +11371,6 @@ function createKbTreeNode(entry, depth) {
 
     nameSpan.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      if (entry.vaultMode && entry.vaultMode !== currentMode) return;
       startKbRename(entry.path, nameSpan);
     });
 
@@ -11541,16 +11627,14 @@ async function loadKbFile(filePath, { skipHistory = false } = {}) {
     }
 
     document.getElementById('kb-title').textContent = data.name;
-    // Cross-mode files: read-only — hide title-click rename + Edit button.
-    const crossModeFile = !!(data.vaultMode && data.vaultMode !== currentMode);
-    document.getElementById('kb-title').style.cursor = crossModeFile ? 'default' : 'pointer';
+    document.getElementById('kb-title').style.cursor = 'pointer';
     document.getElementById('kb-welcome').style.display = 'none';
     document.getElementById('kb-rendered').style.display = '';
     document.getElementById('kb-diff').style.display = 'none';
     document.getElementById('kb-diff-btn').classList.remove('kb-action-btn-active');
     document.getElementById('kb-revert-wrapper').style.display = 'none';
     document.getElementById('kb-diff-btn').style.display = '';
-    document.getElementById('kb-edit-btn').style.display = crossModeFile ? 'none' : '';
+    document.getElementById('kb-edit-btn').style.display = '';
     document.getElementById('kb-editor').style.display = 'none';
     document.getElementById('kb-save-btn').style.display = 'none';
     document.getElementById('kb-cancel-btn').style.display = 'none';
@@ -11846,7 +11930,7 @@ async function loadKbRecentFiles() {
   container.innerHTML = '<div class="kb-bookmarks-empty">Loading…</div>';
 
   try {
-    const resp = await fetchWithRetry('/api/vault/kb/recent');
+    const resp = await fetchWithRetry('/api/vault/kb/recent' + (kbVaultFilter === 'all' ? '' : `?vaults=${kbVaultFilter}`));
     const data = await resp.json();
 
     if (!data.results || data.results.length === 0) {
@@ -12061,11 +12145,6 @@ async function toggleKbDiff() {
 
 async function revertKbFile() {
   if (!kbCurrentFile) return;
-  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
-    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
-    alert(`Switch to ${other} mode to revert this file.`);
-    return;
-  }
   const revertBtn = document.getElementById('kb-revert-btn');
   const commitHash = revertBtn.dataset.commitHash;
   if (!commitHash) {
@@ -12417,11 +12496,6 @@ function attachWikiLinkListeners(editorRootEl) {
 
 async function toggleKbEdit() {
   if (!kbCurrentFile) return;
-  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
-    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
-    showKbSaveStatus(`Switch to ${other} mode to edit this file`, 'error');
-    return;
-  }
   kbIsEditing = true;
   kbShowingDiff = false;
 
@@ -12704,13 +12778,6 @@ function showKbSaveStatus(text, type = 'info') {
 
 async function kbAutosave() {
   if (!kbCurrentFile || !kbIsEditing) return;
-  // Mode switched mid-edit — refuse the autosave write rather than push a
-  // cross-mode mutation through the API.
-  if (kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
-    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
-    showKbSaveStatus(`Save disabled — switch to ${other} mode`, 'error');
-    return;
-  }
   let editorContent;
   if (kbUsingPlainTextarea) {
     if (!kbPlainTextarea) return;
@@ -12758,11 +12825,6 @@ function scheduleKbAutosave() {
 
 async function saveKbFile() {
   clearTimeout(kbAutosaveTimer);
-  if (kbCurrentFile && kbCurrentFile.vaultMode && kbCurrentFile.vaultMode !== currentMode) {
-    const other = kbCurrentFile.vaultMode === 'work' ? 'Work' : 'Personal';
-    showKbSaveStatus(`Save disabled — switch to ${other} mode`, 'error');
-    return;
-  }
   let editorContent;
   if (kbUsingPlainTextarea) {
     editorContent = kbPlainTextarea ? kbPlainTextarea.value : '';
