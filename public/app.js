@@ -12398,7 +12398,7 @@ function renderWikiPopover() {
 async function fetchWikiCandidates(query) {
   const seq = ++wikiLinkState.fetchSeq;
   try {
-    const r = await fetch(`/api/vault/kb/link-candidates?mode=${currentMode}&q=${encodeURIComponent(query)}&limit=20`);
+    const r = await fetch(`/api/vault/kb/link-candidates?q=${encodeURIComponent(query)}&limit=20${kbVaultsQS()}`);
     if (seq !== wikiLinkState.fetchSeq) return;
     if (!r.ok) return;
     const results = await r.json();

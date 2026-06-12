@@ -1194,7 +1194,7 @@ function buildWikiLinkIndex(): Map<string, string> {
   return index;
 }
 
-// In-memory cache for wiki-link autocomplete candidates, scoped to active-mode vaults.
+// In-memory cache for wiki-link autocomplete candidates, scoped to the KB's vault-context filter.
 // Invalidated whenever a vault .md file is written/created/deleted/moved (see wikiLinkCache resets).
 interface LinkCandidate {
   name: string;
@@ -1239,10 +1239,20 @@ function buildLinkCandidates(vaults: Array<{ name: string; path: string }>): Lin
   return results;
 }
 
-function getLinkCandidates(mode: 'work' | 'personal'): LinkCandidate[] {
-  const vaults = getActiveModeVaults(mode);
+// Resolve the {name, path} vault list for a ?vaults= filter, mirroring
+// vaultNamesForFilter: 'work'|'personal' narrow to that mode, anything else is all vaults.
+function vaultsForFilter(filter: string | undefined): Array<{ name: string; path: string }> {
+  if (filter === 'work' || filter === 'personal') {
+    return getActiveModeVaults(filter);
+  }
+  const root = getObsidianRoot();
+  return getObsidianVaults().map(name => ({ name, path: path.join(root, name) }));
+}
+
+function getLinkCandidates(filter: string | undefined): LinkCandidate[] {
+  const vaults = vaultsForFilter(filter);
   if (vaults.length === 0) return [];
-  const key = mode + ':' + vaults.map(v => v.path).join('|');
+  const key = (filter || 'all') + ':' + vaults.map(v => v.path).join('|');
   const cached = linkCandidateCache.get(key);
   if (cached && Date.now() - cached.builtAt < LINK_CANDIDATE_TTL_MS) return cached.entries;
   const entries = buildLinkCandidates(vaults);
@@ -1250,17 +1260,15 @@ function getLinkCandidates(mode: 'work' | 'personal'): LinkCandidate[] {
   return entries;
 }
 
-// Wiki-link autocomplete: return active-mode vault .md filenames matching the query,
-// ranked exact > prefix > substring, then by recency.
+// Wiki-link autocomplete: return .md filenames from the KB's vault-context filter
+// matching the query, ranked exact > prefix > substring, then by recency.
 router.get('/kb/link-candidates', (req: Request, res: Response) => {
-  const mode = parseMode(req.query.mode);
-  if (!mode) {
-    res.status(400).json({ error: 'mode query param required: "work" or "personal"' });
-    return;
-  }
+  // Scope to the KB's vault-context filter ('work'|'personal'|all), mirroring
+  // /kb/tree and /kb/search — NOT the global chat/terminal mode.
+  const filter = req.query.vaults as string | undefined;
   const q = ((req.query.q as string) || '').trim().toLowerCase();
   const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
-  const entries = getLinkCandidates(mode);
+  const entries = getLinkCandidates(filter);
   if (entries.length === 0) {
     res.json([]);
     return;
