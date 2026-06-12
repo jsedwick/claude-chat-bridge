@@ -7,7 +7,7 @@ import type { Request, Response } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import { shellExecOpts } from './shell-env';
-import { getActiveModeVaults, parseMode } from '../config';
+import { config, getActiveModeVaults, parseMode } from '../config';
 import { scheduleTerminalSnapshot, pruneTerminalSnapshot } from './terminal-snapshot';
 
 // Integrated terminal backend (Decision 004, Phase 1). A WebSocket upgrade on
@@ -76,16 +76,18 @@ export function terminalSessions(_req: Request, res: Response): void {
   // Colon separator: tmux forbids ':' in session names, and (unlike tab) it
   // survives tmux's format-output sanitization, which replaces control chars
   // with '_' — tabs here silently merged all three fields into one string.
-  // The cwd rides last because paths MAY contain colons: the first six
+  // The cwd rides last because paths MAY contain colons: the first seven
   // fields are colon-free (sanitized name, numeric timestamps, validated
   // mode, flag bits), so everything past them is rejoined as the path.
   // #{pane_current_path} resolves to each session's active pane;
   // #{@bridge_mode} is the context tag set by terminalSessionMode, and the
   // archived/trashed bits are the sidebar lifecycle flags (all empty for
-  // untagged sessions).
+  // untagged sessions). isClaude is the snapshot service's expression: the
+  // TUI reports pane_current_command as either `claude` or a bare semver,
+  // so match both — the Start button uses it to launch in-place vs new-tab.
   execFile(
     TMUX,
-    ['list-sessions', '-F', '#{session_name}:#{session_created}:#{session_attached}:#{@bridge_mode}:#{@bridge_archived}:#{@bridge_trashed}:#{pane_current_path}'],
+    ['list-sessions', '-F', '#{session_name}:#{session_created}:#{session_attached}:#{@bridge_mode}:#{@bridge_archived}:#{@bridge_trashed}:#{||:#{==:#{pane_current_command},claude},#{m/r:^[0-9]+\\.[0-9]+\\.[0-9]+$,#{pane_current_command}}}:#{pane_current_path}'],
     (err, stdout) => {
       if (err) {
         res.json([]); // no tmux server running — no sessions yet
@@ -97,8 +99,8 @@ export function terminalSessions(_req: Request, res: Response): void {
         .filter(Boolean)
         .map((line) => {
           const parts = line.split(':');
-          const [name, created, attached, mode, archived, trashed] = parts;
-          return { name, created: Number(created) * 1000, attached: attached !== '0', mode: mode || '', archived: archived === '1', trashed: trashed === '1', path: parts.slice(6).join(':') };
+          const [name, created, attached, mode, archived, trashed, isClaude] = parts;
+          return { name, created: Number(created) * 1000, attached: attached !== '0', mode: mode || '', archived: archived === '1', trashed: trashed === '1', isClaude: isClaude === '1', path: parts.slice(7).join(':') };
         });
       res.json(sessions);
     }
@@ -145,8 +147,10 @@ export function terminalSessionMode(req: Request, res: Response): void {
 // Archive/trash lifecycle for the sidebar (parity with the chat session
 // list). Each flag is a tmux user option riding on the session — the same
 // pattern as @bridge_mode — so it survives bridge restarts and dies with the
-// session. An archived or trashed session keeps running; only the trash
-// row's permanent delete (the DELETE route → kill-session) terminates it.
+// session. An archived or trashed session keeps running; it is terminated
+// only by the trash row's permanent delete (the DELETE route → kill-session)
+// or by the per-mode FIFO trash cap (enforceTrashedTerminalCap below), which
+// kills the oldest-trashed sessions once a mode's trash passes the cap.
 // Trash clears the archive flag so a session sits in exactly one bucket;
 // -u -q unsets quietly even when the option was never set — and also when
 // the session is gone, so the unset-only routes (unarchive/restore) are
@@ -166,7 +170,7 @@ function setLifecycleFlags(name: string, args: string[], res: Response): void {
 
 export function terminalArchiveSession(req: Request, res: Response): void {
   const name = sanitizeSession(String(req.params.name || ''));
-  setLifecycleFlags(name, ['set-option', '-t', name, '@bridge_archived', '1', ';', 'set-option', '-u', '-q', '-t', name, '@bridge_trashed'], res);
+  setLifecycleFlags(name, ['set-option', '-t', name, '@bridge_archived', '1', ';', 'set-option', '-u', '-q', '-t', name, '@bridge_trashed', ';', 'set-option', '-u', '-q', '-t', name, '@bridge_trashed_at'], res);
 }
 
 export function terminalUnarchiveSession(req: Request, res: Response): void {
@@ -174,14 +178,93 @@ export function terminalUnarchiveSession(req: Request, res: Response): void {
   setLifecycleFlags(name, ['set-option', '-u', '-q', '-t', name, '@bridge_archived'], res);
 }
 
+// Per-mode FIFO cap on the terminal trash (parity with the chat sidebar's
+// enforceTrashedCap): once a mode's trash exceeds config.maxTrashedTerminalSessions,
+// the oldest-trashed sessions are killed for good. Order is by @bridge_trashed_at
+// (stamped in terminalTrashSession) — session_created can't order the trash because
+// the reboot-survival restore (Decision 004 Phase 3) recreates every snapshot
+// session with the same created time. Sessions trashed before this option existed
+// have no @bridge_trashed_at and fall back to session_created; since that is a
+// seconds epoch and trashed_at is a millis epoch, the legacy items always sort
+// before freshly-stamped ones — i.e. the backlog is evicted first, which is what
+// we want. The bucket is keyed to the just-trashed session's own mode, so trashing
+// under one context never evicts another's. Best-effort: a missing tmux server or a
+// failed kill evicts nothing. Calls back with the names actually killed.
+function enforceTrashedTerminalCap(triggerName: string, done: (evicted: string[]) => void): void {
+  execFile(
+    TMUX,
+    ['list-sessions', '-F', '#{session_name}:#{session_created}:#{@bridge_mode}:#{@bridge_trashed}:#{@bridge_trashed_at}'],
+    (err, stdout) => {
+      if (err) {
+        done([]); // no tmux server — nothing to evict
+        return;
+      }
+      const rows = stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          // Names are colon-free (tmux forbids ':'), so the five fixed fields
+          // split cleanly; unset options expand to empty, never dropping a field.
+          const [name, created, mode, trashed, trashedAt] = line.split(':');
+          return { name, mode: mode || '', trashed: trashed === '1', order: Number(trashedAt) || Number(created) || 0 };
+        });
+      const trigger = rows.find((r) => r.name === triggerName);
+      const mode = trigger ? trigger.mode : '';
+      const bucket = rows
+        .filter((r) => r.trashed && r.mode === mode)
+        .sort((a, b) => a.order - b.order);
+      const overflow = bucket.length - config.maxTrashedTerminalSessions;
+      if (overflow <= 0) {
+        done([]);
+        return;
+      }
+      const victims = bucket.slice(0, overflow);
+      const evicted: string[] = [];
+      let remaining = victims.length;
+      for (const v of victims) {
+        execFile(TMUX, ['kill-session', '-t', v.name], (killErr) => {
+          if (!killErr) {
+            evicted.push(v.name);
+            pruneTerminalSnapshot(v.name);
+          }
+          if (--remaining === 0) {
+            if (evicted.length) scheduleTerminalSnapshot();
+            done(evicted);
+          }
+        });
+      }
+    }
+  );
+}
+
 export function terminalTrashSession(req: Request, res: Response): void {
   const name = sanitizeSession(String(req.params.name || ''));
-  setLifecycleFlags(name, ['set-option', '-t', name, '@bridge_trashed', '1', ';', 'set-option', '-u', '-q', '-t', name, '@bridge_archived'], res);
+  // Stamp the trash time alongside the flag so the FIFO cap can evict by when a
+  // session entered the trash rather than when tmux created it. -q keeps the
+  // unset quiet; the lone ';' args are tmux's command separator (no shell, so
+  // no escaping).
+  execFile(
+    TMUX,
+    ['set-option', '-t', name, '@bridge_trashed', '1', ';',
+     'set-option', '-t', name, '@bridge_trashed_at', String(Date.now()), ';',
+     'set-option', '-u', '-q', '-t', name, '@bridge_archived'],
+    (err) => {
+      if (err) {
+        res.status(404).json({ error: 'session not found' });
+        return;
+      }
+      scheduleTerminalSnapshot();
+      enforceTrashedTerminalCap(name, (evicted) => {
+        res.json({ name, evicted });
+      });
+    }
+  );
 }
 
 export function terminalRestoreSession(req: Request, res: Response): void {
   const name = sanitizeSession(String(req.params.name || ''));
-  setLifecycleFlags(name, ['set-option', '-u', '-q', '-t', name, '@bridge_trashed'], res);
+  setLifecycleFlags(name, ['set-option', '-u', '-q', '-t', name, '@bridge_trashed', ';', 'set-option', '-u', '-q', '-t', name, '@bridge_trashed_at'], res);
 }
 
 // Session metadata for the details panel. Two queries: colon-joined safe

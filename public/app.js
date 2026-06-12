@@ -8068,13 +8068,25 @@ function startTerminalTabRename(oldName, el) {
       el.textContent = originalText;
       return;
     }
-    try {
+    const patchRename = async () => {
       const res = await fetch(`/api/terminal/sessions/${encodeURIComponent(oldName)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
       if (!res.ok) throw new Error(String(res.status));
+    };
+    try {
+      try {
+        await patchRename();
+      } catch (e) {
+        // A rename can race the WS attach that creates the session: the login
+        // shell takes a beat before exec'ing tmux, and a PATCH in that window
+        // 409s ("missing session"). One retry after the dust settles covers
+        // renaming a brand-new tab immediately after opening it.
+        await new Promise((r) => setTimeout(r, 800));
+        await patchRename();
+      }
       if (_termSession === oldName) {
         // tmux clients follow renames — no reconnect needed, just track it.
         _termSession = name;
@@ -8222,27 +8234,38 @@ function hideTerminalDropdowns() {
   }
 }
 
-// Start button: open a NEW terminal tab in the same cwd as the session being
-// viewed, then launch interactive Claude Code with the vault session-start
+// Start button: launch interactive Claude Code with the vault session-start
 // command for the context tab currently selected (Work → /vault:work,
 // Personal → /vault:personal) — no menu, the tabs are the selector. The button
 // lives inside the terminal panel, so it's only reachable while a session is
-// attached; we read that session's live cwd (#{pane_current_path}) and hand it
-// to the standard new-session flow rather than typing into the current session.
+// attached. Where claude launches depends on the attached session: a plain
+// shell (no claude running) gets the launch line typed into IT — preserving
+// the tab the user just created and possibly named — while a session already
+// running claude gets a NEW tab in its cwd (#{pane_current_path}) via the
+// standard new-session flow, so the running TUI is never disturbed.
 async function terminalStartClaude() {
   hideTerminalDropdowns();
-  let cwd = null;
+  let cur = null;
   try {
     const res = await fetch('/api/terminal/sessions');
-    if (res.ok) {
-      const cur = (await res.json()).find((s) => s.name === _termSession);
-      cwd = cur && cur.path ? cur.path : null;
-    }
-  } catch (e) { /* list endpoint unavailable — fall back to the server default cwd */ }
+    if (res.ok) cur = (await res.json()).find((s) => s.name === _termSession) || null;
+  } catch (e) { /* list endpoint unavailable — fall back to the new-tab flow */ }
   // The vault plugin has no system-wide registration — skills + MCP load only
   // via --plugin-dir, skip-permissions is the trusted interactive path, and the
-  // model flag is applied by buildTerminalClaudeLaunch inside the flow below.
-  startTerminalSessionWithPrompt(cwd, `/vault:${currentMode}`);
+  // model flag is applied by buildTerminalClaudeLaunch.
+  const prompt = `/vault:${currentMode}`;
+  // Explicit false only: a pre-restart backend omits isClaude entirely, and
+  // undefined must mean "unknown → keep the safe new-tab flow", not "shell".
+  if (cur && cur.isClaude === false) {
+    // Plain shell — launch in place. The shell is already in its own cwd, so
+    // no cwd handoff is needed. Relaunching also un-dims a closed-marked tab:
+    // a fresh claude makes the close-menu dim stale.
+    if (_termClosed.delete(_termSession)) saveTerminalClosed();
+    terminalType(buildTerminalClaudeLaunch(prompt));
+    renderTerminalSessionList();
+    return;
+  }
+  startTerminalSessionWithPrompt(cur && cur.path ? cur.path : null, prompt);
 }
 
 // POSIX single-quote escaping so an arbitrary kickoff prompt (which may contain
@@ -8453,12 +8476,21 @@ function connectTerminalWs() {
   }
   _termWs = new WebSocket(wsUrl);
   _termWs.onopen = () => { sendTerminalResize(); if (_term) _term.focus(); };
+  let firstOutput = true;
   _termWs.onmessage = (e) => {
     if (_term) _term.write(e.data);
     // First server output means tmux is up and the shell is starting. If a
     // launch was armed (continue/start in Terminal mode), type it now; a short
     // settle lets the login shell finish drawing its prompt first. Keystrokes
     // buffer in the tty regardless, so this only needs to be roughly on time.
+    if (firstOutput) {
+      firstOutput = false;
+      // tmux now provably has the session — refresh the sidebar so a brand-new
+      // tab's pending row resolves to the real one. The new-session flows'
+      // 1200ms timer alone missed this when a slow login shell (rc files) beat
+      // the timer, leaving a stale pending row until the next manual action.
+      renderTerminalSessionList();
+    }
     if (_termPendingLaunch) {
       const cmd = _termPendingLaunch;
       _termPendingLaunch = null;
