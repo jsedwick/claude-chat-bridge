@@ -5035,6 +5035,40 @@ pre.streaming {
   padding: 2px 0;
 }
 
+/* Minimal credit meter in the Metered Sessions sidebar (above Archived) */
+.usage-sidebar {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px 8px;
+}
+.usage-sidebar-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.usage-sidebar-amount {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-secondary);
+}
+.usage-sidebar .usage-budget-bar {
+  margin-bottom: 0;
+}
+
+/* Reset day/time controls in Settings → Usage */
+.usage-reset-controls {
+  display: flex;
+  gap: 12px;
+}
+.usage-reset-controls .settings-form-field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
 /* Settings list items */
 .settings-item {
   display: flex;

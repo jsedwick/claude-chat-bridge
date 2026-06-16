@@ -3173,6 +3173,7 @@ async function loadSessions() {
     renderSessionList(activeSessions);
     renderArchiveList(archivedSessions);
     renderTrashList(trashedSessions);
+    renderUsageSidebar();
   } catch (err) {
     console.error('Failed to load sessions:', err);
     // Keep existing content if available, otherwise show error
@@ -7389,6 +7390,7 @@ function switchView(view) {
     sessionsView.style.display = '';
     sessionsToolbar.style.display = '';
     chatMain.style.display = '';
+    renderUsageSidebar();
   }
 }
 
@@ -8620,7 +8622,7 @@ function renderSettingsContent() {
   }
 }
 
-const USAGE_MONTHLY_BUDGET_USD = 100;
+const USAGE_BUDGET_USD = 100;
 
 function renderUsageSettings(container) {
   const meterHidden = localStorage.getItem('chat-bridge-hide-ctx-meter') === 'true';
@@ -8647,9 +8649,31 @@ function renderUsageSettings(container) {
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">API spend this month</div>
-      <div class="settings-section-desc">Metered <code>claude -p</code> usage recorded per turn by the bridge, measured against the ${USAGE_MONTHLY_BUDGET_USD}/month API credit.</div>
+      <div class="settings-section-title">API spend since reset</div>
+      <div class="settings-section-desc">Metered <code>claude -p</code> usage recorded per turn by the bridge, measured against the ${USAGE_BUDGET_USD} API credit since the last weekly reset.</div>
       <div id="usage-summary" class="settings-loading">Loading…</div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Usage reset</div>
+      <div class="settings-section-desc">The credit meter counts spend since this weekly reset. Pick the day and time it restarts each week.</div>
+      <div class="usage-reset-controls">
+        <div class="settings-form-field">
+          <label>Reset day</label>
+          <select id="usage-reset-weekday" onchange="setUsageReset()">
+            <option value="0">Sunday</option>
+            <option value="1">Monday</option>
+            <option value="2">Tuesday</option>
+            <option value="3">Wednesday</option>
+            <option value="4">Thursday</option>
+            <option value="5">Friday</option>
+            <option value="6">Saturday</option>
+          </select>
+        </div>
+        <div class="settings-form-field">
+          <label>Time</label>
+          <input type="time" id="usage-reset-time" onchange="setUsageReset()" value="00:00">
+        </div>
+      </div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">Hide Context Meter</div>
@@ -8703,8 +8727,13 @@ async function loadUsageSummary() {
     const res = await fetch('/api/usage/summary');
     if (!res.ok) throw new Error(String(res.status));
     const s = await res.json();
-    const pct = Math.min(100, (s.total_cost_usd / USAGE_MONTHLY_BUDGET_USD) * 100);
+    const pct = Math.min(100, (s.total_cost_usd / USAGE_BUDGET_USD) * 100);
     const coldPct = s.turns ? Math.round((s.cold_turns / s.turns) * 100) : 0;
+    // Sync the reset-day/time controls to the persisted anchor.
+    const wdSel = document.getElementById('usage-reset-weekday');
+    const tmInput = document.getElementById('usage-reset-time');
+    if (wdSel && s.reset) wdSel.value = String(s.reset.weekday);
+    if (tmInput && s.reset) tmInput.value = s.reset.time;
     const models = Object.entries(s.by_model || {})
       .sort((a, b) => (b[1].cost_usd || 0) - (a[1].cost_usd || 0))
       .map(([m, v]) =>
@@ -8713,12 +8742,63 @@ async function loadUsageSummary() {
     el.classList.remove('settings-loading');
     el.innerHTML = `
       <div class="usage-budget-bar"><div class="usage-budget-fill${pct >= 80 ? ' usage-budget-fill--warn' : ''}" style="width:${pct.toFixed(1)}%"></div></div>
-      <div class="usage-budget-label">${(s.total_cost_usd || 0).toFixed(2)} of ${USAGE_MONTHLY_BUDGET_USD} · ${s.turns} turns · today ${(s.today_cost_usd || 0).toFixed(2)}</div>
+      <div class="usage-budget-label">${(s.total_cost_usd || 0).toFixed(2)} of ${USAGE_BUDGET_USD} since ${formatUsageResetLabel(s.reset)} · ${s.turns} turns · today ${(s.today_cost_usd || 0).toFixed(2)}</div>
       <div class="usage-cold-label">${coldPct}% of turns were cache-cold (full-price context re-read)</div>
       ${models}`;
   } catch {
     el.classList.remove('settings-loading');
     el.textContent = 'Usage data unavailable — the ledger endpoint goes live after the next bridge restart.';
+  }
+}
+
+const USAGE_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// "Monday 12:00 AM" from a {weekday, time} reset anchor (falls back gracefully
+// if an older backend hasn't sent the reset field yet).
+function formatUsageResetLabel(reset) {
+  if (!reset || typeof reset.weekday !== 'number') return 'reset';
+  const [h, m] = (reset.time || '00:00').split(':').map(n => parseInt(n, 10) || 0);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = ((h + 11) % 12) + 1;
+  return `${USAGE_WEEKDAYS[reset.weekday]} ${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+// Persist a new weekly reset anchor, then refresh both meters.
+async function setUsageReset() {
+  const wdSel = document.getElementById('usage-reset-weekday');
+  const tmInput = document.getElementById('usage-reset-time');
+  if (!wdSel || !tmInput) return;
+  const weekday = parseInt(wdSel.value, 10);
+  const time = tmInput.value || '00:00';
+  try {
+    await fetch('/api/usage/reset', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weekday, time }),
+    });
+  } catch {}
+  loadUsageSummary();
+  renderUsageSidebar();
+}
+
+// Minimal credit meter in the Metered Sessions sidebar (above Archived):
+// spend since the weekly reset against the $100 credit. Lives inside
+// #sessions-view, so it's only visible while that view is shown.
+async function renderUsageSidebar() {
+  const el = document.getElementById('usage-sidebar');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/usage/summary');
+    if (!res.ok) throw new Error(String(res.status));
+    const s = await res.json();
+    const pct = Math.min(100, (s.total_cost_usd / USAGE_BUDGET_USD) * 100);
+    el.style.display = '';
+    el.title = `${(s.total_cost_usd || 0).toFixed(2)} of ${USAGE_BUDGET_USD} since ${formatUsageResetLabel(s.reset)}`;
+    el.innerHTML = `
+      <div class="usage-sidebar-label"><span>Credit</span><span class="usage-sidebar-amount">${(s.total_cost_usd || 0).toFixed(2)} / ${USAGE_BUDGET_USD}</span></div>
+      <div class="usage-budget-bar"><div class="usage-budget-fill${pct >= 80 ? ' usage-budget-fill--warn' : ''}" style="width:${pct.toFixed(1)}%"></div></div>`;
+  } catch {
+    el.style.display = 'none';
   }
 }
 
