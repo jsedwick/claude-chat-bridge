@@ -318,6 +318,14 @@ router.get('/projects', (req: Request, res: Response) => {
 
 // --- KB Browser endpoints ---
 
+// Display-only exception (decision 003 / local-model-mcp-server). The privacy-gateway
+// handoff review queue is surfaced in the KB tree when the directory is present, WITHOUT
+// being added to .obsidian-mcp.json. That keeps it human-reviewable here while the
+// obsidian-mcp server — and therefore Claude's MCP read tools — stay blind to it. Do NOT
+// add Handoff to the MCP vault config to make it visible; that would expose pending
+// (scrubbed-but-unapproved) content to Claude and defeat the gateway's approval gate.
+const HANDOFF_DIR_NAME = 'Handoff';
+
 // Resolve vault directory names for a ?vaults= filter ('work' | 'personal');
 // anything else means all configured vaults.
 function vaultNamesForFilter(filter: string | undefined): string[] {
@@ -581,7 +589,8 @@ router.get('/kb/tree', (req: Request, res: Response) => {
     const items = entries
       .filter(e => {
         if (e.name.startsWith('.')) return false;
-        if (isRoot) return e.isDirectory() && vaultNames.includes(e.name);
+        // Handoff is a display-only exception: shown when present, never from the MCP config.
+        if (isRoot) return e.isDirectory() && (vaultNames.includes(e.name) || e.name === HANDOFF_DIR_NAME);
         if (e.isFile()) return e.name.endsWith('.md');
         return e.isDirectory();
       })
