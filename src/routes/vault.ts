@@ -335,6 +335,16 @@ function vaultNamesForFilter(filter: string | undefined): string[] {
   return getObsidianVaults();
 }
 
+// Trash roots for a mode. Handoff is not a configured vault, but its KB-deleted
+// items are filed under Handoff/archive/.trash/ (see kb-trash.ts) and must show
+// up in the trash panel. It is a work-side artifact (privacy-gateway / TDX
+// queue), so it is swept alongside the work-mode vaults only.
+function trashVaultsForMode(mode: 'work' | 'personal'): string[] {
+  const vaults = getActiveModeVaults(mode).map(v => path.basename(v.path));
+  if (mode === 'work') vaults.push(HANDOFF_DIR_NAME);
+  return vaults;
+}
+
 // Recursive search for KB files matching a query.
 // scope=name (default): file-name substring match.
 // scope=content: full-text literal scan with per-file snippets.
@@ -949,10 +959,12 @@ router.delete('/kb/dir', (req: Request, res: Response) => {
     return;
   }
 
-  // A single misclick on a vault folder must never wipe the vault — even via soft-delete.
+  // A single misclick on a vault folder must never wipe the vault — even via
+  // soft-delete. Handoff is protected the same way: it is a trashable root but
+  // deleting the whole directory (vs. files inside it) must be refused.
   const root = getObsidianRoot();
-  const vaultNames = getObsidianVaults();
-  if (resolved === root || vaultNames.some(v => resolved === path.join(root, v))) {
+  const protectedRoots = [...getObsidianVaults(), HANDOFF_DIR_NAME];
+  if (resolved === root || protectedRoots.some(v => resolved === path.join(root, v))) {
     res.status(400).json({ error: 'Refusing to delete a vault root' });
     return;
   }
@@ -983,9 +995,9 @@ router.get('/kb/trash', (req: Request, res: Response) => {
 
   let vaults: string[];
   if (mode) {
-    vaults = getActiveModeVaults(mode).map(v => path.basename(v.path));
+    vaults = trashVaultsForMode(mode);
   } else if (vault) {
-    if (!getObsidianVaults().includes(vault)) {
+    if (!getObsidianVaults().includes(vault) && vault !== HANDOFF_DIR_NAME) {
       res.status(400).json({ error: 'Unknown vault' });
       return;
     }
@@ -1068,9 +1080,9 @@ router.post('/kb/trash/empty', (req: Request, res: Response) => {
 
   let vaults: string[];
   if (mode) {
-    vaults = getActiveModeVaults(mode).map(v => path.basename(v.path));
+    vaults = trashVaultsForMode(mode);
   } else if (vault) {
-    if (!getObsidianVaults().includes(vault)) {
+    if (!getObsidianVaults().includes(vault) && vault !== HANDOFF_DIR_NAME) {
       res.status(400).json({ error: 'Unknown vault' });
       return;
     }

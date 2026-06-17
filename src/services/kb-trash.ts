@@ -36,13 +36,26 @@ function trashRootForVault(vault: string): string {
   return path.join(getObsidianRoot(), vault, ARCHIVE_DIRNAME, TRASH_DIRNAME);
 }
 
+// Handoff is a trashable root even though it is NOT a configured vault. The
+// privacy-gateway handoff queue is surfaced in the KB tree via a display-only
+// exception (see src/routes/vault.ts / decision 003) and must stay deletable
+// from the KB WITHOUT being added to .obsidian-mcp.json — adding it there would
+// expose the (possibly un-redacted) handoff originals to Claude's MCP read
+// tools. Its trash lives in Handoff/archive/.trash/, still outside the MCP
+// config, so Claude stays blind to deleted items too.
+const HANDOFF_DIR_NAME = 'Handoff';
+
+function trashableRoots(): string[] {
+  return [...getObsidianVaults(), HANDOFF_DIR_NAME];
+}
+
 export function vaultForPath(absPath: string): string | null {
   const root = getObsidianRoot();
   const rel = path.relative(root, absPath);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
   const first = rel.split(path.sep)[0];
   if (!first) return null;
-  return getObsidianVaults().includes(first) ? first : null;
+  return trashableRoots().includes(first) ? first : null;
 }
 
 export function isInTrash(absPath: string): boolean {
