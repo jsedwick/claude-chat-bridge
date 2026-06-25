@@ -366,7 +366,7 @@ async function setMode(mode) {
     await Promise.all([loadSessions(), loadWelcomeSessions()]);
     // Terminal tabs are mode-filtered too
     renderTerminalSessionList();
-    // In the terminal ("Sessions") view, switching context returns to the Home
+    // In the terminal ("CLI Sessions") view, switching context returns to the Home
     // welcome dashboard: hide the xterm panel — and with it the banner title,
     // which lives inside the panel — so no stale session shows until the user
     // picks one from the newly mode-filtered sidebar. Mirrors goHome's layout.
@@ -7337,7 +7337,7 @@ function switchView(view) {
   }
   currentView = view;
   document.getElementById('sidebar-view-menu').style.display = 'none';
-  const labels = { sessions: 'Metered Sessions', kb: 'Knowledge Base', settings: 'Settings', terminal: 'Sessions' };
+  const labels = { sessions: 'Sessions', kb: 'Knowledge Base', settings: 'Settings', terminal: 'CLI Sessions' };
   document.getElementById('sidebar-view-label').textContent = labels[view] || view;
 
   // Update dropdown active state
@@ -8506,13 +8506,13 @@ function connectTerminalWs() {
 }
 
 function goHome() {
-  // Home is the dashboard for the terminal ("Sessions") view: its session
+  // Home is the dashboard for the terminal ("CLI Sessions") view: its session
   // sidebar on the left, with the welcome screen (Sessions/Topics/Tasks/
   // Projects) in the main area instead of an attached xterm. Opening a session
   // — by click or the + New Terminal flow — swaps the welcome out for the live
   // terminal panel via revealTerminalPanel().
   document.getElementById('sidebar-view-menu').style.display = 'none';
-  // Bring up the terminal sidebar (label "Sessions", toolbar, session list).
+  // Bring up the terminal sidebar (label "CLI Sessions", toolbar, session list).
   // switchView no-ops when already in the terminal view, so render the list
   // explicitly to refresh it on every Home visit.
   if (currentView !== 'terminal') switchView('terminal');
@@ -8781,12 +8781,15 @@ async function setUsageReset() {
   renderUsageSidebar();
 }
 
-// Minimal credit meter in the Metered Sessions sidebar (above Archived):
-// spend since the weekly reset against the $100 credit. Lives inside
-// #sessions-view, so it's only visible while that view is shown.
+// Minimal credit meter in the Sessions sidebar (above Archived): spend since
+// the weekly reset against the $100 credit. Lives inside #sessions-view.
+// Hidden for now (user request 2026-06-25) — flip SHOW_CREDIT_METER back to
+// true to restore the bar; the render logic below is intentionally preserved.
 async function renderUsageSidebar() {
   const el = document.getElementById('usage-sidebar');
   if (!el) return;
+  const SHOW_CREDIT_METER = false;
+  if (!SHOW_CREDIT_METER) { el.style.display = 'none'; return; }
   try {
     const res = await fetch('/api/usage/summary');
     if (!res.ok) throw new Error(String(res.status));
@@ -10129,16 +10132,15 @@ function applyKbVaultFilterUi() {
 
 // KB search: debounced input handler
 document.addEventListener('DOMContentLoaded', () => {
-  // Decision 004 billing mode: open in the saved view. Terminal — the
-  // subscription-included PTY, now the primary "Sessions" view — is the default;
-  // only the explicit metered "Chat" preference lands on Metered Sessions.
-  if (localStorage.getItem('chat-bridge-view-mode') === 'chat') {
-    // HTML renders the metered-sessions view by default; its static label still
-    // reads "Sessions", so correct it to the renamed "Metered Sessions".
-    document.getElementById('sidebar-view-label').textContent = 'Metered Sessions';
+  // Decision 004 billing mode: the bridge opens in the view selected in Settings
+  // (Usage → Billing Mode). 'chat' → the metered Agent-SDK view (labeled
+  // "Sessions"); 'terminal' (the default) → the subscription PTY view ("CLI
+  // Sessions") on its Home welcome dashboard.
+  if (billingViewMode() === 'chat') {
+    // HTML first-paints the metered sessions view (currentView starts 'sessions'),
+    // so just sync the label to the renamed view.
+    document.getElementById('sidebar-view-label').textContent = 'Sessions';
   } else {
-    // Default landing: the Home dashboard — terminal ("Sessions") sidebar with
-    // the welcome screen, not a bare xterm.
     goHome();
   }
 

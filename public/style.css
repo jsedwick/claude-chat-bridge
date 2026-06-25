@@ -5035,7 +5035,7 @@ pre.streaming {
   padding: 2px 0;
 }
 
-/* Minimal credit meter in the Metered Sessions sidebar (above Archived) */
+/* Minimal credit meter in the Sessions sidebar (above Archived) — currently hidden via renderUsageSidebar (SHOW_CREDIT_METER=false) */
 .usage-sidebar {
   border-top: 1px solid var(--border);
   padding: 10px 12px 8px;
