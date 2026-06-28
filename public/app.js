@@ -8528,19 +8528,29 @@ function connectTerminalWs() {
 }
 
 function goHome() {
-  // Home is the dashboard for the terminal ("CLI Sessions") view: its session
-  // sidebar on the left, with the welcome screen (Sessions/Topics/Tasks/
-  // Projects) in the main area instead of an attached xterm. Opening a session
-  // — by click or the + New Terminal flow — swaps the welcome out for the live
-  // terminal panel via revealTerminalPanel().
+  // Home returns to the welcome dashboard for whichever view the billing mode
+  // selects (Settings → Usage → Billing Mode): 'chat' (metered Agent SDK) → the
+  // "Sessions" view; 'terminal' (subscription PTY, the default) → the "CLI
+  // Sessions" view with its session sidebar. In both, the main area shows the
+  // welcome screen (Sessions/Topics/Tasks/Projects) instead of an active
+  // chat/terminal; opening a session swaps the welcome out for the live panel.
   document.getElementById('sidebar-view-menu').style.display = 'none';
-  // Bring up the terminal sidebar (label "CLI Sessions", toolbar, session list).
-  // switchView no-ops when already in the terminal view, so render the list
-  // explicitly to refresh it on every Home visit.
-  if (currentView !== 'terminal') switchView('terminal');
-  else renderTerminalSessionList();
-  // switchView reveals the xterm; Home shows the welcome screen in its place.
-  document.getElementById('terminal-panel').style.display = 'none';
+  if (billingViewMode() === 'chat') {
+    // Metered "Sessions" view: bring up the chat sidebar and refresh its list
+    // (switchView no-ops when already here) so a just-closed/created session
+    // shows on every Home visit.
+    if (currentView !== 'sessions') switchView('sessions');
+    loadSessions();
+  } else {
+    // Subscription "CLI Sessions" view: bring up the terminal sidebar (label
+    // "CLI Sessions", toolbar, session list). switchView no-ops when already in
+    // the terminal view, so render the list explicitly to refresh it on every
+    // Home visit.
+    if (currentView !== 'terminal') switchView('terminal');
+    else renderTerminalSessionList();
+    // switchView reveals the xterm; Home shows the welcome screen in its place.
+    document.getElementById('terminal-panel').style.display = 'none';
+  }
   document.querySelector('.chat-main').style.display = '';
   currentSessionId = null;
   chatTitle.textContent = getAppTitle();
