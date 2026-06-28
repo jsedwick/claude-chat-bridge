@@ -3887,11 +3887,13 @@ pre.streaming {
 }
 
 /* Context-window meter — sits in the input area, sibling to .reference-preview.
-   Hidden under 75% (set inline by JS); amber 75-89%; red >=90%. */
+   Shown by default; dismissible via the × and re-nagged at 50% / 75% by JS.
+   Amber by default; red >=90%. */
 .ctx-meter {
+  position: relative;
   max-width: 800px;
   margin: 0 auto 6px;
-  padding: 6px 12px;
+  padding: 6px 28px;
   border-radius: 10px;
   font-size: 12px;
   font-weight: 500;
@@ -3906,6 +3908,29 @@ pre.streaming {
   background: rgba(220, 38, 38, 0.15);
   border-color: rgba(220, 38, 38, 0.5);
   color: var(--error);
+}
+
+/* Dismiss button — pinned right so the centered percentage stays centered.
+   Mirrors .reference-preview-close. */
+.ctx-meter-close {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.ctx-meter-close:hover {
+  opacity: 1;
+  color: var(--text-primary);
 }
 
 /* Input Area */

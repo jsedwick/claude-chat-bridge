@@ -5367,6 +5367,16 @@ function refreshCloseCardTokenSummaries(sessionId) {
 // reflects the actual post-turn occupancy of one window. Add output_tokens so
 // we account for the response that just landed in context.
 const sessionContextState = new Map();
+// Per-session highest context-bar tier the user has dismissed (0 = <50%,
+// 1 = 50-74%, 2 = >=75%). The bar re-shows when context climbs into a tier
+// above the dismissed one. In-memory, so a page reload re-shows by default.
+const ctxMeterDismissed = new Map();
+
+function ctxMeterTier(pct) {
+  if (pct >= 0.75) return 2;
+  if (pct >= 0.50) return 1;
+  return 0;
+}
 
 function captureContextState(sessionId, info) {
   if (!sessionId || !info) return;
@@ -5423,12 +5433,12 @@ function refreshContextMeter() {
     return;
   }
   const pct = state.used / state.contextWindow;
-  // Cost trigger is absolute, not window-relative: every resumed turn replays
-  // the whole transcript, and after the 5-minute prompt cache expires that
-  // replay bills at full input price. On a 1M-window model the 75% threshold
-  // would never fire at cost-relevant sizes.
-  const costNudge = state.used >= 60000;
-  if (pct < 0.75 && !costNudge) {
+  // The bar shows by default once a session has any context. The × dismisses it
+  // for the current tier; climbing into a higher tier (50%, then 75%) re-shows
+  // it even after a dismiss. dismissContextMeter() records the dismissed tier.
+  const tier = ctxMeterTier(pct);
+  const dismissed = ctxMeterDismissed.get(currentSessionId);
+  if (dismissed != null && tier <= dismissed) {
     meter.style.display = 'none';
     return;
   }
@@ -5437,10 +5447,22 @@ function refreshContextMeter() {
   const pctNum = Math.round(pct * 100);
   const usedK = (state.used / 1000).toFixed(0);
   const limitK = Math.round(state.contextWindow / 1000);
-  meter.textContent = `Context: ${pctNum}% (${usedK}k / ${limitK}k)`;
+  meter.innerHTML =
+    `<span class="ctx-meter-label">Context: ${pctNum}% (${usedK}k / ${limitK}k)</span>`
+    + `<button type="button" class="ctx-meter-close" onclick="dismissContextMeter()" aria-label="Dismiss context warning">&times;</button>`;
   meter.title = pct >= 0.75
     ? `Approaching context-window limit for ${state.model}. Consider /compact or starting a new session.`
     : `Each reply re-reads all ${usedK}k tokens — full price once the 5-minute cache expires. Fork down or start a new session to cut cost.`;
+}
+
+// Dismiss the bar for the current tier. It stays hidden until context climbs
+// into a higher tier (50% -> 75%), at which point refreshContextMeter re-shows it.
+function dismissContextMeter() {
+  if (!currentSessionId) return;
+  const state = sessionContextState.get(currentSessionId);
+  const pct = state && state.contextWindow ? state.used / state.contextWindow : 0;
+  ctxMeterDismissed.set(currentSessionId, ctxMeterTier(pct));
+  refreshContextMeter();
 }
 
 function addUsageInfo(data, sessionId = currentSessionId) {
