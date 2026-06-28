@@ -407,7 +407,11 @@ export function runClaude(options: ClaudeRunnerOptions): void {
             if (event.type === 'tool_use') {
               try {
                 const toolData = JSON.parse(event.data as string);
-                if (toolData.name === 'AskUserQuestion') {
+                // Only arm post-AUQ suppression once we've emitted a question the
+                // client can actually render. Arming on an optionless AUQ would
+                // drop the authoritative assistant snapshot (full input) that
+                // follows, hanging the UI on a Question with no options.
+                if (toolData.name === 'AskUserQuestion' && askUserHasQuestions(toolData.input)) {
                   console.log(`[ask-user:${appSessionId.slice(0,8)}] AskUserQuestion emitted — suppressing subsequent events this turn`);
                   sessionPostAskUser.add(appSessionId);
                 }
@@ -628,7 +632,7 @@ export function runClaude(options: ClaudeRunnerOptions): void {
               if (event.type === 'tool_use') {
                 try {
                   const toolData = JSON.parse(event.data as string);
-                  if (toolData.name === 'AskUserQuestion') {
+                  if (toolData.name === 'AskUserQuestion' && askUserHasQuestions(toolData.input)) {
                     sessionPostAskUser.add(appSessionId);
                   }
                 } catch {}
@@ -778,6 +782,14 @@ function getPendingAskUser(appSessionId: string): Map<number, PendingAskUser> {
   return m;
 }
 
+// True when an AskUserQuestion tool input carries at least one question the
+// client can render as a card. Gates both the synthesized emission and the
+// post-AUQ suppression so an optionless AUQ never emits a choice-less card nor
+// drops the authoritative assistant snapshot that does carry the questions.
+function askUserHasQuestions(input: any): boolean {
+  return Array.isArray(input?.questions) && input.questions.length > 0;
+}
+
 function parseClaudeEvent(
   parsed: any,
   emittedToolUseIds: Set<string>,
@@ -880,10 +892,13 @@ function parseClaudeEvent(
       };
     }
 
-    // content_block_stop — finalize a deferred AskUserQuestion tool_use with
-    // its accumulated input. Adds to emittedToolUseIds so the assistant
-    // snapshot's later duplicate emission is suppressed (or arrives as _update,
-    // which the client handles idempotently via renderedAskQuestions dedup).
+    // content_block_stop — finalize a deferred AskUserQuestion tool_use with its
+    // accumulated input, but ONLY when that input actually carries questions
+    // (see the askUserHasQuestions gate below). In that case we add to
+    // emittedToolUseIds so the assistant snapshot's later duplicate emission is
+    // suppressed (or arrives as _update, which the client dedups via
+    // renderedAskQuestions). When the synthesized input is empty we emit nothing
+    // and let the snapshot be the primary emission instead.
     if (evt.type === 'content_block_stop') {
       const pending = pendingAskUser.get(evt.index);
       if (pending) {
@@ -894,11 +909,23 @@ function parseClaudeEvent(
         } catch (err) {
           console.warn(`[parseClaudeEvent] AskUserQuestion input parse failed: ${(err as Error).message}; partial=${pending.partial.substring(0, 200)}`);
         }
-        emittedToolUseIds.add(pending.id);
-        return {
-          type: 'tool_use',
-          data: JSON.stringify({ id: pending.id, name: pending.name, input }),
-        };
+        // In -p mode the AskUserQuestion input is frequently NOT streamed as
+        // input_json_delta events, so `partial` is empty and this synthesizes an
+        // optionless tool_use. Emitting it would render a question card with no
+        // clickable choices AND arm the post-AUQ suppression below — which then
+        // drops the assistant snapshot that DOES carry the questions, hanging the
+        // UI on a Question with no options. Only commit the synthesized event
+        // when we actually recovered the questions; otherwise stay silent and let
+        // the assistant snapshot emit the complete tool_use.
+        if (askUserHasQuestions(input)) {
+          emittedToolUseIds.add(pending.id);
+          return {
+            type: 'tool_use',
+            data: JSON.stringify({ id: pending.id, name: pending.name, input }),
+          };
+        }
+        console.warn(`[parseClaudeEvent] AskUserQuestion synthesis had no questions (partial len=${pending.partial.length}); deferring to assistant snapshot`);
+        return null;
       }
       return null;
     }
