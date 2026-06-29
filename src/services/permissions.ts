@@ -23,14 +23,24 @@ interface PendingPermission {
 // ---------------------------------------------------------------------------
 
 // Tools that are never allowed in bridge context — auto-deny without prompting.
-// Currently empty: scheduling/remote-control tools (ScheduleWakeup, CronCreate,
-// CronDelete, CronList, RemoteTrigger) used to be hardcoded denies because in
-// -p mode the process exits before timers fire and --resume (v2.1.110) could
-// resurrect unexpired tasks as zombies. The auto-deny was silent (no UI prompt),
-// which masked the failure as a "transient glitch." For now we let these tools
-// fall through to the ask flow so the UI surfaces a prompt; revisit if --resume
-// zombie tasks become a real problem in practice.
-const NEVER_ALLOW_TOOLS = new Set<string>();
+//
+// Scheduling/remote-control tools (ScheduleWakeup, CronCreate, CronDelete,
+// CronList, RemoteTrigger) used to be hardcoded denies because in -p mode the
+// process exits before timers fire and --resume (v2.1.110) could resurrect
+// unexpired tasks as zombies. That auto-deny was silent (no UI prompt), which
+// masked the failure as a "transient glitch," so we now let them fall through
+// to the ask flow and surface a prompt; revisit if --resume zombies recur.
+//
+// Monitor is denied because persistent monitors are bound to the Claude Code
+// process, but the bridge runs each turn as its own one-shot `claude -p` — a
+// monitor armed one turn is orphaned when that process exits, and the harness
+// then reports it as "stopped — no completion record from previous session"
+// every turn boundary, once per monitor. That recurring teardown noise is the
+// reason for the deny. The silent-deny-masks-failure risk is covered: the
+// /vault work|personal|mb skills tell the model this deny is by design.
+// Terminal Claude Code is unaffected — this logic only runs when
+// CHAT_BRIDGE_SESSION is set, so monitors still arm normally there.
+const NEVER_ALLOW_TOOLS = new Set<string>(['Monitor']);
 
 // Tools that are always safe (read-only / session-local) — never prompt
 const ALWAYS_ALLOW_TOOLS = new Set([
@@ -47,7 +57,8 @@ const ALWAYS_ALLOW_TOOLS = new Set([
   'AskUserQuestion',  // just asks the user a question
   'TaskOutput',       // session-local task management
   'TaskStop',
-  'Monitor',          // read-only process watching
+  // NOTE: Monitor is intentionally NOT here — it's in NEVER_ALLOW_TOOLS above
+  // (persistent monitors can't survive the bridge's per-turn `claude -p` model).
 ]);
 
 // Tools that need a file-path check: auto-allow within project dir, prompt outside
